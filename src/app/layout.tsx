@@ -23,10 +23,15 @@ export default function RootLayout({
 }: { 
   children: React.ReactNode 
 }) {
-  const pathname = usePathname();
 
   // If the URL starts with /dashboard, we hide the public Navbar
-  const isDashboard = pathname.startsWith('/dashboard') || ('/login');
+  const rulesEngineRoutes = ['/dashboard-eventVolunteers', '/dashboard-eventManager', '/login'];
+const currentPath = usePathname();
+
+// Returns true if currentPath starts with any item in the array
+const shouldHideNavbar = rulesEngineRoutes.some(route => 
+    currentPath?.startsWith(route)
+  );
 
   return (
     <html
@@ -35,7 +40,7 @@ export default function RootLayout({
     >
       <LanguageProvider>
       <body className="min-h-full flex flex-col">
-       {!isDashboard && <Navbar />}
+       {!shouldHideNavbar && <Navbar />}
         {children}
         <Footer/>
         </body>

@@ -9,9 +9,10 @@ import {
   LayoutGrid, 
   Check, 
   Menu, 
-  X 
+  X,
+  ShieldCheck // Imported for clear professional system mapping identity
 } from 'lucide-react';
-
+import { useRouter } from 'next/navigation';
 export default function Navbar() {
   const { t, lang, selectLang } = useTranslation();
   const [mounted, setMounted] = useState(false);
@@ -20,7 +21,7 @@ export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   const langRef = useRef<HTMLDivElement>(null);
-
+  const router = useRouter();
   useEffect(() => {
     setMounted(true);
     const handleClickOutside = (event: MouseEvent) => {
@@ -45,8 +46,8 @@ export default function Navbar() {
   return (
     <>
       {/* 
-         Spacer: This prevents the 'fixed' nav from overlapping 
-         the content below it in normal flow 
+          Spacer: This prevents the 'fixed' nav from overlapping 
+          the content below it in normal flow 
       */}
       <div className="h-20 w-full lg:hidden block" /> 
 
@@ -89,6 +90,16 @@ export default function Navbar() {
             </ul>
 
             <div className="flex items-center gap-6 border-l pl-8 border-gray-200">
+              
+              {/* DESKTOP SECURE CONSOLE ACCESS NODE */}
+              <Link 
+                href="/login" 
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-gray-500 hover:text-orange-600 rounded-lg transition-colors"
+              >
+                <ShieldCheck size={15} className="text-gray-400 group-hover:text-orange-500 transition-colors" />
+                <span>Console Login</span>
+              </Link>
+
               {/* DESKTOP LANGUAGE DROPDOWN */}
               <div className="relative" ref={langRef}>
                 <button
@@ -118,7 +129,7 @@ export default function Navbar() {
                 )}
               </div>
 
-              <button className="bg-orange-600 text-white px-7 py-3 rounded-full text-sm font-bold shadow-lg shadow-orange-200/50 hover:bg-gray-900 transition-all active:scale-95">
+              <button className="bg-orange-600 text-white px-7 py-3 rounded-full text-sm font-bold shadow-lg shadow-orange-200/50 hover:bg-gray-900 transition-all active:scale-95" onClick={() => router.push('/register')}>
                 Request a Demo
               </button>
             </div>
@@ -137,6 +148,18 @@ export default function Navbar() {
                <li><Link href="#features" onClick={() => setMobileMenuOpen(false)}>{t.navFeatures}</Link></li>
                <li><Link href="#solutions" onClick={() => setMobileMenuOpen(false)}>{t.navSolutions}</Link></li>
                <li><Link href="#pricing" onClick={() => setMobileMenuOpen(false)}>{t.navPricing}</Link></li>
+               
+               {/* MOBILE OVERLAY CONSOLE REDIRECTION */}
+               <li className="pt-2">
+                 <Link 
+                   href="/login" 
+                   onClick={() => setMobileMenuOpen(false)}
+                   className="flex items-center gap-2 text-orange-600 font-bold"
+                 >
+                   <ShieldCheck size={20} />
+                   <span>Terminal Terminal Portal</span>
+                 </Link>
+               </li>
              </ul>
 
              <div className="pt-6 border-t border-gray-100">
@@ -161,7 +184,7 @@ export default function Navbar() {
                 </div>
              </div>
 
-             <button className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold shadow-lg shadow-orange-100">
+             <button className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold shadow-lg shadow-orange-100" onClick={() => router.push('/register')}>
                Request a Demo
              </button>
           </div>
