@@ -1,0 +1,172 @@
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
+import { useTranslation } from '@/contexts/LanguageContext';
+import { 
+  ChevronDown, 
+  Globe, 
+  LayoutGrid, 
+  Check, 
+  Menu, 
+  X 
+} from 'lucide-react';
+
+export default function Navbar() {
+  const { t, lang, selectLang } = useTranslation();
+  const [mounted, setMounted] = useState(false);
+  const [isSolutionsOpen, setIsSolutionsOpen] = useState(false);
+  const [isLangOpen, setIsLangOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  const langRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (langRef.current && !langRef.current.contains(event.target as Node)) {
+        setIsLangOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  if (!mounted) {
+    return <nav className="h-20 bg-white border-b border-gray-100" />;
+  }
+
+  const languages = [
+    { code: 'en', label: 'English' },
+    { code: 'hi', label: 'हिन्दी' },
+    { code: 'mai', label: 'मैथिली' },
+  ];
+
+  return (
+    <>
+      {/* 
+         Spacer: This prevents the 'fixed' nav from overlapping 
+         the content below it in normal flow 
+      */}
+      <div className="h-20 w-full lg:hidden block" /> 
+
+      <nav className="fixed top-0 left-0 w-full z-[100] bg-white/90 backdrop-blur-md border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          
+          {/* --- LOGO SECTION --- */}
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="flex flex-col leading-tight">
+              <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-medium">Mithila</span>
+              <span className="text-2xl font-black text-orange-600 tracking-tight">
+                {t.title?.split(' ')[1] || 'Aayojan'}
+              </span>
+            </div>
+            <div className="ml-1 w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center transform rotate-45 group-hover:rotate-0 transition-all duration-300">
+              <LayoutGrid size={16} className="text-white -rotate-45 group-hover:rotate-0 transition-transform" />
+            </div>
+          </Link>
+
+          {/* --- DESKTOP NAV --- */}
+          <div className="hidden lg:flex items-center gap-10">
+            <ul className="flex items-center gap-8 text-sm font-semibold text-gray-600">
+              <li><Link href="/" className="hover:text-orange-600 transition-colors">Home</Link></li>
+              <li><Link href="#features" className="hover:text-orange-600 transition-colors">{t.navFeatures}</Link></li>
+              
+              <li className="relative" 
+                  onMouseEnter={() => setIsSolutionsOpen(true)} 
+                  onMouseLeave={() => setIsSolutionsOpen(false)}>
+                <button className="flex items-center gap-1 hover:text-orange-600 transition-colors py-2 focus:outline-none">
+                  {t.navSolutions} <ChevronDown size={14} className={`transition-transform ${isSolutionsOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isSolutionsOpen && (
+                  <div className="absolute top-full left-0 w-52 bg-white border border-gray-100 shadow-2xl rounded-2xl py-2 animate-in fade-in slide-in-from-top-2">
+                    <Link href="/summits" className="block px-4 py-3 hover:bg-orange-50 text-gray-700 hover:text-orange-600 transition">Govt. Summits</Link>
+                    <Link href="/weddings" className="block px-4 py-3 hover:bg-orange-50 text-gray-700 hover:text-orange-600 transition">Private Weddings</Link>
+                  </div>
+                )}
+              </li>
+              <li><Link href="#pricing" className="hover:text-orange-600 transition-colors">{t.navPricing}</Link></li>
+            </ul>
+
+            <div className="flex items-center gap-6 border-l pl-8 border-gray-200">
+              {/* DESKTOP LANGUAGE DROPDOWN */}
+              <div className="relative" ref={langRef}>
+                <button
+                  onClick={() => setIsLangOpen(!isLangOpen)}
+                  className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-gray-500 hover:text-orange-600 rounded-lg transition-all focus:outline-none"
+                >
+                  <Globe size={16} className="text-orange-600" />
+                  <span className="uppercase">{lang}</span>
+                  <ChevronDown size={12} className={`transition-transform ${isLangOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isLangOpen && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-100 shadow-2xl rounded-xl py-2 z-[110] animate-in fade-in zoom-in-95">
+                    {languages.map((l) => (
+                      <button
+                        key={l.code}
+                        onClick={() => { selectLang(l.code); setIsLangOpen(false); }}
+                        className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                          lang === l.code ? 'bg-orange-50 text-orange-700 font-bold' : 'text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {l.label}
+                        {lang === l.code && <Check size={14} className="text-orange-600" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button className="bg-orange-600 text-white px-7 py-3 rounded-full text-sm font-bold shadow-lg shadow-orange-200/50 hover:bg-gray-900 transition-all active:scale-95">
+                Request a Demo
+              </button>
+            </div>
+          </div>
+
+          {/* --- MOBILE TOGGLE --- */}
+          <button className="lg:hidden p-2 text-gray-600" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+            {mobileMenuOpen ? <X size={28} /> : <Menu size={28} />}
+          </button>
+        </div>
+
+        {/* --- MOBILE MENU --- */}
+        {mobileMenuOpen && (
+          <div className="lg:hidden bg-white border-t border-gray-100 px-6 py-8 space-y-8 animate-in slide-in-from-top-5 max-h-[calc(100vh-5rem)] overflow-y-auto">
+             <ul className="space-y-4 text-lg font-semibold text-gray-700">
+               <li><Link href="#features" onClick={() => setMobileMenuOpen(false)}>{t.navFeatures}</Link></li>
+               <li><Link href="#solutions" onClick={() => setMobileMenuOpen(false)}>{t.navSolutions}</Link></li>
+               <li><Link href="#pricing" onClick={() => setMobileMenuOpen(false)}>{t.navPricing}</Link></li>
+             </ul>
+
+             <div className="pt-6 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  <Globe size={14} /> Select Language
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {languages.map((l) => (
+                    <button
+                      key={l.code}
+                      onClick={() => { selectLang(l.code); setMobileMenuOpen(false); }}
+                      className={`flex flex-col items-center justify-center py-3 rounded-xl border transition-all ${
+                        lang === l.code 
+                        ? 'bg-orange-50 border-orange-200 text-orange-700 font-bold shadow-sm' 
+                        : 'bg-gray-50 border-transparent text-gray-500'
+                      }`}
+                    >
+                      <span className="text-xs uppercase opacity-60 mb-1">{l.code}</span>
+                      <span className="text-sm">{l.label}</span>
+                    </button>
+                  ))}
+                </div>
+             </div>
+
+             <button className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold shadow-lg shadow-orange-100">
+               Request a Demo
+             </button>
+          </div>
+        )}
+      </nav>
+    </>
+  );
+}
