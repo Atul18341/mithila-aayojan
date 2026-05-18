@@ -40,7 +40,7 @@ export default function ManagerDashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
 
-  // 1. DEXIE LIVE QUERIES
+  // 1. DEXIE LIVE QUERIES (with safety fallback arrays to prevent mapping empty rows)
   const events = useLiveQuery(() => db.events.orderBy('createdAt').reverse().toArray()) || [];
 
   const activeEvent = useLiveQuery(
@@ -86,7 +86,7 @@ export default function ManagerDashboard() {
         <Sparkles className="text-blue-500 mb-4 animate-pulse" size={48} />
         <h2 className="text-2xl font-black italic">Welcome to Mithila Aayojan</h2>
         <button 
-          onClick={() => setIsEditing(true)} // Instantly mounts editor config into layout container state context
+          onClick={() => setIsEditing(true)} 
           className="mt-6 px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase text-xs tracking-widest hover:scale-105 transition-all shadow-xl shadow-blue-600/10"
         >
           Create Your First Event
@@ -105,12 +105,13 @@ export default function ManagerDashboard() {
   }
 
   const getEventAccent = (type: string) => {
+    if (!type) return 'text-orange-600';
     const found = EVENT_TYPES.find(t => t.id === type);
     return found ? `text-${found.color}-500` : 'text-orange-600';
   };
 
   // Safe fallback metrics mappings for fresh creations evaluation checkpoints
-  const currentAccent = activeEvent ? getEventAccent(activeEvent.type) : 'text-blue-500';
+  const currentAccent = activeEvent?.type ? getEventAccent(activeEvent.type) : 'text-blue-500';
   const currentAccentBg = activeEvent?.type === 'celebration' ? 'bg-emerald-600' : 'bg-blue-600';
 
   const theme = {
@@ -137,7 +138,7 @@ export default function ManagerDashboard() {
         <div className="space-y-8">
           <div className="flex items-center gap-3 px-2">
             <div className={`w-8 h-8 ${theme.accentBg} rounded-lg flex items-center justify-center font-black text-white`}>
-              {activeEvent ? activeEvent.name.charAt(0).toUpperCase() : 'A'}
+              {activeEvent?.name ? activeEvent.name.charAt(0).toUpperCase() : 'A'}
             </div>
             <span className="font-black tracking-tighter text-lg uppercase">Mithila <span className={theme.accent}>Aayojan</span></span>
           </div>
@@ -184,7 +185,7 @@ export default function ManagerDashboard() {
                   </h1>
                   <div className="flex items-center gap-4 text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">
                     <span className="flex items-center gap-1.5"><Calendar size={12} className={theme.accent} /> {activeEvent.date || 'No Date'}</span>
-                    <span className="flex items-center gap-1.5"><Sparkles size={12} className={theme.accent} /> {activeEvent.protocol}</span>
+                    <span className="flex items-center gap-1.5"><Sparkles size={12} className={theme.accent} /> {activeEvent.protocol || 'open'}</span>
                   </div>
                 </button>
               ) : (
@@ -220,7 +221,6 @@ export default function ManagerDashboard() {
                   Open Camera Desk
                 </button>
               )}
-              {/* Force availability of action button toggles to allow users to abort edit configurations cleanly */}
               {(activeEvent || events.length > 0) && (
                 <button 
                   onClick={() => setIsEditing(!isEditing)} 
@@ -234,6 +234,7 @@ export default function ManagerDashboard() {
 
           <div className="flex items-center gap-3">
             <button 
+              type="button"
               onClick={() => setIsDark(!isDark)} 
               className={`w-12 h-12 rounded-2xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
               aria-label="Toggle Layout Theme Color Mapping Modifiers"
@@ -286,17 +287,17 @@ export default function ManagerDashboard() {
 
         {/* WORKSPACE CONTENT LAYOUT TOGGLE INTERFACE ROUTER */}
         {isEditing ? (
-        <div className="w-full h-full flex flex-col justify-start pb-12 animate-in fade-in duration-300">
-          <EventDetailEditor 
-            event={activeEvent} 
-            isDark={isDark} 
-            onClose={() => setIsEditing(false)}
-            onCreationSuccess={(newEventId) => {
-              setSelectedEventId(newEventId);
-              setIsEditing(false);
-            }}
-          />
-        </div>
+          <div className="w-full h-full flex flex-col justify-start pb-12 animate-in fade-in duration-300">
+            <EventDetailEditor 
+              event={activeEvent ?? null}
+              isDark={isDark} 
+              onClose={() => setIsEditing(false)}
+              onCreationSuccess={(newEventId) => {
+                setSelectedEventId(newEventId);
+                setIsEditing(false);
+              }}
+            />
+          </div>
         ) : (
           <>
             {/* STATS PANELS */}
