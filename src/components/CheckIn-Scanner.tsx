@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Camera, X, CheckCircle2, AlertTriangle, Loader2, Keyboard } from 'lucide-react';
 import SyncStatusBar from '@/components/SyncStatusBar';
-import { db } from '../../lib/db'; // Adjust this path to match your Dexie instance location
+import { db } from '../lib/db'; // Adjust this path to match your Dexie instance location
 
 // Unified status type for terminal execution feedback
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
