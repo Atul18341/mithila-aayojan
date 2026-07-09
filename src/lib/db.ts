@@ -11,7 +11,7 @@ export interface Events {
   isCountPublic?: boolean;
   hypeThreshold: number;
   createdAt: number;
-  
+  syncStatus: 'synced' | 'pending';
   // --- ADD THESE NEW FIELDS ---
   date?: string;
   location?: string;
@@ -44,7 +44,8 @@ export interface SessionUser {
   role: 'manager' | 'volunteer';
   assignedEventId: number;
   token: string;          // Encrypted JWT session string returned by the server
-  cachedAt: number;       // Epoch timestamp to check for local session expiration
+  cachedAt: number;  
+  syncStatus: 'synced' | 'pending';     // Epoch timestamp to check for local session expiration
 }
 export class AayojanDB extends Dexie {
   events!: Table<Events>;
@@ -54,9 +55,9 @@ export class AayojanDB extends Dexie {
   constructor() {
     super('MithilaAayojanDB');
     this.version(2).stores({
-     events: '++id, slug, type, status, createdAt',
+     events: '++id, slug, type, status, createdAt,syncStatus',
       guests: '++id, eventId, qrToken, type, checkInTime,syncStatus',
-      users: '++id, identifier, role, assignedEventId',
+      users: '++id, identifier, role, assignedEventId,syncStatus',
     });
   }
 }

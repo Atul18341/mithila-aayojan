@@ -82,7 +82,8 @@ export default function EventCreate() {
         status: 'draft',
         isCountPublic: activeConfig.isPublic,
         hypeThreshold: activeConfig.threshold,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        syncStatus:'pending'
       });
 
       setIsSaved(true);

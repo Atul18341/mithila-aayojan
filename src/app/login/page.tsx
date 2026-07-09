@@ -80,7 +80,8 @@ export default function UnifiedLoginPage() {
           role: remoteUser.role, // Dynamically maps 'manager' or 'volunteer'
           assignedEventId: remoteUser.assignedEventId || 0,
           token: data.token || 'LOCAL_FALLBACK_TOKEN',
-          cachedAt: Date.now()
+          cachedAt: Date.now(),
+          syncStatus:'pending'
         });
 
         // UNIFIED ROUTING LOGIC: Inspect path segments based on verified credentials
