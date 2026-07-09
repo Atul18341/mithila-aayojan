@@ -63,7 +63,8 @@ export default function SecuritySignupPage() {
         role: 'manager',                 // Strictly locked down to Event Manager context execution
         assignedEventId: 0,             
         token: 'LOCAL_OFFLINE_SETUP',   
-        cachedAt: Date.now()            
+        cachedAt: Date.now(), 
+        syncStatus:'pending'           
       });
 
       setStatusMessage({ type: 'success', text: 'Welcome to leadership. Establishing your digital event command matrix...' });

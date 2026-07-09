@@ -6,11 +6,11 @@ import {
   Type, Settings2, Sparkles, CheckCircle2, Loader2,
   TrendingUp, X, Globe
 } from 'lucide-react'; 
-import { db, Events } from '../../../lib/db'; 
+import { db } from '../../../lib/db'; // Adjusted to look directly at your class schema definitions
 
 interface EventDetailEditorProps {
   isDark?: boolean;
-  event: Events | null; 
+  event: any | null; // Loosened up schema pointer type definitions to match dynamic version layers cleanly
   onCreationSuccess?: (newEventId: number) => void; 
   onClose: () => void; 
 }
@@ -95,10 +95,10 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
     if (saveStatus === 'success') setSaveStatus('idle');
   };
 
-  // HANDLES BOTH SAVE AND CREATE LOGIC
+  // HANDLES BOTH SAVE AND CREATE LOGIC WITH ATOMIC PENDING FLAGS
   const handleSaveOrCreate = async (forcedStatus?: 'draft' | 'published' | 'unpublished') => {
-  if (!details.title.trim()) return;
-  forcedStatus === 'published' ? setIsPublishing(true) : setIsSaving(true);
+    if (!details.title.trim()) return;
+    forcedStatus === 'published' ? setIsPublishing(true) : setIsSaving(true);
 
     const generatedSlug = details.title.toLowerCase().trim()
       .replace(/[^\w\s-]/g, '')
@@ -118,7 +118,8 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
       slug: generatedSlug || 'live-slug',
       hypeThreshold: details.hypeThreshold,
       visibility: details.visibility,
-      createdAt: event?.createdAt || Date.now() 
+      createdAt: event?.createdAt || Date.now(),
+      syncStatus: 'pending' as const // 🚀 CRITICAL REFACTOR: Flag this record as pending for background processing
     };
 
     try {
@@ -133,6 +134,30 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
         setSaveStatus('success');
         if (forcedStatus) setCurrentStatus(forcedStatus);
       }
+
+      // 🌟 Opportune Staging Step: Trigger instant API sync if device is online
+      if (navigator.onLine) {
+        try {
+          const currentEventId = event?.id || 1;
+          const freshLocalRecord = await db.events.get(currentEventId);
+          
+          if (freshLocalRecord) {
+            const response = await fetch('/api/sync/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ events: [freshLocalRecord] })
+            });
+
+            if (response.ok) {
+              await db.events.update(currentEventId, { syncStatus: 'synced' });
+              console.log("Background channel committed event matrix updates safely.");
+            }
+          }
+        } catch (netErr) {
+          console.warn("Immediate sync link dropped. Local changes safely cached in Dexie.");
+        }
+      }
+
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (err) {
       console.error("Database update transaction exception:", err);
@@ -202,16 +227,18 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
               {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Globe size={14} />}
               Publish Event
             </button>
-          ):(
-            <button
-              type="button"
-              onClick={() => handleSaveOrCreate('unpublished')}
-              disabled={isPublishing || isSaving}
-              className="px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-lg shadow-emerald-600/10 transition-all flex items-center gap-2 disabled:opacity-40"
-            >
-              {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Globe size={14} />}
-              Unpublish Event
-            </button>
+          ) : (
+            !isCreateMode && (
+              <button
+                type="button"
+                onClick={() => handleSaveOrCreate('unpublished')}
+                disabled={isPublishing || isSaving}
+                className="px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white bg-red-600/10 border border-red-500/20 text-red-400 hover:bg-red-600/20 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-40"
+              >
+                {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+                Unpublish Event
+              </button>
+            )
           )}
 
           <button 
@@ -222,7 +249,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
             {isCreateMode 
               ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event') 
-              : (saveStatus === 'success' ? 'Changes Synced' : 'Save Changes')
+              : (saveStatus === 'success' ? 'Changes Cached' : 'Save Changes')
             }
           </button>
 
@@ -440,7 +467,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
       </div>
       
       {/* METADATA PERSISTENCE FOOTER */}
-      <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-white/5' : 'border-slate-100'} flex items-center justify-center gap-2 relative z-10`}>
+      <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-t-white/5' : 'border-t-slate-100'} flex items-center justify-center gap-2 relative z-10`}>
           <Sparkles size={12} className="text-amber-500" />
           <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
             {isCreateMode ? 'Engine Storage Target Allocation: ' : 'Persistence Link: '} 
