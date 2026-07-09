@@ -16,7 +16,7 @@ import { db } from '../../lib/db';
 import EventDetailEditor from './_components/event-details';
 import EntryDeskCameraScanner from '../../components/CheckIn-Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
-
+import LogoutButton from '@/components/LogoutButton';
 // --- CONFIG & CONSTANTS ---
 const EVENT_TYPES = [
   { id: 'summit', label: 'Summit', icon: Briefcase, protocol: 'invite-only', color: 'blue', threshold: 0 },
@@ -148,7 +148,7 @@ export default function ManagerDashboard() {
             {[
               { icon: LayoutDashboard, label: 'Overview', active: !isEditing },
               { icon: Users, label: 'Guest List' },
-              { icon: Box, label: 'Stockman Sync' },
+              //{ icon: Box, label: 'Stockman Sync' },
               { icon: QrCode, label: 'Check-in Desk' },
               { icon: Settings, label: 'Settings', active: isEditing }
             ].map((item) => (
@@ -166,13 +166,7 @@ export default function ManagerDashboard() {
           </nav>
         </div>
 
-        <button 
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-500/10 transition-all border border-transparent hover:border-red-500/20"
-        >
-          <LogOut size={18} />
-          <span>Exit System</span>
-        </button>
+        <LogoutButton/>
       </aside>
 
       {/* MAIN CONTENT WORKSPACE */}
