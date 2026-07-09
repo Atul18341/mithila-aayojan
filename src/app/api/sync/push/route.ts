@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     // 1. SYNCHRONIZE EVENTS TABLE DATA FIRST (Prevents Foreign Key Constraint Errors)
     for (const ev of events) {
       const eventUpsertQuery = `
-        INSERT INTO events (id, name, type, protocol, status, event_date, created_at, server_updated_at)
+        INSERT INTO events (id, name, type, protocol, status, date, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
         ON CONFLICT (id) 
         DO UPDATE SET 
@@ -38,15 +38,29 @@ export async function POST(request: Request) {
     // 2. SYNCHRONIZE USERS DATA RECORD PROFILES
     for (const usr of users) {
       const userUpsertQuery = `
-        INSERT INTO users (id, name, email, role, server_updated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (email) 
+        INSERT INTO users (identifier, name, password_hash, role, assigned_event_id, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (identifier) 
         DO UPDATE SET 
           name = EXCLUDED.name,
           role = EXCLUDED.role,
-          server_updated_at = NOW();
+          assigned_event_id = EXCLUDED.assigned_event_id,
+          updated_at = NOW();
       `;
-      await client.query(userUpsertQuery, [usr.id, usr.name, usr.email, usr.role]);
+      
+      // We map local 'email' property to 'identifier' target slot 
+      // Providing a dummy or placeholder password hash if created offline
+      const userIdentifier = usr.email || usr.identifier;
+      const fallbackHash = usr.passwordHash || '$2b$10$UnassignedOfflinePlaceholderHashString'; 
+      const assignedEvent = usr.assignedEventId || null;
+
+      await client.query(userUpsertQuery, [
+        userIdentifier,
+        usr.name,
+        fallbackHash,
+        usr.role || 'volunteer', // Matches your user_role enum constraint defaults
+        assignedEvent
+      ]);
     }
 
     // 3. SYNCHRONIZE GUESTS CHECK-IN TRANSACTIONS Last
