@@ -117,7 +117,7 @@ export default function UnifiedLoginPage() {
 
         // UNIFIED ROUTING LOGIC: Direct local user to their role-bound terminal view
         if (localUser.role === 'manager') {
-          router.push('/dashboard-eventManager');
+          router.push('/dashboard-eventManagers');
         } else {
           router.push('/dashboard-eventVolunteers');
         }

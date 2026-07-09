@@ -15,6 +15,7 @@ import {
 import { db } from '../../lib/db';
 import EventDetailEditor from './_components/event-details';
 import EntryDeskCameraScanner from '../../components/CheckIn-Scanner';
+import SyncStatusBar from '@/components/SyncStatusBar';
 
 // --- CONFIG & CONSTANTS ---
 const EVENT_TYPES = [
@@ -41,22 +42,18 @@ export default function ManagerDashboard() {
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
 
   // 1. DEXIE LIVE QUERIES
-  // Master tracking query to fetch records safely
   const events = useLiveQuery(() => db.events.orderBy('createdAt').reverse().toArray()) || [];
 
-  // FIXED: Isolating dependency tracking. It now only watches selectedEventId.
   const activeEvent = useLiveQuery(
     async () => {
       if (selectedEventId) {
         const selected = await db.events.get(selectedEventId);
         if (selected) return selected;
       }
-      // If no ID is explicitly chosen, fetch the latest one directly on the background thread 
-      // without depending on the length of an external reactive array block.
       const fallbackList = await db.events.orderBy('createdAt').reverse().toArray();
       return fallbackList.length > 0 ? fallbackList[0] : null;
     },
-    [selectedEventId] // 🚀 Only recalculates when an ID target actually changes
+    [selectedEventId]
   );
 
   const recentCheckIns = useLiveQuery(
@@ -80,7 +77,6 @@ export default function ManagerDashboard() {
     [activeEvent?.id]
   ) || 0;
 
-  // Sync selected event identifier safely if none is currently tracked
   useEffect(() => {
     if (events.length > 0 && !selectedEventId) {
       setSelectedEventId(events[0].id || null);
@@ -103,7 +99,6 @@ export default function ManagerDashboard() {
     );
   }
 
-  // Awaiting target evaluation mapping resolution checks
   if (!activeEvent && !isEditing) {
     return (
       <div className={`h-screen w-full flex items-center justify-center ${isDark ? 'bg-[#020617]' : 'bg-slate-50'}`}>
@@ -247,6 +242,12 @@ export default function ManagerDashboard() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* 🚀 FIXED-WIDTH CONTAINER WRAPPER FOR PREVENTING LAYOUT SHIFTS */}
+            <div className="w-44 h-12 flex items-center justify-end shrink-0">
+              <SyncStatusBar />
+            </div>
+
+            {/* THEME TOGGLE SWITCHER */}
             <button 
               type="button"
               onClick={() => setIsDark(!isDark)} 
@@ -261,6 +262,7 @@ export default function ManagerDashboard() {
               </div>
             </button>
 
+            {/* LIVE NOTIFICATION OVERLAY */}
             <div className="relative">
               <button 
                 onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}

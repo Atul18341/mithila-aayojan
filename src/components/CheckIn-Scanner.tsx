@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Camera, X, CheckCircle2, AlertTriangle, Loader2, Keyboard } from 'lucide-react';
+import SyncStatusBar from '@/components/SyncStatusBar';
+import { db } from '../../lib/db'; // Adjust this path to match your Dexie instance location
 
 // Unified status type for terminal execution feedback
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
@@ -18,7 +20,7 @@ interface ReusableScannerProps {
   variant?: 'blue' | 'emerald' | 'purple' | 'amber';
   isDark?: boolean;
   onClose: () => void;
-  // Deep execution abstraction hook: handles database commits differently based on permissions
+  // Deep execution abstraction hook: handles UI transformations gracefully
   onScanExecute: (token: string) => Promise<{ status: ScanStatus; message: string; name?: string }>;
 }
 
@@ -36,20 +38,48 @@ export default function EntryDeskCameraScanner({
 
   // Consolidated handler for processing both camera frames and keyboard inputs
   const executePipeline = async (token: string, scannerInstance?: any) => {
-    if (!token || isProcessing) return;
+    const cleanedToken = token.trim().toUpperCase();
+    if (!cleanedToken || isProcessing) return;
     
     setIsProcessing(true);
     if (scannerInstance) scannerInstance.pause(true); // Freeze camera feed frame tracking
 
     try {
-      // Execute the encapsulated strategy passed by the host dashboard context
-      const result = await onScanExecute(token.trim().toUpperCase());
+      // 1. Run the layout UI checker abstraction sequence passed down by the dashboard core
+      const result = await onScanExecute(cleanedToken);
       
       setScanResult({
         status: result.status,
         message: result.message,
         title: result.name
       });
+
+      // 2. Opportune Background Sync Operation: Runs only on valid new check-ins
+      if (result.status === 'success') {
+        // Fetch the freshly updated local object from Dexie storage links
+        const updatedLocalGuest = await db.guests.where('qrToken').equals(cleanedToken).first();
+        
+        if (updatedLocalGuest && navigator.onLine) {
+          // Attempt an immediate background flush directly to your Next.js PostgreSQL route
+          try {
+            const syncResponse = await fetch('/api/sync/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mutations: [updatedLocalGuest] }),
+            });
+
+            if (syncResponse.ok) {
+              // Successfully written to PostgreSQL. Flips local status to prevent redundant uploads.
+              await db.guests.update(updatedLocalGuest.id!, { syncStatus: 'synced' });
+              console.log(`Background sync stream committed for ticket: ${cleanedToken}`);
+            }
+          } catch (syncErr) {
+            // Fail silently on purpose. The row is marked as 'pending', so SyncStatusBar handles it later.
+            console.warn("Background channel link offline. Mutation cached on local hardware storage slots.");
+          }
+        }
+      }
+
     } catch (err) {
       console.error("Fatal entry track exception:", err);
       setScanResult({ status: 'error', message: 'System verification crash.' });
@@ -110,22 +140,29 @@ export default function EntryDeskCameraScanner({
       }`}>
         
         {/* TERMINAL HEADER CONTROLS */}
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex items-center gap-2">
+        <div className="flex justify-between items-center mb-6 gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Camera size={16} className={accentText} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              Gate Terminal Scanner
+              Terminal Desk
             </span>
           </div>
-          <div className="flex items-center gap-1">
+
+          {/* HUD TELEMETRY WRAPPERS SECTION */}
+          <div className="flex items-center gap-2 flex-1 justify-end">
+            {/* 🚀 NETWORK TELEMETRY SYNC MONITOR (STABILIZED LAYOUT POSITION) */}
+            <div className="w-40 h-9 flex items-center shrink-0">
+              <SyncStatusBar />
+            </div>
+
             <button 
               onClick={() => setShowManualInput(!showManualInput)}
-              className={`p-2 transition-colors ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
+              className={`p-2 transition-colors shrink-0 ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
               title="Toggle Keyboard Input Fallback"
             >
               <Keyboard size={18} />
             </button>
-            <button onClick={onClose} className={`p-2 transition-colors ${isDark ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+            <button onClick={onClose} className={`p-2 transition-colors shrink-0 ${isDark ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
               <X size={18} />
             </button>
           </div>

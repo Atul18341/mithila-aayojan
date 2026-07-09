@@ -34,6 +34,7 @@ export interface Guest {
   isCheckedIn: number; // 0 or 1 for easy syncing
   syncStatus: 'synced' | 'pending';
   checkInTime?: number;
+  
 }
 export interface SessionUser {
   id?: number;
@@ -52,9 +53,9 @@ export class AayojanDB extends Dexie {
 
   constructor() {
     super('MithilaAayojanDB');
-    this.version(1).stores({
+    this.version(2).stores({
      events: '++id, slug, type, status, createdAt',
-      guests: '++id, eventId, qrToken, type, checkInTime',
+      guests: '++id, eventId, qrToken, type, checkInTime,syncStatus',
       users: '++id, identifier, role, assignedEventId',
     });
   }
