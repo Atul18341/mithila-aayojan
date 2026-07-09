@@ -43,6 +43,7 @@ export default function VolunteerCheckInPanel() {
     return (
       <div className={`h-screen w-full flex items-center justify-center ${isDark ? 'bg-[#020617]' : 'bg-slate-50'}`}>
         <Loader className="animate-spin text-purple-500" size={32} />
+        <p>No event active.</p>
       </div>
     );
   }

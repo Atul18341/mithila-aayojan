@@ -1,11 +1,12 @@
-'use client';
+// src/app/layout.tsx
+// 🚨 NOTICE: 'use client' is deliberately absent from the top to ensure font-loading compliance.
 
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { LanguageProvider } from '@/contexts/LanguageContext';
-import Navbar from "@/components/Navbar";
-import Footer from "@/components/Footer";
-import { usePathname } from 'next/navigation';
+import React from 'react';
+import dynamic from 'next/dynamic';
+
+// --- SERVER SIDE ASSET CONFIGURATIONS ---
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -16,37 +17,38 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const metadata = {
+  title: "Mithila Aayojan",
+  description: "Platform Infrastructure Matrix",
+};
 
-
+// 1. MAIN EXPORT: ROOT LAYOUT (Server Component)
 export default function RootLayout({ 
   children 
 }: { 
   children: React.ReactNode 
 }) {
-
-  // If the URL starts with /dashboard, we hide the public Navbar
-  const rulesEngineRoutes = ['/dashboard-eventVolunteers', '/dashboard-eventManager', '/login'];
-const currentPath = usePathname();
-
-// Returns true if currentPath starts with any item in the array
-const shouldHideNavbar = rulesEngineRoutes.some(route => 
-    currentPath?.startsWith(route)
-  );
-
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <LanguageProvider>
-      <body className="min-h-full flex flex-col">
-       {!shouldHideNavbar && <Navbar />}
+      {/* Hand off client routing boundaries safely to our dynamically bound wrapper */}
+      <ClientLayoutShell>
         {children}
-        <Footer/>
-        </body>
-
-      
-      </LanguageProvider>
+      </ClientLayoutShell>
     </html>
   );
 }
+
+// 2. THE DYNAMIC CLIENT ROUTER BRIDGE
+// We dynamically lazy-load this sub-component, telling Next.js it client processing.
+const ClientLayoutShell = dynamic(
+  () => import('./layout-client-bridge'), // Safely points to a clean inner module
+  { 
+    ssr: true,
+    loading: () => (
+      <body className="min-h-full flex flex-col bg-slate-50 animate-pulse" />
+    )
+  }
+);

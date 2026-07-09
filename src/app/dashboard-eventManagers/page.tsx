@@ -40,16 +40,23 @@ export default function ManagerDashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
 
-  // 1. DEXIE LIVE QUERIES (with safety fallback arrays to prevent mapping empty rows)
+  // 1. DEXIE LIVE QUERIES
+  // Master tracking query to fetch records safely
   const events = useLiveQuery(() => db.events.orderBy('createdAt').reverse().toArray()) || [];
 
+  // FIXED: Isolating dependency tracking. It now only watches selectedEventId.
   const activeEvent = useLiveQuery(
     async () => {
-      if (selectedEventId) return await db.events.get(selectedEventId);
-      if (events.length > 0) return events[0];
-      return null;
+      if (selectedEventId) {
+        const selected = await db.events.get(selectedEventId);
+        if (selected) return selected;
+      }
+      // If no ID is explicitly chosen, fetch the latest one directly on the background thread 
+      // without depending on the length of an external reactive array block.
+      const fallbackList = await db.events.orderBy('createdAt').reverse().toArray();
+      return fallbackList.length > 0 ? fallbackList[0] : null;
     },
-    [selectedEventId, events.length]
+    [selectedEventId] // 🚀 Only recalculates when an ID target actually changes
   );
 
   const recentCheckIns = useLiveQuery(
@@ -73,6 +80,7 @@ export default function ManagerDashboard() {
     [activeEvent?.id]
   ) || 0;
 
+  // Sync selected event identifier safely if none is currently tracked
   useEffect(() => {
     if (events.length > 0 && !selectedEventId) {
       setSelectedEventId(events[0].id || null);
@@ -110,7 +118,6 @@ export default function ManagerDashboard() {
     return found ? `text-${found.color}-500` : 'text-orange-600';
   };
 
-  // Safe fallback metrics mappings for fresh creations evaluation checkpoints
   const currentAccent = activeEvent?.type ? getEventAccent(activeEvent.type) : 'text-blue-500';
   const currentAccentBg = activeEvent?.type === 'celebration' ? 'bg-emerald-600' : 'bg-blue-600';
 
@@ -152,7 +159,10 @@ export default function ManagerDashboard() {
             ].map((item) => (
               <button 
                 key={item.label} 
-                onClick={() => { if (item.label === 'Settings' && activeEvent) setIsEditing(true); if (item.label === 'Overview') setIsEditing(false); }}
+                onClick={() => { 
+                  if (item.label === 'Settings' && activeEvent) setIsEditing(true); 
+                  if (item.label === 'Overview') setIsEditing(false); 
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${item.active ? `${theme.accentBg} text-white shadow-lg` : 'text-slate-500 hover:bg-white/5'}`}
               >
                 <item.icon size={18} /> {item.label}
@@ -198,7 +208,11 @@ export default function ManagerDashboard() {
               {isDropdownOpen && events.length > 0 && (
                 <div className={`absolute top-full left-0 mt-4 w-80 rounded-[2.5rem] border ${theme.dropdownMenu} p-3 z-50`}>
                   {events.map((ev) => (
-                    <button key={ev.id} onClick={() => { setSelectedEventId(ev.id || null); setIsDropdownOpen(false); setIsEditing(false); }} className={`w-full flex items-center justify-between p-4 rounded-2xl ${activeEvent?.id === ev.id ? 'bg-white/5' : 'hover:bg-white/5'}`}>
+                    <button 
+                      key={ev.id} 
+                      onClick={() => { setSelectedEventId(ev.id || null); setIsDropdownOpen(false); setIsEditing(false); }} 
+                      className={`w-full flex items-center justify-between p-4 rounded-2xl ${activeEvent?.id === ev.id ? 'bg-white/5' : 'hover:bg-white/5'}`}
+                    >
                       <span className="text-xs font-black">{ev.name}</span>
                     </button>
                   ))}

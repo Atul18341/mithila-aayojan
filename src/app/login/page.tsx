@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { db } from '../../lib/db';
 
-export default function SmartLoginPage() {
+export default function UnifiedLoginPage() {
   const [isDark, setIsDark] = useState(true);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -42,7 +42,10 @@ export default function SmartLoginPage() {
       setIsLoading(false);
       return;
     }
-const FORCE_OFFLINE_DEV = true;
+
+    // Toggle false if you are ready to hit your remote live API routes instead of the Dexie local disk
+    const FORCE_OFFLINE_DEV = true;
+
     try {
       if (navigator.onLine && !FORCE_OFFLINE_DEV) {
         // --- ONLINE PATHWAY: Synchronize authorization with secure cloud architecture ---
@@ -62,39 +65,44 @@ const FORCE_OFFLINE_DEV = true;
 
         // Verify payload structural fields are intact before commit
         const remoteUser = data.user || data;
-        if (!remoteUser || !remoteUser.identifier) {
-          setError('Malformed identification data returned by system directory nodes.');
+        if (!remoteUser || !remoteUser.identifier || !remoteUser.role) {
+          setError('Malformed identification payload returned by directory nodes.');
           setIsLoading(false);
           return;
         }
 
-        // Reset runtime profile data blocks and cache the verified active leadership session
+        // Reset runtime profile data blocks and cache the verified active session matrix
         await db.users.clear();
         await db.users.add({
           identifier: remoteUser.identifier,
           name: remoteUser.name || 'Matrix Operator',
-          passkey: password, // Persisted securely within local matrix variables
-          role: remoteUser.role || 'volunteer',
+          passkey: password, 
+          role: remoteUser.role, // Dynamically maps 'manager' or 'volunteer'
           assignedEventId: remoteUser.assignedEventId || 0,
           token: data.token || 'LOCAL_FALLBACK_TOKEN',
           cachedAt: Date.now()
         });
 
-        router.push(remoteUser.role === 'manager' ? '/dashboard-eventManagers' : '/dashboard-eventVolunteers');
+        // UNIFIED ROUTING LOGIC: Inspect path segments based on verified credentials
+        if (remoteUser.role === 'manager') {
+          router.push('/dashboard-eventManager');
+        } else {
+          router.push('/dashboard-eventVolunteers');
+        }
 
       } else {
         // --- OFFLINE FALLBACK: Safely match local matrix schemas natively offline ---
         const localUser = await db.users.where('identifier').equals(cleanIdentifier).first();
         
         if (!localUser) {
-          setError('This management account has not been provisioned for offline execution on this hardware.');
+          setError('This workspace profile has not been provisioned for offline execution on this hardware.');
           setIsLoading(false);
           return;
         }
 
         // Defensive validation handling for legacy records that lack the passkey property
         if (!localUser.passkey || localUser.passkey !== password) {
-          setError('Invalid administrative clearance credentials supplied.');
+          setError('Invalid operational clearance credentials supplied.');
           setIsLoading(false);
           return;
         }
@@ -107,8 +115,12 @@ const FORCE_OFFLINE_DEV = true;
           return;
         }
 
-        // Resume experience command parameters natively offline
-        router.push(localUser.role === 'manager' ? '/dashboard-eventManagers' : '/dashboard-eventVolunteers');
+        // UNIFIED ROUTING LOGIC: Direct local user to their role-bound terminal view
+        if (localUser.role === 'manager') {
+          router.push('/dashboard-eventManager');
+        } else {
+          router.push('/dashboard-eventVolunteers');
+        }
       }
     } catch (err) {
       console.error("Dexie processing exception runtime trace:", err);
@@ -119,8 +131,8 @@ const FORCE_OFFLINE_DEV = true;
   };
 
   const handleQuickBypass = async (role: 'manager' | 'volunteer') => {
-    const defaultUser = role === 'manager' ? 'manager@lyss.in' : 'volunteer_gate1';
-    setIdentifier(defaultUser);
+    // Populate identity configurations instantly for rapid staging environment validation
+    setIdentifier(role === 'manager' ? 'manager@lyss.in' : 'volunteer_gate1@lyss.in');
     setPassword('password123');
   };
 
@@ -129,7 +141,6 @@ const FORCE_OFFLINE_DEV = true;
     card: isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-xl',
     input: isDark ? 'bg-white/5 border-white/10 text-white focus:border-blue-500' : 'bg-slate-100 border-slate-200 text-slate-900 focus:border-blue-600',
     textMain: isDark ? 'text-white' : 'text-slate-900',
-    textMuted: 'text-slate-500',
   };
 
   return (
@@ -164,7 +175,7 @@ const FORCE_OFFLINE_DEV = true;
           <h2 className="text-2xl font-black italic tracking-tight uppercase mt-2">
             Aayojan <span className="text-blue-500">Terminal</span>
           </h2>
-          <p className="text-xs text-slate-500 font-bold">Provide workspace leadership clearance vectors.</p>
+          <p className="text-xs text-slate-500 font-bold">Provide workspace clearance vectors to enter terminal.</p>
         </div>
 
         {error && (
@@ -180,7 +191,7 @@ const FORCE_OFFLINE_DEV = true;
               <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
               <input 
                 type="text"
-                placeholder="manager@lyss.in"
+                placeholder="manager@lyss.in or volunteer_id"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 disabled={isLoading}
@@ -213,7 +224,7 @@ const FORCE_OFFLINE_DEV = true;
               <Loader2 size={14} className="animate-spin" />
             ) : (
               <>
-                Initialize Leadership Experience <ArrowRight size={14} />
+                Initialize System Workspace <ArrowRight size={14} />
               </>
             )}
           </button>
