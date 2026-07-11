@@ -5,24 +5,22 @@ import React, { useState } from 'react';
 import { LogOut, AlertTriangle, Loader2 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
-import { useRouter } from 'next/navigation';
 
 export default function LogoutButton() {
-  const router = useRouter();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
 
-  // 1. Check if any tables still contain un-synced data items
+  // 1. Scan across ALL local databases for trapped data
   const pendingCount = useLiveQuery(async () => {
     if (!db.isOpen()) await db.open();
     const e = await db.events.where('syncStatus').equals('pending').count();
     const g = await db.guests.where('syncStatus').equals('pending').count();
     const u = await db.users.where('syncStatus').equals('pending').count();
-    return e + g + u;
+    const m = await db.managerEvents.where('syncStatus').equals('pending').count();
+    return e + g + u + m;
   }) || 0;
 
   const handleLogoutAttempt = () => {
-    // Block logout if there are dirty offline rows waiting to go to PostgreSQL
     if (pendingCount > 0) {
       setShowWarning(true);
       return;
@@ -35,20 +33,29 @@ export default function LogoutButton() {
     setShowWarning(false);
 
     try {
-      // 2. Clear out your local volatile runtime user data store (if you have a users table)
-      // We clear the active session/profile configuration but keep core events/guests cache
-      await db.users.where('role').equals('volunteer').delete(); 
+      if (!db.isOpen()) await db.open();
+      
+      // 🚀 FIXED: Dynamically discover and clear all tables within a transaction block.
+      // This bypasses open connection locks caused by live hooks (like useLiveQuery).
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map(table => table.clear()));
+      });
+      
+      console.log("🧹 Offline client database tables successfully purged.");
 
-      // 3. Clear your Next.js Server Cookie / Auth session token via an API route or server action
+      // 3. Clear server cookie session token
       const response = await fetch('/api/auth/logout', { method: 'POST' });
 
       if (response.ok) {
-        // Redirect back to login view portal
-        router.refresh();
-        router.push('/login');
+        // 4. Hard redirect to /login to strip application state memory completely
+        window.location.href = '/login';
+      } else {
+        throw new Error("Server rejected session destruction request.");
       }
     } catch (err) {
       console.error("Logout pipeline execution drop:", err);
+      // Fallback hard redirect if API errors out
+      window.location.href = '/login';
     } finally {
       setIsLoggingOut(false);
     }
@@ -66,7 +73,7 @@ export default function LogoutButton() {
         <span>Exit Terminal</span>
       </button>
 
-      {/* WARNING MODAL OVERLAY: Triggers only if offline data is trapped on browser disk */}
+      {/* WARNING MODAL OVERLAY */}
       {showWarning && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-sm rounded-3xl p-6 bg-[#020617] border border-red-500/30 text-center space-y-4 shadow-2xl">

@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { hydrateDeviceFromCloud } from '@/lib/sync-recovery';
 import { 
   ShieldCheck, KeyRound, User, Sparkles, 
   ArrowRight, Moon, Sun, Loader2, Lock, UserPlus 
@@ -12,23 +13,56 @@ export default function UnifiedLoginPage() {
   const [isDark, setIsDark] = useState(true);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Started as true to prevent flash during automatic session checking
+  const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState('');
   
   const router = useRouter();
+
+  // 🚀 HYBRID TOKEN SESSION RECOVERY: Check if an active, valid session is already cached locally
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      try {
+        if (!db.isOpen()) await db.open();
+
+        // Peek at the first active operator row cached in the system
+        const cachedUser = await db.users.toCollection().first();
+
+        if (cachedUser) {
+          // Verify cache validity matrix constraints (7-day window expiration rule)
+          const isCacheExpired = Date.now() - cachedUser.cachedAt > 7 * 24 * 60 * 60 * 1000;
+          
+          if (!isCacheExpired) {
+            console.log(`Restoring verified cached offline session for ${cachedUser.identifier}`);
+            if (cachedUser.role === 'manager') {
+              router.push('/dashboard-eventManagers');
+            } else {
+              router.push('/dashboard-eventVolunteers');
+            }
+            return;
+          } else {
+            // Clean up stale session entries to force a fresh online validation handshake
+            await db.users.clear();
+          }
+        }
+      } catch (err) {
+        console.error("Local session tracking index lookup error:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkExistingSession();
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
 
-    // Ensure database gateway node connectivity is established
     try {
-      if (!db.isOpen()) {
-        await db.open();
-      }
+      if (!db.isOpen()) await db.open();
     } catch (openErr) {
-      console.error("Critical gateway failure during initialization:", openErr);
       setError("Unable to initialize local security gateway terminal.");
       setIsLoading(false);
       return;
@@ -36,19 +70,15 @@ export default function UnifiedLoginPage() {
 
     const cleanIdentifier = identifier.trim().toLowerCase();
 
-    // Defensive input check to intercept empty evaluation loops
     if (!cleanIdentifier || !password) {
       setError('Operational parameters require absolute configuration vectors.');
       setIsLoading(false);
       return;
     }
 
-    // Toggle false if you are ready to hit your remote live API routes instead of the Dexie local disk
-    const FORCE_OFFLINE_DEV = true;
-
     try {
-      if (navigator.onLine && !FORCE_OFFLINE_DEV) {
-        // --- ONLINE PATHWAY: Synchronize authorization with secure cloud architecture ---
+      // 🚀 ONLINE-FIRST GATEKEEPER PRINCIPLE: Initial logins MUST hit the authentication service route
+      if (navigator.onLine) {
         const response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -58,65 +88,72 @@ export default function UnifiedLoginPage() {
         const data = await response.json();
 
         if (!response.ok) {
-          setError(data.message || 'Authentication rejected by security orchestration vectors.');
+          setError(data.message || 'Authentication rejected by secure directory nodes.');
           setIsLoading(false);
           return;
         }
 
-        // Verify payload structural fields are intact before commit
         const remoteUser = data.user || data;
+        console.log("data:",remoteUser)
         if (!remoteUser || !remoteUser.identifier || !remoteUser.role) {
-          setError('Malformed identification payload returned by directory nodes.');
+          setError('Malformed identification payload returned by cloud network nodes.');
           setIsLoading(false);
           return;
         }
 
-        // Reset runtime profile data blocks and cache the verified active session matrix
+        // 🚀 HYBRID DATA SEEDING: Wipe old matrices and pin the new authoritative token configuration
         await db.users.clear();
         await db.users.add({
           identifier: remoteUser.identifier,
           name: remoteUser.name || 'Matrix Operator',
-          passkey: password, 
-          role: remoteUser.role, // Dynamically maps 'manager' or 'volunteer'
-          assignedEventId: remoteUser.assignedEventId || 0,
+          passkey:'', // Retained purely for local credential checking fallback operations
+          role: remoteUser.role,
+          activeEventId: remoteUser.assignedEventId || 0,
           token: data.token || 'LOCAL_FALLBACK_TOKEN',
           cachedAt: Date.now(),
-          syncStatus:'pending'
+          syncStatus: 'synced' // User profile itself is clean post-handshake setup
         });
+        setLoadingText('Synchronizing workspace records from cloud data anchors...');
+      await hydrateDeviceFromCloud(remoteUser.identifier);
 
-        // UNIFIED ROUTING LOGIC: Inspect path segments based on verified credentials
+      // 3. Auto-select the first newly pulled event as active context so workspace fills seamlessly
+      const firstEvent = await db.events.toCollection().first();
+      if (firstEvent && firstEvent.id) {
+        await db.users.where('identifier').equals(remoteUser.identifier).modify({
+          activeEventId: firstEvent.id
+        })
+      }
+        // Safe client redirection routing to the active control terminal
         if (remoteUser.role === 'manager') {
-          router.push('/dashboard-eventManager');
+          router.push('/dashboard-eventManagers');
         } else {
           router.push('/dashboard-eventVolunteers');
         }
 
       } else {
-        // --- OFFLINE FALLBACK: Safely match local matrix schemas natively offline ---
+        // --- HARDENED OFFLINE AUTONOMOUS VERIFICATION ---
+        // If the device drops mid-shift and needs to re-auth, allow matching ONLY if seeded previously
         const localUser = await db.users.where('identifier').equals(cleanIdentifier).first();
         
         if (!localUser) {
-          setError('This workspace profile has not been provisioned for offline execution on this hardware.');
+          setError('This device terminal has not been provisioned. Initial login requires an active network link.');
           setIsLoading(false);
           return;
         }
 
-        // Defensive validation handling for legacy records that lack the passkey property
         if (!localUser.passkey || localUser.passkey !== password) {
           setError('Invalid operational clearance credentials supplied.');
           setIsLoading(false);
           return;
         }
 
-        // Validate local cache timeline constraint matrices to prevent token spoofing
         const isCacheExpired = Date.now() - localUser.cachedAt > 7 * 24 * 60 * 60 * 1000;
         if (isCacheExpired) {
-          setError('Offline leadership clearance window has expired. Establish network link to re-verify.');
+          setError('Offline security clearance has expired. Establish network access to refresh access token keys.');
           setIsLoading(false);
           return;
         }
-
-        // UNIFIED ROUTING LOGIC: Direct local user to their role-bound terminal view
+        
         if (localUser.role === 'manager') {
           router.push('/dashboard-eventManagers');
         } else {
@@ -132,7 +169,6 @@ export default function UnifiedLoginPage() {
   };
 
   const handleQuickBypass = async (role: 'manager' | 'volunteer') => {
-    // Populate identity configurations instantly for rapid staging environment validation
     setIdentifier(role === 'manager' ? 'manager@lyss.in' : 'volunteer_gate1@lyss.in');
     setPassword('password123');
   };
@@ -146,11 +182,8 @@ export default function UnifiedLoginPage() {
 
   return (
     <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-center items-center p-4 relative overflow-hidden pt-10`}>
-      
-      {/* BRANDING BACKGROUND GRAPHICS */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* LIGHT/DARK OVERLAY MODIFIER */}
       <div className="absolute top-6 right-6">
         <button 
           type="button"
@@ -166,9 +199,7 @@ export default function UnifiedLoginPage() {
         </button>
       </div>
 
-      {/* CORE LOGIN FORM MODULE */}
       <div className={`w-full max-w-md border p-8 rounded-[2.5rem] relative z-10 backdrop-blur-xl transition-all duration-300 ${theme.card}`}>
-        
         <div className="text-center space-y-2 mb-8">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-black uppercase tracking-widest">
             <Sparkles size={10} className="animate-pulse" /> Security Gateway Active
@@ -231,7 +262,6 @@ export default function UnifiedLoginPage() {
           </button>
         </form>
 
-        {/* SIGNUP LINK REDIRECTION */}
         <div className="mt-5 text-center">
           <button
             type="button"
@@ -242,7 +272,6 @@ export default function UnifiedLoginPage() {
           </button>
         </div>
 
-        {/* SIMULATED TESTING PARAMS CONTAINER */}
         <div className="mt-6 pt-5 border-t border-dashed border-slate-700/30 text-center">
           <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3">Dev Environment Quick Roles</p>
           <div className="grid grid-cols-2 gap-2">
@@ -262,10 +291,8 @@ export default function UnifiedLoginPage() {
             </button>
           </div>
         </div>
-
       </div>
 
-      {/* PERSISTENT RUNTIME BRAND FOOTER */}
       <footer className="mt-8 text-[8px] font-black text-slate-600 uppercase tracking-[0.25em] relative z-10">
         Inspiring Leadership through Technical Innovation
       </footer>

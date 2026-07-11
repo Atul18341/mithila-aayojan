@@ -1,3 +1,4 @@
+// src/app/dashboard/_components/event-details.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -6,11 +7,11 @@ import {
   Type, Settings2, Sparkles, CheckCircle2, Loader2,
   TrendingUp, X, Globe
 } from 'lucide-react'; 
-import { db } from '../../../lib/db'; // Adjusted to look directly at your class schema definitions
+import { db } from '../../../lib/db'; 
 
 interface EventDetailEditorProps {
   isDark?: boolean;
-  event: any | null; // Loosened up schema pointer type definitions to match dynamic version layers cleanly
+  event: any | null; 
   onCreationSuccess?: (newEventId: number) => void; 
   onClose: () => void; 
 }
@@ -95,7 +96,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
     if (saveStatus === 'success') setSaveStatus('idle');
   };
 
-  // HANDLES BOTH SAVE AND CREATE LOGIC WITH ATOMIC PENDING FLAGS
   const handleSaveOrCreate = async (forcedStatus?: 'draft' | 'published' | 'unpublished') => {
     if (!details.title.trim()) return;
     forcedStatus === 'published' ? setIsPublishing(true) : setIsSaving(true);
@@ -114,12 +114,12 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
       date: details.primaryDate,
       type: details.type,
       protocol: details.protocol, 
-      status: forcedStatus || currentStatus, // Respects forced publish triggers
+      status: forcedStatus || currentStatus, 
       slug: generatedSlug || 'live-slug',
       hypeThreshold: details.hypeThreshold,
       visibility: details.visibility,
       createdAt: event?.createdAt || Date.now(),
-      syncStatus: 'pending' as const // 🚀 CRITICAL REFACTOR: Flag this record as pending for background processing
+      syncStatus: 'pending' as const 
     };
 
     try {
@@ -135,7 +135,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
         if (forcedStatus) setCurrentStatus(forcedStatus);
       }
 
-      // 🌟 Opportune Staging Step: Trigger instant API sync if device is online
       if (navigator.onLine) {
         try {
           const currentEventId = event?.id || 1;
@@ -150,7 +149,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
 
             if (response.ok) {
               await db.events.update(currentEventId, { syncStatus: 'synced' });
-              console.log("Background channel committed event matrix updates safely.");
             }
           }
         } catch (netErr) {
@@ -170,12 +168,13 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
   const accentColor = details.type === 'celebration' ? 'emerald' : 'blue';
 
   return (
-    <div className={`w-full max-w-5xl mx-auto rounded-[2.5rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-500 mb-16 relative flex flex-col ${
+    /* 🚀 FIXED: Added h-full and min-h-0 to let this main component scale correctly inside page constraints */
+    <div className={`w-full max-w-5xl mx-auto rounded-[1.5rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-500 relative flex flex-col h-full min-h-0 ${
       isDark ? 'bg-[#020617] border-white/10' : 'bg-white border-slate-200 shadow-xl'
     }`}>
       
       {/* STICKY CONFIGURATION HEADER */}
-      <div className="p-6 md:p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-inherit z-10">
+      <div className="p-6 md:p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-inherit z-10 shrink-0">
         <div>
           <div className={`flex items-center gap-2 text-${accentColor}-500 mb-1`}>
             <Settings2 size={16} />
@@ -188,7 +187,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
               {isCreateMode ? (details.title || "Initialize New Event") : details.title}
             </h2>
             
-            {/* STATUS MICRO BADGE */}
             {!isCreateMode && (
               <span className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border ${
                 currentStatus === 'published' 
@@ -201,7 +199,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
           </div>
         </div>
         
-        {/* CONTROL ACTION BUTTON LAYOUT GRID */}
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
           {!isCreateMode && (
             <button
@@ -216,7 +213,6 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
             </button>
           )}
 
-          {/* DYNAMIC PUBLISH OPERATION BUTTON */}
           {!isCreateMode && currentStatus !== 'published' ? (
             <button
               type="button"
@@ -258,7 +254,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
             onClick={onClose}
             className={`p-3 rounded-xl border transition-all hover:scale-105 flex items-center justify-center ${
               isDark 
-                ? 'bg-white/5 border-white/10 text-slate-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20' 
+                ? 'bg-white/5 border-white/10 text-slate-400 hover:text-red-400 hover:bg-red-50/10 hover:border-red-500/20' 
                 : 'bg-slate-100 border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 hover:border-red-200'
             }`}
             title="Discard Configuration and Return"
@@ -269,10 +265,11 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
       </div>
 
       {/* CORE WORKSPACE CONTENT PANEL */}
-      <div className="flex flex-col md:flex-row md:h-[720px] overflow-hidden bg-inherit relative">
+      {/* 🚀 FIXED: Set md:h-[calc(100vh-14rem)] and flex-1 so it matches dashboard bounds dynamically */}
+      <div className="flex flex-col md:flex-row md:h-[calc(100vh-14rem)] overflow-hidden bg-inherit relative flex-1 min-h-0 w-full">
         
         {/* NAV SELECTION TAB SIDEBAR */}
-        <div className={`w-full md:w-64 border-b md:border-b-0 md:border-r ${isDark ? 'border-white/5' : 'border-slate-100'} p-5 space-y-2 bg-black/10 shrink-0 flex flex-col justify-between`}>
+        <div className={`w-full md:w-64 border-b md:border-b-0 md:border-r ${isDark ? 'border-white/5' : 'border-slate-100'} p-5 space-y-2 bg-black/10 shrink-0 flex flex-col justify-between h-full overflow-y-auto`}>
           <div className="space-y-2">
             {[
               { id: 'basics', label: 'Basic Info', icon: Type },
@@ -296,7 +293,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
           </div>
 
           {isCreateMode && (
-            <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-center space-y-1 hidden md:block animate-pulse">
+            <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-center space-y-1 hidden md:block animate-pulse shrink-0">
               <Sparkles size={14} className="mx-auto text-amber-500" />
               <p className="text-[8px] font-black text-amber-500 uppercase tracking-wider">Unsaved Buffer Active</p>
             </div>
@@ -304,13 +301,13 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
         </div>
 
         {/* COMPONENT CONTENT FRAME RENDERS */}
-        <div className="flex-1 overflow-y-auto px-6 py-8 md:px-10 md:py-10 custom-scrollbar scroll-smooth relative h-full pb-36">
+        {/* 🚀 FIXED: Lowered bottom padding configuration from pb-36 to pb-10 so scrolling indicators behave nicely inside borders */}
+        <div className="flex-1 overflow-y-auto px-6 py-6 md:px-10 md:py-8 custom-scrollbar scroll-smooth relative h-full pb-10">
           
           {/* TAB DATA: BASICS CONSOLE */}
           {activeTab === 'basics' && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
               
-              {/* COMPONENT: GROWTH LOGIC PROTOCOL CONTROL */}
               <div className={`p-6 rounded-3xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}>
                 <div className="flex justify-between items-end mb-6">
                   <div className="space-y-1">
@@ -331,15 +328,11 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
                   onChange={handleSliderChange}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-${accentColor}-500 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}
                 />
-                <p className="mt-4 text-[9px] text-slate-500 font-medium leading-relaxed italic">
-                  *Determines when the "Hype Mode" sparkles activate on the guest-facing landing frames.
-                </p>
               </div>
 
-              {/* COMPONENT: CLASSIFIERS CONFIGURATION MATRIX CONTAINER */}
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="space-y-2 md:col-span-1">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1.5 md:col-span-1">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Public Event Title</label>
                     <input 
                       type="text" 
@@ -348,17 +341,17 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
                       placeholder="EX: Mithila Sanwaad Karyakram"
                       value={details.title}
                       onChange={handleChange}
-                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all`}
+                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-3.5 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all`}
                     />
                   </div>
                   
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Experience Type</label>
                     <select
                       name="type"
                       value={details.type}
                       onChange={handleChange}
-                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all cursor-pointer ${isDark ? '[&_option]:bg-[#020617] text-white' : '[&_option]:bg-white text-slate-900'}`}
+                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-3.5 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all cursor-pointer ${isDark ? '[&_option]:bg-[#020617] text-white' : '[&_option]:bg-white text-slate-900'}`}
                     >
                       <option value="event">Sanwaad / Event</option>
                       <option value="celebration">Celebration</option>
@@ -368,13 +361,13 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
                     </select>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Entry Strategy Protocol</label>
                     <select
                       name="protocol"
                       value={details.protocol}
                       onChange={handleChange}
-                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all cursor-pointer ${isDark ? '[&_option]:bg-[#020617] text-white' : '[&_option]:bg-white text-slate-900'}`}
+                      className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-5 py-3.5 text-sm font-bold outline-none focus:border-${accentColor}-500 transition-all cursor-pointer ${isDark ? '[&_option]:bg-[#020617] text-white' : '[&_option]:bg-white text-slate-900'}`}
                     >
                       <option value="open-registration">Open Registration</option>
                       <option value="ticketed">Ticketed / Verification Needed</option>
@@ -383,7 +376,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Tagline</label>
                   <input 
                     type="text" 
@@ -391,14 +384,14 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
                     placeholder="Enter short identifying experience thematic message"
                     value={details.tagline}
                     onChange={handleChange}
-                    className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-6 py-4 text-sm outline-none focus:border-${accentColor}-500 transition-all`}
+                    className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-6 py-3.5 text-sm outline-none focus:border-${accentColor}-500 transition-all`}
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Description</label>
                   <textarea 
-                    rows={6} 
+                    rows={4} 
                     name="description"
                     placeholder="Elaborate details structural parameters regarding operational objectives..."
                     value={details.description}
@@ -412,25 +405,25 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
 
           {/* TAB DATA: GEOGRAPHIC VENUE BOUNDARY DEFINITIONS */}
           {activeTab === 'location' && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
+            <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Venue Name</label>
-                    <input name="venueName" type="text" placeholder="EX: Town Hall Complex" value={details.venueName} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-6 py-4 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
+                    <input name="venueName" type="text" placeholder="EX: Town Hall Complex" value={details.venueName} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl px-6 py-3.5 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Event Date</label>
                     <div className="relative">
-                      <Calendar className="absolute left-4 top-4 text-slate-500" size={18} />
-                      <input name="primaryDate" type="date" value={details.primaryDate} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl pl-12 pr-6 py-4 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
+                      <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
+                      <input name="primaryDate" type="date" value={details.primaryDate} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl pl-12 pr-6 py-3.5 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
                     </div>
                   </div>
                </div>
-               <div className="space-y-2">
+               <div className="space-y-1.5">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Address / Maps Location Resource</label>
                   <div className="relative">
-                    <MapPin className="absolute left-4 top-4 text-slate-500" size={18} />
-                    <input name="address" type="text" placeholder="Specify geographic coordinate details strings" value={details.address} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl pl-12 pr-6 py-4 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
+                    <MapPin className="absolute left-4 top-3.5 text-slate-500" size={18} />
+                    <input name="address" type="text" placeholder="Specify geographic coordinate details strings" value={details.address} onChange={handleChange} className={`w-full bg-white/5 border ${isDark ? 'border-white/10' : 'border-slate-200'} rounded-2xl pl-12 pr-6 py-3.5 text-sm outline-none focus:border-${accentColor}-500 transition-all`} />
                   </div>
                </div>
             </div>
@@ -438,10 +431,10 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
 
           {/* TAB DATA: MODULE VISIBILITY MATRIX */}
           {activeTab === 'controls' && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 mb-2">Module Management Matrix</p>
+            <div className="space-y-3 animate-in fade-in slide-in-from-right-4 duration-300">
+               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 mb-1">Module Management Matrix</p>
                {Object.entries(details.visibility).map(([key, value]) => (
-                 <div key={key} className={`flex items-center justify-between p-5 rounded-2xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'} hover:border-${accentColor}-500/30 transition-colors`}>
+                 <div key={key} className={`flex items-center justify-between p-4 rounded-2xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'} hover:border-${accentColor}-50/30 transition-colors`}>
                     <div className="flex items-center gap-3">
                        {value ? <Eye className={`text-${accentColor}-500`} size={18} /> : <EyeOff className="text-slate-500" size={18} />}
                        <span className="text-xs font-black uppercase tracking-widest">{key} Component rendering</span>
@@ -467,7 +460,7 @@ export default function EventDetailEditor({ isDark = true, event, onCreationSucc
       </div>
       
       {/* METADATA PERSISTENCE FOOTER */}
-      <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-t-white/5' : 'border-t-slate-100'} flex items-center justify-center gap-2 relative z-10`}>
+      <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-t-white/5' : 'border-t-slate-100'} flex items-center justify-center gap-2 relative z-10 shrink-0`}>
           <Sparkles size={12} className="text-amber-500" />
           <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
             {isCreateMode ? 'Engine Storage Target Allocation: ' : 'Persistence Link: '} 

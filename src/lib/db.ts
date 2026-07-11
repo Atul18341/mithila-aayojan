@@ -7,12 +7,11 @@ export interface Events {
   type: 'conference' | 'summit' | 'event' | 'workshop' | 'celebration';
   protocol: 'invite-only' | 'open-registration' | 'ticketed';
   slug: string;
-  status: 'draft' | 'published' |'unpublished';
+  status: 'draft' | 'published' | 'unpublished';
   isCountPublic?: boolean;
   hypeThreshold: number;
   createdAt: number;
   syncStatus: 'synced' | 'pending';
-  // --- ADD THESE NEW FIELDS ---
   date?: string;
   location?: string;
   tagline?: string;
@@ -25,6 +24,7 @@ export interface Events {
     gallery: boolean;
   };
 }
+
 export interface Guest {
   id?: number;
   eventId: number;
@@ -34,30 +34,41 @@ export interface Guest {
   isCheckedIn: number; // 0 or 1 for easy syncing
   syncStatus: 'synced' | 'pending';
   checkInTime?: number;
-  
 }
+
 export interface SessionUser {
   id?: number;
   identifier: string;    // e.g., "gate1@lyss.in"
   name: string;
-  passkey:string;
+  passkey: string |'';
   role: 'manager' | 'volunteer';
-  assignedEventId: number;
+  activeEventId: number;
   token: string;          // Encrypted JWT session string returned by the server
-  cachedAt: number;  
-  syncStatus: 'synced' | 'pending';     // Epoch timestamp to check for local session expiration
+  cachedAt: number; 
+  syncStatus: 'synced' | 'pending';
 }
+
+// 🚀 ADDED NEW INTERFACE FOR MANY-TO-MANY RELATIONSHIP LINKS
+export interface ManagerEvents {
+  id?: number;
+  managerIdentifier: string;
+  eventId: number;
+  syncStatus: 'synced' | 'pending';
+}
+
 export class AayojanDB extends Dexie {
   events!: Table<Events>;
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
+  managerEvents!: Table<ManagerEvents>; // 🚀 REGISTERED MANAGE EVENTS TABLE PUSH EXPLICITLY
 
   constructor() {
     super('MithilaAayojanDB');
     this.version(2).stores({
-     events: '++id, slug, type, status, createdAt,syncStatus',
+      events: '++id, slug, type, status, createdAt,syncStatus',
       guests: '++id, eventId, qrToken, type, checkInTime,syncStatus',
-      users: '++id, identifier, role, assignedEventId,syncStatus',
+      users: '++id, identifier, role,syncStatus',
+      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, syncStatus' // Composite index added
     });
   }
 }

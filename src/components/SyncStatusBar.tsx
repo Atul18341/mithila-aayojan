@@ -18,14 +18,28 @@ export default function SyncStatusBar() {
     const pendingEvents = await db.events.where('syncStatus').equals('pending').toArray();
     const pendingGuests = await db.guests.where('syncStatus').equals('pending').toArray();
     const pendingUsers = await db.users.where('syncStatus').equals('pending').toArray();
+    const pendingLinks = await db.managerEvents.where('syncStatus').equals('pending').toArray();
 
+    const activeSession = await db.users.toCollection().first();
+    
     return {
       events: pendingEvents,
       guests: pendingGuests,
       users: pendingUsers,
-      totalCount: pendingEvents.length + pendingGuests.length + pendingUsers.length
+      managerEvents: pendingLinks,
+      managerEmail: activeSession?.identifier || 'unknown_offline_worker',
+      userId: activeSession?.id || null,
+      totalCount: pendingEvents.length + pendingGuests.length + pendingUsers.length + pendingLinks.length
     };
-  }) || { events: [], guests: [], users: [], totalCount: 0 };
+  }) || { 
+    events: [], 
+    guests: [], 
+    users: [], 
+    managerEvents: [], 
+    managerEmail: 'unknown_offline_worker', 
+    userId: null, 
+    totalCount: 0 
+  };
 
   const handleGlobalSync = async () => {
     if (isSyncing || telemetryData.totalCount === 0) return;
@@ -34,25 +48,55 @@ export default function SyncStatusBar() {
     setLastSyncCounts(null);
 
     try {
-      // Package up local updates into an envelope structure
+      // 🚀 HARDENING STEP: Inject transaction timestamp metadata onto rows before payload sequence transmission
+      // This guarantees your Option A 'client_timestamp' column can evaluate safely without falling back to system defaults.
+      const sanitizedEvents = telemetryData.events.map(ev => ({
+        ...ev,
+        clientTimestamp: ev.createdAt || Date.now()
+      }));
+
+      const sanitizedGuests = telemetryData.guests.map(gst => ({
+        ...gst,
+        clientTimestamp: gst.checkInTime || Date.now()
+      }));
+
+      const sanitizedLinks = telemetryData.managerEvents.map(link => ({
+        ...link,
+        clientTimestamp: Date.now()
+      }));
+
       const response = await fetch('/api/sync/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          events: telemetryData.events,
-          guests: telemetryData.guests,
-          users: telemetryData.users
+          events: sanitizedEvents,
+          guests: sanitizedGuests,
+          users: telemetryData.users,
+          managerEvents: sanitizedLinks, 
+          managerEmail: telemetryData.managerEmail,
+          userId: telemetryData.userId
         }),
       });
 
-      if (!response.ok) throw new Error("Cloud synchronization interface rejected payload sequence.");
+      // 🚀 SAFELY PARSE DB EXCEPTION ERROR FOOTPRINTS
+      if (!response.ok) {
+        let serverErrorMessage = "Cloud synchronization interface rejected payload sequence.";
+        try {
+          const errData = await response.json();
+          if (errData.details || errData.error) {
+            serverErrorMessage = `Sync Rejected: ${errData.details || errData.error}`;
+          }
+        } catch {
+          // Fallback if response is not JSON
+        }
+        throw new Error(serverErrorMessage);
+      }
 
-      // 🚀 Parse the verified successful counts returned by the PostgreSQL server transaction
       const result = await response.json();
       
       if (result.success && result.counts) {
-        // 🚀 UNIFIED MULTI-TABLE TRANSACTION: Clears local queues ONLY after server confirmation
-        await db.transaction('rw', [db.events, db.guests, db.users], async () => {
+        // UNIFIED MULTI-TABLE TRANSACTION: Clears local queues ONLY after server confirmation
+        await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents], async () => {
           for (const ev of telemetryData.events) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
           }
@@ -62,15 +106,18 @@ export default function SyncStatusBar() {
           for (const usr of telemetryData.users) {
             if (usr.id) await db.users.update(usr.id, { syncStatus: 'synced' });
           }
+          for (const link of telemetryData.managerEvents) {
+            if (link.id) await db.managerEvents.update(link.id, { syncStatus: 'synced' });
+          }
         });
 
-        // Store the server's confirmed transaction metrics locally
         setLastSyncCounts(result.counts);
         console.log(`Successfully synced ${result.counts.total} rows confirmed by Postgres server.`);
       }
     } catch (err: any) {
       console.error("Global sync flush failed:", err);
-      setSyncError("Network link issue. Tap to retry.");
+      // Display the actual error description text directly inside the status button for quick debugging
+      setSyncError(err.message || "Network link issue. Tap to retry.");
     } finally {
       setIsSyncing(false);
     }
@@ -91,17 +138,12 @@ export default function SyncStatusBar() {
     };
   }, [telemetryData.totalCount, isSyncing]);
 
-  // 🚀 REFRACTORED COLOR STATE ENGINE: Checks server confirmation data points explicitly
   const getColorScheme = () => {
     if (isSyncing) return 'bg-blue-500/10 border-blue-500/30 text-blue-400 cursor-not-allowed';
     if (syncError) return 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20';
-    
-    // Check if there are outstanding client updates waiting to go out
     if (telemetryData.totalCount > 0) {
       return 'bg-amber-500/10 border-amber-500/30 text-amber-400 animate-pulse hover:bg-amber-500/20';
     }
-    
-    // Shows solid emerald green only when current local updates equal 0
     return 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20';
   };
 
@@ -111,6 +153,7 @@ export default function SyncStatusBar() {
       onClick={handleGlobalSync}
       disabled={isSyncing}
       className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all w-full h-full ${getColorScheme()}`}
+      title={syncError || undefined}
     >
       {isSyncing ? (
         <>
@@ -120,7 +163,7 @@ export default function SyncStatusBar() {
       ) : syncError ? (
         <>
           <CloudSync size={14} />
-          <span>Retry Sync</span>
+          <span className="truncate max-w-[120px]">{syncError.includes("Sync Rejected") ? "Schema Error" : "Retry Sync"}</span>
         </>
       ) : telemetryData.totalCount > 0 ? (
         <>
