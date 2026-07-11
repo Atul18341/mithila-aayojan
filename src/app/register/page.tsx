@@ -61,7 +61,7 @@ export default function SecuritySignupPage() {
         name: name.trim(),
         passkey: password,              
         role: 'manager',                 // Strictly locked down to Event Manager context execution
-        assignedEventId: 0,             
+        activeEventId: 0,             
         token: 'LOCAL_OFFLINE_SETUP',   
         cachedAt: Date.now(), 
         syncStatus:'pending'           
