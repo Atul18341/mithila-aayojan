@@ -31,7 +31,7 @@ export interface EventData {
   id?: number;
   name: string;
   type: string;
-  date: string;
+  date?: string;
   startTime?: string;
   endTime?: string;
   protocol: string;

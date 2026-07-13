@@ -43,9 +43,11 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
             map: true,
             rsvp: true,
             schedule: true,
-            gallery: true
+            gallery: true,
+            coverBlob: ev.coverBlob || null,
+            posterBlob: ev.posterBlob || null,
             }
-  });
+  }as any);
       }
 
       // 3. Hydrate Local Junction Link Indexes
