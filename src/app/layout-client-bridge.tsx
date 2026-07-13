@@ -4,6 +4,7 @@
 import React from 'react';
 import { usePathname } from 'next/navigation';
 import { LanguageProvider } from '@/contexts/LanguageContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
@@ -23,6 +24,7 @@ export default function ClientLayoutShell({ children }: { children: React.ReactN
   );
 
   return (
+    <ThemeProvider>
     <LanguageProvider>
       <body className="min-h-full flex flex-col">
         {!shouldHideNavbar && <Navbar />}
@@ -32,5 +34,6 @@ export default function ClientLayoutShell({ children }: { children: React.ReactN
         {!shouldHideNavbar && <Footer />}
       </body>
     </LanguageProvider>
+    </ThemeProvider>
   );
 }
