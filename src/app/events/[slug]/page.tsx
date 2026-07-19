@@ -1,17 +1,29 @@
 // src/app/events/[slug]/page.tsx
 'use client';
 
-import React, { useState, useEffect, use } from 'react'; // 🚀 Added 'use'
+import React, { useState, useEffect, use } from 'react';
 import { db } from '../../../lib/db'; 
 import PublicEventPortal from './PublicEventPortal';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 interface PageProps {
-  params: Promise<{ slug: string }>; // 🚀 typed params explicitly as a Promise
+  params: Promise<{ slug: string }>;
+}
+
+// 🚀 HELPER UTILITY: Streams remote public assets over network maps into binary Blobs
+async function fetchImageAsBlob(url: string | null): Promise<Blob | null> {
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch (err) {
+    console.error(`Failed to fetch and process asset binary conversion for url: ${url}`, err);
+    return null;
+  }
 }
 
 export default function EventDynamicRoutingWrapper({ params }: PageProps) {
-  // 🚀 STEP 1: Unwrap the dynamic params Promise using React's use() hook
   const unwrappedParams = use(params);
   const slug = unwrappedParams.slug;
 
@@ -20,49 +32,106 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    // Keep track of active Object URLs to safely clear allocations when hooks update
+    const createdObjectUrls: string[] = [];
+
+    const createSafeObjectURL = (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      createdObjectUrls.push(url);
+      return url;
+    };
+
     async function evaluateHybridDataLayer() {
       try {
         setLoading(true);
-        // 🚀 STEP 2: Interrogate the Local IndexedDB (Dexie) Instance First
         const cachedLocalEvent = await db.events.where('slug').equals(slug).first();
 
         if (cachedLocalEvent) {
+          // 🚀 Case A: Local Cache Hits -> Hydrate Object URLs instantly from local storage memory
           const processedLocalData = {
             ...cachedLocalEvent,
-            coverImageUrl: cachedLocalEvent.coverBlob ? URL.createObjectURL(cachedLocalEvent.coverBlob) : cachedLocalEvent.coverImageUrl,
-            posterImageUrl: cachedLocalEvent.posterBlob ? URL.createObjectURL(cachedLocalEvent.posterBlob) : cachedLocalEvent.posterImageUrl,
+            coverImageUrl: cachedLocalEvent.coverBlob ? createSafeObjectURL(cachedLocalEvent.coverBlob) : cachedLocalEvent.coverImageUrl,
+            posterImageUrl: cachedLocalEvent.posterBlob ? createSafeObjectURL(cachedLocalEvent.posterBlob) : cachedLocalEvent.posterImageUrl,
           };
           
           setEventRecord(processedLocalData);
           setLoading(false);
-
-          // 🔄 Quiet background reconciliation if internet availability is confirmed
+          // Quiet background reconciliation if internet availability is confirmed
           if (navigator.onLine) {
-            fetch(`/api/events/get?slug=${slug}`)
+            fetch(`/api/events/public?slug=${slug}`) 
               .then(res => res.ok ? res.json() : null)
-              .then(freshCloudRecord => {
-                if (freshCloudRecord) {
-                  db.events.update(cachedLocalEvent.id, freshCloudRecord);
+              .then(async (freshCloudData) => {
+                if (freshCloudData && Array.isArray(freshCloudData.events) && freshCloudData.events.length > 0) {
+                  const remoteEvent = freshCloudData.events[0];
+                  
+                  // Check if images require parsing updates
+                  let updatedCoverBlob = cachedLocalEvent.coverBlob;
+                  let updatedPosterBlob = cachedLocalEvent.posterBlob;
+
+                  if (remoteEvent.coverImageUrl && !cachedLocalEvent.coverBlob) {
+                    updatedCoverBlob = await fetchImageAsBlob(remoteEvent.coverImageUrl);
+                  }
+                  if (remoteEvent.posterImageUrl && !cachedLocalEvent.posterBlob) {
+                    updatedPosterBlob = await fetchImageAsBlob(remoteEvent.posterImageUrl);
+                  }
+
+                  // 🚀 FIX: Explicit put using the absolute local primary key ID reference to avoid collisions
+                  await db.events.put({
+                    ...remoteEvent,
+                    id: cachedLocalEvent.id, 
+                    coverBlob: updatedCoverBlob,
+                    posterBlob: updatedPosterBlob,
+                    syncStatus: 'synced'
+                  });
                 }
               })
               .catch(() => console.log("Background synchronization deferred."));
           }
         } else {
-          // 🚀 STEP 3: Fallback to Remote Database API Router since local memory returned empty
+          // 🚀 Case B: Local Cache Misses -> Hydrate from public route, convert to binary arrays, and cache
           if (!navigator.onLine) {
             throw new Error("This event ledger isn't cached locally, and your system is currently offline.");
           }
 
-          const response = await fetch(`/api/events/get?slug=${slug}`);
+          const response = await fetch(`/api/events/public?slug=${slug}`); 
           if (!response.ok) {
             throw new Error("The requested experience parameters were not found on remote storage targets.");
           }
           
           const onlineCloudData = await response.json();
           
-          if (onlineCloudData) {
-            await db.events.add({ ...onlineCloudData, syncStatus: 'synced' });
-            setEventRecord(onlineCloudData);
+          if (onlineCloudData && onlineCloudData.events && onlineCloudData.events.length > 0) {
+            const remoteEvent = onlineCloudData.events[0];
+
+            // Downstream conversion logic processing the R2 keys before writing to IndexedDB
+            const [coverBlob, posterBlob] = await Promise.all([
+              fetchImageAsBlob(remoteEvent.coverImageUrl),
+              fetchImageAsBlob(remoteEvent.posterImageUrl)
+            ]);
+
+            // 🚀 FIX: Look up index registry records to locate any hidden keys before tracking mappings
+            const existingRecordBySlug = await db.events.where('slug').equals(slug).first();
+
+            const newLocalRecord = {
+              ...remoteEvent,
+              // Preserves internal local auto-increment key parameters safely
+              id: existingRecordBySlug ? existingRecordBySlug.id : remoteEvent.id,
+              coverBlob,
+              posterBlob,
+              syncStatus: 'synced'
+            };
+
+            // 🚀 FIX: Swapped .add() out for .put() to gracefully allow upserts and overwrite key conflicts
+            await db.events.put(newLocalRecord);
+
+            // Hydrate the layout view context variables safely using temporary Object memory urls
+            const renderedRecordData = {
+              ...newLocalRecord,
+              coverImageUrl: coverBlob ? createSafeObjectURL(coverBlob) : remoteEvent.coverImageUrl,
+              posterImageUrl: posterBlob ? createSafeObjectURL(posterBlob) : remoteEvent.posterImageUrl
+            };
+
+            setEventRecord(renderedRecordData);
           } else {
             throw new Error("Empty target signature returned from remote records.");
           }
@@ -78,6 +147,11 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
     if (slug) {
       evaluateHybridDataLayer();
     }
+
+    // CLEANUP: Revoke all object paths safely on cleanup to clear browser RAM arrays
+    return () => {
+      createdObjectUrls.forEach(url => URL.revokeObjectURL(url));
+    };
   }, [slug]);
 
   if (loading) {

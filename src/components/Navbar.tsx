@@ -81,21 +81,7 @@ export default function Navbar() {
               <li><Link href="/" className="hover:text-orange-600 transition-colors">Home</Link></li>
               <li><Link href="#features" className="hover:text-orange-600 transition-colors">{t.navFeatures}</Link></li>
               
-              <li className="relative" 
-                  onMouseEnter={() => setIsSolutionsOpen(true)} 
-                  onMouseLeave={() => setIsSolutionsOpen(false)}>
-                <button className="flex items-center gap-1 hover:text-orange-600 transition-colors py-2 focus:outline-none">
-                  {t.navSolutions} <ChevronDown size={14} className={`transition-transform ${isSolutionsOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {isSolutionsOpen && (
-                  <div className={`absolute top-full left-0 w-52 border shadow-2xl rounded-2xl py-2 animate-in fade-in slide-in-from-top-2 ${
-                    isDark ? 'bg-slate-900 border-slate-800 shadow-black/40' : 'bg-white border-gray-100 shadow-2xl'
-                  }`}>
-                    <Link href="/summits" className={`block px-4 py-3 text-sm font-medium transition ${isDark ? 'text-slate-300 hover:bg-slate-800 hover:text-orange-500' : 'hover:bg-orange-50 text-gray-700 hover:text-orange-600'}`}>Govt. Summits</Link>
-                    <Link href="/weddings" className={`block px-4 py-3 text-sm font-medium transition ${isDark ? 'text-slate-300 hover:bg-slate-800 hover:text-orange-500' : 'hover:bg-orange-50 text-gray-700 hover:text-orange-600'}`}>Private Weddings</Link>
-                  </div>
-                )}
-              </li>
+             <li><Link href="/events" className="hover:text-orange-600 transition-colors">{t.navEvents}</Link></li>
               <li><Link href="#pricing" className="hover:text-orange-600 transition-colors">{t.navPricing}</Link></li>
             </ul>
 

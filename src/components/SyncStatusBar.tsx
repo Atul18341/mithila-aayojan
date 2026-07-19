@@ -6,6 +6,16 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { CloudSync, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { db } from '../lib/db';
 
+// 🚀 UTILITY: Reads binary blobs from local storage and translates them to serialized text paths
+const convertBlobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+  });
+};
+let isSyncMutexLocked = false;
 export default function SyncStatusBar() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -42,28 +52,65 @@ export default function SyncStatusBar() {
   };
 
   const handleGlobalSync = async () => {
-    if (isSyncing || telemetryData.totalCount === 0) return;
+    // 🚀 2. Enforce mutual exclusion lock structures immediately
+    if (isSyncing || isSyncMutexLocked || telemetryData.totalCount === 0) return;
+    
     setIsSyncing(true);
+    isSyncMutexLocked = true; // Engage lock
     setSyncError(null);
     setLastSyncCounts(null);
 
     try {
-      // 🚀 HARDENING STEP: Inject transaction timestamp metadata onto rows before payload sequence transmission
-      // This guarantees your Option A 'client_timestamp' column can evaluate safely without falling back to system defaults.
-      const sanitizedEvents = telemetryData.events.map(ev => ({
-        ...ev,
-        clientTimestamp: ev.createdAt || Date.now()
-      }));
+      // 🚀 3. HARDENING: Strictly isolate and process ONLY pending items
+      // This prevents the sync loop from picking up rows transitioning states
+      const pendingEventsOnly = telemetryData.events.filter(ev => ev.syncStatus === 'pending');
+      
+      if (pendingEventsOnly.length === 0 && telemetryData.totalCount > 0) {
+        // If events are already processed but other items remain, adjust execution
+        console.log("Media queues already synchronized. Skipping structural event loop.");
+      }
 
-      const sanitizedGuests = telemetryData.guests.map(gst => ({
-        ...gst,
-        clientTimestamp: gst.checkInTime || Date.now()
-      }));
+      const sanitizedEvents = [];
+      for (const ev of pendingEventsOnly) {
+        const eventPayload: any = {
+          ...ev,
+          clientTimestamp: ev.createdAt || Date.now(),
+          coverBlobBase64: false,
+          posterBlobBase64: false
+        };
 
-      const sanitizedLinks = telemetryData.managerEvents.map(link => ({
-        ...link,
-        clientTimestamp: Date.now()
-      }));
+        if (ev.coverBlob instanceof Blob) {
+          try {
+            eventPayload.coverBlobBase64 = await convertBlobToBase64(ev.coverBlob);
+          } catch (e) {
+            console.error(`Failed to encode cover file string for event: ${ev.id}`, e);
+          }
+        }
+
+        if (ev.posterBlob instanceof Blob) {
+          try {
+            eventPayload.posterBlobBase64 = await convertBlobToBase64(ev.posterBlob);
+          } catch (e) {
+            console.error(`Failed to encode poster file string for event: ${ev.id}`, e);
+          }
+        }
+
+        sanitizedEvents.push(eventPayload);
+      }
+
+      const sanitizedGuests = telemetryData.guests
+        .filter(gst => gst.syncStatus === 'pending')
+        .map(gst => ({
+          ...gst,
+          clientTimestamp: gst.checkInTime || Date.now()
+        }));
+
+      const sanitizedLinks = telemetryData.managerEvents
+        .filter(link => link.syncStatus === 'pending')
+        .map(link => ({
+          ...link,
+          clientTimestamp: Date.now()
+        }));
 
       const response = await fetch('/api/sync/push', {
         method: 'POST',
@@ -71,14 +118,13 @@ export default function SyncStatusBar() {
         body: JSON.stringify({
           events: sanitizedEvents,
           guests: sanitizedGuests,
-          users: telemetryData.users,
+          users: telemetryData.users.filter(usr => usr.syncStatus === 'pending'),
           managerEvents: sanitizedLinks, 
           managerEmail: telemetryData.managerEmail,
           userId: telemetryData.userId
         }),
       });
 
-      // 🚀 SAFELY PARSE DB EXCEPTION ERROR FOOTPRINTS
       if (!response.ok) {
         let serverErrorMessage = "Cloud synchronization interface rejected payload sequence.";
         try {
@@ -87,7 +133,7 @@ export default function SyncStatusBar() {
             serverErrorMessage = `Sync Rejected: ${errData.details || errData.error}`;
           }
         } catch {
-          // Fallback if response is not JSON
+          // Fallback
         }
         throw new Error(serverErrorMessage);
       }
@@ -95,9 +141,10 @@ export default function SyncStatusBar() {
       const result = await response.json();
       
       if (result.success && result.counts) {
-        // UNIFIED MULTI-TABLE TRANSACTION: Clears local queues ONLY after server confirmation
+        // UNIFIED MULTI-TABLE TRANSACTION
         await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents], async () => {
-          for (const ev of telemetryData.events) {
+          // 🚀 4. Batch update states atomically
+          for (const ev of pendingEventsOnly) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
           }
           for (const gst of telemetryData.guests) {
@@ -116,13 +163,13 @@ export default function SyncStatusBar() {
       }
     } catch (err: any) {
       console.error("Global sync flush failed:", err);
-      // Display the actual error description text directly inside the status button for quick debugging
       setSyncError(err.message || "Network link issue. Tap to retry.");
     } finally {
+      // 🚀 5. Release locks safely at the very end of the execution timeline
       setIsSyncing(false);
+      isSyncMutexLocked = false; 
     }
   };
-
   // AUTOMATIC BACKGROUND SYNCHRONIZATION ENGINE
   useEffect(() => {
     const triggerAutoSync = async () => {

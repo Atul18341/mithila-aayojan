@@ -4,6 +4,7 @@ export const translations = {
     subtitle: "by LYSS",
     langSwitch: "हिन्दी",
     navFeatures: "Features",
+    navEvents: "All Events",
     navSolutions: "Solutions",
     navPricing: "Pricing",
     // Hero Section
