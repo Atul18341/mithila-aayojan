@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { hydrateDeviceFromCloud } from '@/lib/sync-recovery';
 import { 
   ShieldCheck, KeyRound, User, Sparkles, 
-  ArrowRight, Moon, Sun, Loader2, Lock, UserPlus 
+  ArrowRight, Moon, Sun, Loader2, Lock, UserPlus,
+  Home // 🚀 Imported Home icon for visitor escaping
 } from 'lucide-react';
 import { db } from '../../lib/db';
 
@@ -184,6 +185,18 @@ export default function UnifiedLoginPage() {
     <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-center items-center p-4 relative overflow-hidden pt-10`}>
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
+      {/* 🚀 EXTRACTION ACTION DRAWER: Escape hatch button for public visitors */}
+      <div className="absolute top-6 left-6">
+        <button 
+          type="button"
+          onClick={() => router.push('/')} 
+          className={`w-40 h-12 rounded-2xl border transition-all flex items-center justify-center group ${theme.input}`}
+        >
+          <Home size={18} className="text-slate-400 group-hover:text-blue-500 transition-colors mr-2" />
+          {!isDark ?(<p className='text-black font-semibold'>Go to Home</p>):(<p className='text-white font-semibold'>Go to Home</p>)}
+        </button>
+      </div>
+
       <div className="absolute top-6 right-6">
         <button 
           type="button"
@@ -191,10 +204,10 @@ export default function UnifiedLoginPage() {
           className={`w-12 h-12 rounded-2xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.input}`}
         >
           <div className={`transition-all duration-500 transform ${isDark ? 'translate-y-0' : 'translate-y-12 opacity-0'}`}>
-            <Moon size={20} className="text-blue-400 fill-blue-400/10" />
+            <Sun size={20} className="text-amber-500 fill-amber-500/20" />
           </div>
           <div className={`absolute transition-all duration-500 transform ${!isDark ? 'translate-y-0' : '-translate-y-12 opacity-0'}`}>
-            <Sun size={20} className="text-amber-500 fill-amber-500/20" />
+            <Moon size={20} className="text-blue-400 fill-blue-400/10" />
           </div>
         </button>
       </div>
@@ -270,26 +283,6 @@ export default function UnifiedLoginPage() {
           >
             <UserPlus size={12} /> Establish New Manager Workspace Matrix
           </button>
-        </div>
-
-        <div className="mt-6 pt-5 border-t border-dashed border-slate-700/30 text-center">
-          <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3">Dev Environment Quick Roles</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button 
-              type="button"
-              onClick={() => handleQuickBypass('manager')}
-              className="px-3 py-2 text-[10px] font-bold rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-all"
-            >
-              Simulate Manager
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleQuickBypass('volunteer')}
-              className="px-3 py-2 text-[10px] font-bold rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 hover:bg-purple-500/20 transition-all"
-            >
-              Simulate Volunteer
-            </button>
-          </div>
         </div>
       </div>
 

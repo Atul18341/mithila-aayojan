@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client } from '@/lib/r2';
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+type RouteContext = {
+  params: Promise<{ id: string }>;
+};
+export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const formData = await request.formData();
-    const eventId = params.id;
+    const { id } = await context.params;
+    const eventId = id;
     
     const coverFile = formData.get('cover') as File | null;
     const posterFile = formData.get('poster') as File | null;

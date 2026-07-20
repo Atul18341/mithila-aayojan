@@ -4,15 +4,20 @@ import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   QrCode, Clock, Loader, Bell, Sun, Moon, 
-  LogOut, Calendar, Sparkles, ShieldAlert 
+  LogOut, Calendar, Sparkles, LogIn, Utensils 
 } from 'lucide-react';
 import { db } from '../../lib/db';
 import EntryDeskCameraScanner from '../../components/CheckIn-Scanner';
+
+type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
 
 export default function VolunteerCheckInPanel() {
   const [isDark, setIsDark] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  
+  // 🚀 Added: State switcher context for the scanning hardware trigger
+  const [scanMode, setScanMode] = useState<ScanMode>('CHECK_IN');
   
   // Explicitly bound to assigned event context on the ground
   const volunteerEventId = 1; 
@@ -120,7 +125,7 @@ export default function VolunteerCheckInPanel() {
                         ✓ <span className="text-purple-400">{g.name}</span> verified.
                       </p>
                       <span className="text-[8px] text-slate-500 font-mono">
-                        {new Date(g.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(g.checkInTime || g.foodClaimedTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   ))}
@@ -144,7 +149,34 @@ export default function VolunteerCheckInPanel() {
       </header>
 
       {/* CORE CONTROL COUNTER SUB-PANEL */}
-      <div className="px-6 pt-6 flex justify-center">
+      <div className="px-6 pt-6 flex flex-col items-center gap-4">
+        
+        {/* 🚀 MODE SELECTOR BRIDGE */}
+        <div className={`grid grid-cols-2 gap-2 p-1 rounded-xl border w-full max-w-xs ${theme.card}`}>
+          <button
+            onClick={() => setScanMode('CHECK_IN')}
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+              scanMode === 'CHECK_IN' 
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <LogIn size={14} />
+            Gate Check-In
+          </button>
+          <button
+            onClick={() => setScanMode('FOOD_CLAIM')}
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+              scanMode === 'FOOD_CLAIM' 
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Utensils size={14} />
+            Food Counter
+          </button>
+        </div>
+
         <div className={`inline-flex items-center gap-4 px-6 py-3 rounded-2xl border ${theme.card}`}>
           <div className="space-y-0.5">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Desk Stream Count</p>
@@ -152,8 +184,12 @@ export default function VolunteerCheckInPanel() {
           </div>
           <div className="w-px h-8 bg-white/10" />
           <div className="text-left">
-            <span className="text-[8px] font-black uppercase bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded border border-purple-500/20 tracking-wider">
-              Gate Operator Node
+            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border tracking-wider transition-colors ${
+              scanMode === 'CHECK_IN' 
+                ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+            }`}>
+              {scanMode === 'CHECK_IN' ? 'Gate Operator Node' : 'Food Stall Scanner'}
             </span>
           </div>
         </div>
@@ -163,10 +199,14 @@ export default function VolunteerCheckInPanel() {
       <div className="flex-1 flex flex-col justify-center items-center p-6">
         <button 
           onClick={() => setIsScanning(true)}
-          className="w-36 h-36 rounded-full bg-purple-600 hover:bg-purple-700 flex flex-col items-center justify-center gap-2 shadow-2xl shadow-purple-500/20 active:scale-95 transition-all border-4 border-white/10 group"
+          className={`w-36 h-36 rounded-full flex flex-col items-center justify-center gap-2 shadow-2xl active:scale-95 transition-all border-4 border-white/10 group ${
+            scanMode === 'CHECK_IN' 
+              ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-500/20' 
+              : 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
+          }`}
         >
           <QrCode size={36} className="animate-pulse group-hover:scale-110 transition-transform text-white" />
-          <span className="text-[9px] font-black uppercase tracking-widest text-white/90">Launch Camera</span>
+          <span className="text-[9px] font-black uppercase tracking-widest text-white/90">Scan QR Code</span>
         </button>
       </div>
 
@@ -179,20 +219,48 @@ export default function VolunteerCheckInPanel() {
       {isScanning && (
         <EntryDeskCameraScanner 
           currentEventId={volunteerEventId}
-          variant="purple"
+          variant={scanMode === 'CHECK_IN' ? 'purple' : 'amber'}
           isDark={isDark}
           onClose={() => setIsScanning(false)}
           onScanExecute={async (token) => {
+            // Locate dynamic token parameters in local IndexedDB pool
             const guest = await db.guests.where('qrToken').equals(token).first();
+            
             if (!guest || guest.eventId !== volunteerEventId) {
               return { status: 'error', message: 'Access Denied: Invalid credential for this venue.' };
             }
-            if (guest.checkInTime) {
-              return { status: 'warning', message: 'Pass duplicate scan exception.', name: guest.name };
+
+            // 🚀 OPERATION A: GATE CHECK-IN STATE EVALUATION
+            if (scanMode === 'CHECK_IN') {
+              if (guest.checkInTime) {
+                return { status: 'warning', message: 'Pass duplicate scan exception.', name: guest.name };
+              }
+              
+              await db.guests.update(guest.id!, { checkInTime: Date.now() });
+              return { status: 'success', message: `${guest.type.toUpperCase()} pass authenticated.`, name: guest.name };
             }
-            
-            await db.guests.update(guest.id!, { checkInTime: Date.now() });
-            return { status: 'success', message: `${guest.type.toUpperCase()} pass authenticated.`, name: guest.name };
+
+            // 🚀 OPERATION B: FOOD COUNTER VOUCHER EVALUATION
+            if (scanMode === 'FOOD_CLAIM') {
+              // Gracefully handle credentials that don't have food mapping configs attached
+              if (guest.hasFoodAccess === true) {
+                return { status: 'error', message: 'Denied: Food not included with this pass tier.', name: guest.name };
+              }
+              
+              if (guest.hasFoodAccess) {
+                return { status: 'warning', message: 'Food already claimed for this pass reference.', name: guest.name };
+              }
+
+              await db.guests.update(guest.id!, { 
+              
+                hasFoodClaimed: true, 
+                foodClaimedTime: Date.now() 
+              });
+              
+              return { status: 'success', message: 'Meal Plate Allocation Approved.', name: guest.name };
+            }
+
+            return { status: 'error', message: 'System processing fault.' };
           }}
         />
       )}

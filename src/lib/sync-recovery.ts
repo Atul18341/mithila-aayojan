@@ -67,7 +67,7 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
           name: gst.name,
           type: gst.type,
           qrToken: gst.qr_token,
-          isCheckedIn: gst.check_in_time ? 1 : 0,
+          isCheckedIn: gst.check_in_time ? true : false,
           checkInTime: gst.check_in_time ? new Date(gst.check_in_time).getTime() : undefined,
           syncStatus: 'synced'
         });

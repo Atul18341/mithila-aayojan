@@ -11,6 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",
     "@aws-sdk/s3-request-presigner": "^3.1085.0",
+    "@ducanh2912/next-pwa": "^10.2.9",
     "dexie": "^4.4.2",
     "dexie-react-hooks": "^4.4.0",
     "html5-qrcode": "^2.3.8",

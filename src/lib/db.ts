@@ -90,11 +90,13 @@ export interface Guest {
   phone?: string;       // 🚀 ADDED: Associated contact parameters for school/summit logs
   qrToken: string;
   type: 'vip' | 'speaker' | 'delegate' | 'organizer' | 'volunteer' | AttendeeCategory; // 🚀 EXTENDED: Support new attendee profiles seamlessly
-  isCheckedIn: number;  // 0 or 1 for easy syncing
+  isCheckedIn: true | false;  
   syncStatus: 'synced' | 'pending';
   checkInTime?: number;
   amountPaid?: number;  // 🚀 ADDED: Tracks resolved booking tokens at gate scan endpoints
-  hasFoodAccess?: number; // 🚀 ADDED: Quick 0/1 binary flag for local network check checks
+  hasFoodAccess?: true | false; // 🚀 ADDED: Quick 0/1 binary flag for local network check checks
+  hasFoodClaimed?: true | false;
+  foodClaimedTime?: number;
 }
 
 export interface SessionUser {

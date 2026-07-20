@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   description: "Smart Event Management Platform by LYSS Technology",
 };
 export default function Home() {
+  
   return (
       <main>
         <Navbar />
@@ -22,6 +23,5 @@ export default function Home() {
         <Halal/>
         <CTA />
       </main>
-     
   );
 }

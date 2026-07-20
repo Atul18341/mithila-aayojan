@@ -2,6 +2,7 @@
 // 🚨 NOTICE: 'use client' is deliberately absent from the top to ensure font-loading compliance.
 
 import { Geist, Geist_Mono } from "next/font/google";
+import { Metadata, Viewport } from 'next';
 import "./globals.css";
 import React from 'react';
 import dynamic from 'next/dynamic';
@@ -16,12 +17,23 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
-
-export const metadata = {
-  title: "Mithila Aayojan",
-  description: "Platform Infrastructure Matrix",
+export const metadata: Metadata = {
+  title: 'Mithila Aayojan',
+  description: 'Multi-Tenant Offline-First Event Registry Ledger',
+  manifest: '/manifest.json', // 🚀 Links to the web application configuration rules
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Mithila Aayojan',
+  },
 };
 
+export const viewport: Viewport = {
+  themeColor: '#2563eb',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+};
 // 1. MAIN EXPORT: ROOT LAYOUT (Server Component)
 export default function RootLayout({ 
   children 
