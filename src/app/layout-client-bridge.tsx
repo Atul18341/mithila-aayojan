@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState,useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
@@ -11,7 +11,7 @@ import Footer from "@/components/Footer";
 export default function ClientLayoutShell({ children }: { children: React.ReactNode }) {
   const currentPath = usePathname();
   const [isInitializing, setIsInitializing] = useState(true);
-  
+ 
   // Route matching metrics matrix
   const rulesEngineRoutes = [
     '/dashboard-eventVolunteers', 

@@ -28,7 +28,15 @@ export default function Navbar() {
   
   const langRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
-
+  useEffect(() => {
+  if ('serviceWorker' in navigator && window.location.hostname === 'localhost') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then((reg) => console.log('🚀 Service Worker successfully registered with scope: ', reg.scope))
+        .catch((err) => console.error('❌ Service Worker registration failed: ', err));
+    });
+  }
+}, []);
   useEffect(() => {
     setMounted(true);
     const handleClickOutside = (event: MouseEvent) => {
