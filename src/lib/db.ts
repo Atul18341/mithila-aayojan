@@ -83,20 +83,32 @@ export interface Events {
 }
 
 export interface Guest {
-  id?: number;
-  eventId: number;
-  name: string;
-  email?: string;       // 🚀 ADDED: Associated contact parameters for school/summit logs
-  phone?: string;       // 🚀 ADDED: Associated contact parameters for school/summit logs
-  qrToken: string;
-  type: 'vip' | 'speaker' | 'delegate' | 'organizer' | 'volunteer' | AttendeeCategory; // 🚀 EXTENDED: Support new attendee profiles seamlessly
-  isCheckedIn: true | false;  
-  syncStatus: 'synced' | 'pending';
-  checkInTime?: number;
-  amountPaid?: number;  // 🚀 ADDED: Tracks resolved booking tokens at gate scan endpoints
-  hasFoodAccess?: true | false; // 🚀 ADDED: Quick 0/1 binary flag for local network check checks
-  hasFoodClaimed?: true | false;
-  foodClaimedTime?: number;
+  // Primary Keys & Linking
+  id?: number;                          // Dexie local auto-increment primary key
+  guestId: string;                      // Public unique key (e.g. 'GUEST-1753456800000')
+  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 3]
+  eventId: string | number;                   // Associated Event ID[cite: 3]
+  
+  // Attendee Core Profile
+  name: string;                         //[cite: 3]
+  email?: string;                       // Optional contact details[cite: 3]
+  phone?: string;                       // Optional contact details[cite: 3]
+  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 3]
+  
+  // Gate Security & QR Verification
+  qrToken: string;                      // Encrypted or unique QR payload string
+  // Check-In Operations
+  isCheckedIn: boolean;                 // Entrance status flag[cite: 3]
+  checkInTime?: number;                 // Numeric timestamp (Date.now())
+  // Catering & Lounge Logistics
+  hasFoodAccess: boolean;               // Entitlement flag for meals
+  hasFoodClaimed: boolean;              // Claimed status flag
+  foodClaimedTime?: number;             // Timestamp when food was claimed
+  // Sync & Financial Metadata
+  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 3]
+  syncStatus: string;     // Sync status for offline-first operation
+  registeredAt: number;                 // Registration timestamp (Date.now())
+
 }
 
 export interface SessionUser {
@@ -120,19 +132,27 @@ export interface ManagerEvents {
 
 // 🚀 REGISTERED NEW SEPARATE INTERFACE FOR PUBLIC REGISTRATION FLOW DETAILS
 export interface EventRegistration {
-  id?: number;
-  eventId: number;
+  // Primary Keys & Identifiers
+  id?: number;                         // Local Dexie auto-increment ID
+  registrationId: string;              // Public unique pass ID (e.g., 'REG-982314')
+  eventId: string | number;            // Associated Event ID
+  // Attendee Core Profile
   name: string;
   email: string;
   phone: string;
-  category: AttendeeCategory; // 🚀 Category selector routing
-  customAnswers: Record<string, any>; // 🚀 Holds dynamic schema-driven form logs (e.g. company, laptop)
+  category: AttendeeCategory;
+  customAnswers: Record<string, any>;
+  // Financial Audit Breakdown
   basePrice: number;
   gstAmount: number;
   totalPrice: number;
-  registrationTimestamp: number;
-  status: 'pending' | 'approved' | 'ticketed' | 'waitlisted';
-  syncStatus: 'synced' | 'pending';
+  // Gateway Payment Verification
+  paymentId?: string;                  // Razorpay payment ID (or 'FREE_ENTRY')
+  orderId?: string | null;             // Razorpay order ID
+  // System Lifecycle & Sync Metadata
+  status: string;
+  syncStatus: string;
+  registrationTimestamp: number;       // Date.now()
 }
 
 export class AayojanDB extends Dexie {
@@ -145,9 +165,9 @@ export class AayojanDB extends Dexie {
   constructor() {
     super('MithilaAayojanDB');
     // Bumped database version state layer to clean internal store layouts
-    this.version(3).stores({
+    this.version(4).stores({
       events: '++id, slug, type, status, createdAt, syncStatus',
-      guests: '++id, eventId, qrToken, type, isCheckedIn, syncStatus',
+     guests: '++id, guestId, registrationId, eventId, qrToken, isCheckedIn, syncStatus',
       users: '++id, identifier, role, syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, syncStatus',
       eventRegistrations: '++id, eventId, email, category, status, syncStatus' // 🚀 Added lookups

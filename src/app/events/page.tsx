@@ -341,13 +341,13 @@ export default function AggregatedEventsLandingPage() {
 
                   <div className="p-5 pt-0">
                     <Link 
-                      href={`/events/${event.slug}`}
-                      className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-bold text-xs uppercase tracking-wider select-none cursor-pointer transition-all duration-300 shadow-sm group-hover:shadow-md
-                        ${activeTab === 'past'
-                          ? 'bg-white border-slate-250 text-slate-600 hover:bg-slate-800 hover:text-white hover:border-slate-800'
-                          : 'bg-slate-50 border-slate-200 text-slate-700 group-hover:bg-blue-600 group-hover:border-blue-600 group-hover:text-white'
-                        }`}
-                    >
+                        href={`/events/${event.slug}`}
+                        className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-bold text-xs uppercase tracking-wider select-none cursor-pointer transition-all duration-300 shadow-sm group-hover:shadow-md
+                          ${activeTab === 'past'
+                            ? 'bg-white border-slate-250 text-slate-600 hover:bg-slate-800 hover:text-white hover:border-slate-800'
+                            : 'bg-slate-50 border-slate-200 text-slate-700 group-hover:bg-blue-600 group-hover:border-blue-600 group-hover:text-white'
+                          }`}>
+                        
                       <span>{activeTab === 'past' ? 'Review Archive Details' : 'Access Secure Registry'}</span>
                       <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
                     </Link>

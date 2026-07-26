@@ -23,38 +23,50 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
       // 2. Hydrate Local Events Store
       for (const ev of events) {
         await db.events.add({
-            id: Number(ev.id), // Ensure structural strictness as integer key
-            name: ev.name,
-            type: ev.type,
-            protocol: ev.protocol,
-            slug: ev.slug,
-            status: ev.status,
-            date: ev.date,
-            location: ev.location,
-            description: ev.description,
-            venueName: ev.venueName,
-            createdAt: new Date(ev.created_at).getTime(),
-            syncStatus: 'synced', // Explicitly mark as synced
-            
-            // 🚀 FIXED: Add the required properties from the Events interface
-            hypeThreshold: ev.hype_threshold !== undefined ? Number(ev.hype_threshold) : 0,
-            isCountPublic: ev.is_count_public !== undefined ? Boolean(ev.is_count_public) : true,
-            visibility: ev.visibility || {
+          id: Number(ev.id),
+          name: ev.name,
+          type: ev.type || 'conference',
+          protocol: ev.protocol || 'ticketed',
+          slug: ev.slug,
+          status: ev.status || 'draft',
+          date: ev.date || '',
+          startTime: ev.startTime || '',
+          endTime: ev.endTime || '',
+          location: ev.location || '',
+          tagline: ev.tagline || '',
+          description: ev.description || '',
+          venueName: ev.venueName || '',
+          hypeThreshold: Number(ev.hypeThreshold || 0),
+          visibility: ev.visibility || {
             map: true,
             rsvp: true,
             schedule: true,
-            gallery: true,
-            coverBlob: ev.coverBlob || null,
-            posterBlob: ev.posterBlob || null,
-            }
-  }as any);
+            gallery: false,
+          },
+          foodConfig: ev.foodConfig || {
+            enabled: false,
+            strategy: 'complimentary',
+            vendorDetails: '',
+            availableForAll: 'yes',
+            allowedCategories: []
+          },
+          pricingConfig: ev.pricingConfig || {
+            isRequired: false,
+            baseFee: 0,
+            gstApplicable: false,
+            applicableForAll: 'yes',
+            categoryFees: {}
+          },
+          createdAt: ev.createdAt || Date.now(),
+          syncStatus: 'synced', // Explicitly mark as synced
+        } as any);
       }
 
-      // 3. Hydrate Local Junction Link Indexes
+      // 3. Hydrate Local Manager Events Junction Links
       for (const link of managerEvents) {
         await db.managerEvents.add({
-          managerIdentifier: link.manager_identifier,
-          eventId: Number(link.event_id),
+          managerIdentifier: link.managerIdentifier || link.manager_identifier,
+          eventId: Number(link.eventId || link.event_id),
           syncStatus: 'synced'
         });
       }
@@ -63,14 +75,23 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
       for (const gst of guests) {
         await db.guests.add({
           id: Number(gst.id),
-          eventId: Number(gst.event_id),
+          guestId: gst.guestId || `GUEST-${gst.id}`,
+          registrationId: gst.registrationId || `REG-${gst.id}`,
+          eventId: Number(gst.eventId), // 🟢 Fixed: Correctly maps eventId instead of gst.id
           name: gst.name,
-          type: gst.type,
-          qrToken: gst.qr_token,
-          isCheckedIn: gst.check_in_time ? true : false,
-          checkInTime: gst.check_in_time ? new Date(gst.check_in_time).getTime() : undefined,
-          syncStatus: 'synced'
-        });
+          email: gst.email || '',
+          phone: gst.phone || '',
+          category: gst.category || 'general-public',
+          type: gst.category || gst.type || 'general-public',
+          qrToken: gst.qrToken || '', // 🟢 Standardized QR token mapping
+          isCheckedIn: Boolean(gst.isCheckedIn),
+          checkInTime: gst.checkInTime ? Number(gst.checkInTime) : undefined,
+          hasFoodAccess: Boolean(gst.hasFoodAccess),
+          hasFoodClaimed: Boolean(gst.hasFoodClaimed),
+          amountPaid: Number(gst.amountPaid || 0),
+          registeredAt: gst.registeredAt || Date.now(),
+          syncStatus: 'synced', // Explicitly mark as synced
+        } as any);
       }
     });
 

@@ -2,8 +2,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee } from 'lucide-react';
-import { getApplicableCategoriesForType } from '@/lib/db';
+import { getApplicableCategoriesForType, db } from '@/lib/db'; // Integrated Dexie/IndexedDB instance
+import { loadRazorpayScript } from '@/hooks/useRazorpay';
 
 // Unified Attendee Category Definitions
 export type AttendeeCategory = 
@@ -33,7 +35,7 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
-// 🚀 Whitelist filter defining which specific profiles are permitted on public self-registration paths
+// Whitelist filter defining which specific profiles are permitted on public self-registration paths
 const PUBLIC_EXCLUSIVE_CATEGORIES: AttendeeCategory[] = [
   'sponsor',
   'speaker',
@@ -45,6 +47,9 @@ const PUBLIC_EXCLUSIVE_CATEGORIES: AttendeeCategory[] = [
 ];
 
 interface EventData {
+  id?: string;
+  slug?: string;
+  name?: string;
   type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference';
   pricingConfig?: {
     isRequired: boolean;
@@ -69,9 +74,9 @@ interface UniversalRegistrationFormProps {
 }
 
 export default function UniversalRegistrationForm({ event }: UniversalRegistrationFormProps) {
+  const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSubmitted, setFormSubmitted] = useState(false);
-  
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -139,16 +144,197 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       customAnswers: { ...prev.customAnswers, [fieldId]: value }
     }));
   };
+  /**
+ * Fail-safe QR Token Generator
+ * Guaranteed Format: "XX26-1234" (Always 9 characters max)
+ */
+const generateQrToken = (eventData: EventData, phone: string): string => {
+  // 1. Try extracting prefix from event.name, event.title, event.slug, or event.id
+  const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
+  
+  // Clean non-alphabetical characters and take first 2 letters
+  let prefix = rawEventTitle.replace(/[^A-Za-z]/g, '').substring(0, 2).toUpperCase();
+  if (prefix.length < 2) prefix = (prefix + 'X').substring(0, 2); // Ensure exactly 2 characters
+
+  // 2. Extract last 4 digits of phone number
+  const cleanPhoneDigits = phone ? phone.replace(/\D/g, '') : '';
+  let phoneTail = cleanPhoneDigits.slice(-4);
+
+  // If phone has fewer than 4 digits, fallback to a deterministic/random 4-digit number
+  if (phoneTail.length < 4) {
+    phoneTail = Math.floor(1000 + Math.random() * 9000).toString();
+  }
+
+  // Guaranteed Output: e.g. "MA26-4412" or "EV26-9821"
+  return `${prefix}26-${phoneTail}`;
+};
+  /**
+   * Helper function to save registration & primary guest record into IndexedDB tables
+   */
+  const saveRegistrationToIndexedDB = async (paymentDetails?: { paymentId?: string; orderId?: string }) => {
+    const eventIdParam = event.id || event.slug || 'default';
+    const registrationId = `REG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const qrToken = generateQrToken(event, formData.phone);
+
+    const registrationPayload = {
+      registrationId: registrationId,
+      eventId: eventIdParam,
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      category: formData.category as AttendeeCategory,
+      customAnswers: formData.customAnswers,
+      
+      // Financial Breakdown
+      basePrice: pricing.basePrice,
+      gstAmount: pricing.gstAmount,
+      totalPrice: pricing.totalPrice,
+      
+      // Payment Gateway Ledger
+      paymentId: paymentDetails?.paymentId || 'FREE_ENTRY',
+      orderId: paymentDetails?.orderId || null,
+      
+      // Status & Metadata
+      status: 'CONFIRMED',
+      syncStatus: 'pending',
+      registrationTimestamp: Date.now()
+    };
+
+    const guestPayload = {
+      guestId: `GUEST-${Date.now()}`,
+      registrationId: registrationId,
+      eventId: eventIdParam,
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      category: formData.category,
+      
+      // QR & Gate Verification (Clean human-readable token)
+      qrToken: qrToken,
+      isCheckedIn: false,
+      
+      // Catering Logistics (Defaults based on category)
+      hasFoodAccess: ['vip', 'speaker', 'patron', 'dignitary', 'ops-team'].includes(formData.category),
+      hasFoodClaimed: false,
+      
+      // Sync & Metadata
+      amountPaid: pricing.totalPrice,
+      syncStatus: 'pending',
+      registeredAt: Date.now()
+    };
+
+    // Store safely in Dexie IndexedDB using a unified transaction
+    if (typeof window !== 'undefined' && db) {
+      try {
+        console.log("Attempting Dexie write...", { registrationPayload, guestPayload });
+        
+        await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
+          await db.eventRegistrations.add(registrationPayload);
+          await db.guests.add(guestPayload);
+        });
+
+        console.log("✅ Successfully stored in IndexedDB!");
+      } catch (error) {
+        console.error("❌ Dexie Write Failure Trace:", error);
+      }
+    }
+
+    return eventIdParam;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
-    // Simulate pipeline latency database processing lag
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    
-    setIsSubmitting(false);
-    setFormSubmitted(true);
+
+    const eventIdParam = event.id || event.slug || 'default';
+    const isFeeApplicable = event.pricingConfig?.isRequired && pricing.totalPrice > 0;
+
+    if (isFeeApplicable) {
+      // SCENARIO 1: Fee Required -> Execute Razorpay Flow
+      try {
+        const isScriptLoaded = await loadRazorpayScript();
+        if (!isScriptLoaded) {
+          alert('Payment gateway library failed to mount. Verify your internet connection.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const orderResponse = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: pricing.totalPrice, 
+            receipt: `reg_${event?.name || 'evt'}_${Date.now()}`,
+          }),
+        });
+
+        const orderData = await orderResponse.json();
+        if (!orderData.success) {
+          throw new Error(orderData.error || 'Backend checkout orchestration failure.');
+        }
+
+        const options = {
+          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+          amount: orderData.order.amount,
+          currency: orderData.order.currency,
+          name: "Mithila Aayojan",
+          description: "Event Access Registration Pass",
+          image: "/icons/splash-icon.png",
+          order_id: orderData.order.id,
+          handler: async function (response: any) {
+            try {
+              // Persist entry into IndexedDB prior to redirection
+              const eventId = await saveRegistrationToIndexedDB({
+                paymentId: response.razorpay_payment_id,
+                orderId: response.razorpay_order_id,
+              });
+
+              setIsSubmitting(false);
+              setFormSubmitted(true);
+              router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
+            } catch (dbErr) {
+              console.error("IndexedDB write failed after payment:", dbErr);
+              setIsSubmitting(false);
+              router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
+            }
+          },
+          prefill: {
+            name: formData.name,
+            email: formData.email,
+            contact: formData.phone,
+          },
+          theme: {
+            color: "#0ea5e9",
+          },
+          modal: {
+            ondismiss: function () {
+              setIsSubmitting(false);
+              console.log("Payment flow abandoned by operator.");
+            }
+          }
+        };
+
+        const paymentWindow = new (window as any).Razorpay(options);
+        paymentWindow.open();
+
+      } catch (err: any) {
+        console.error("Payment setup trace runtime execution failure:", err);
+        alert(err.message || "Failed to initialize standard checkout gateway framework.");
+        setIsSubmitting(false);
+      }
+    } else {
+      // SCENARIO 2: Free Registration -> Save to IndexedDB and Redirect
+      try {
+        const eventId = await saveRegistrationToIndexedDB();
+        setIsSubmitting(false);
+        setFormSubmitted(true);
+        router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
+      } catch (dbErr) {
+        console.error("IndexedDB write failure on free tier:", dbErr);
+        setIsSubmitting(false);
+        router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
+      }
+    }
   };
 
   if (formSubmitted) {
@@ -160,16 +346,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         <div className="space-y-1.5">
           <h4 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">Registration Processed</h4>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[260px] mx-auto leading-relaxed">
-            Your telemetry data and commercial clearance parameters were successfully written to the secure ledger cache.
+            Your registration was completed successfully. Redirecting to your ticket pass...
           </p>
-        </div>
-        {pricing.totalPrice > 0 && (
-          <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
-            Total Charge Recorded: <span className="text-emerald-500">₹{pricing.totalPrice}</span>
-          </div>
-        )}
-        <div className="inline-block p-2.5 rounded-xl border font-mono text-[10px] bg-slate-50 border-slate-200 text-slate-600 dark:bg-black/30 dark:border-white/5 dark:text-slate-400">
-          Status: <span className="text-emerald-600 dark:text-emerald-400 font-extrabold uppercase tracking-wide">Ready for Gate Sync</span>
         </div>
       </div>
     );
@@ -177,7 +355,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 w-full">
-      
       {/* CORE FIELDS */}
       <div className="space-y-3">
         <div className="space-y-1">
@@ -246,7 +423,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             >
               <option value="" className="text-slate-400">Select attendee profile type...</option>
               {ATTENDEE_CATEGORIES.filter(cat => 
-                // Intersect the database schema configuration logic with the public-facing whitelist
                 getApplicableCategoriesForType(event.type).includes(cat.id) &&
                 PUBLIC_EXCLUSIVE_CATEGORIES.includes(cat.id)
               ).map(cat => (
@@ -335,12 +511,12 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         {isSubmitting ? (
           <>
             <Loader2 className="animate-spin text-white" size={14} />
-            <span>Writing Storage Ledgers...</span>
+            <span>Processing...</span>
           </>
         ) : (
           <>
             <span>
-              {pricing.totalPrice > 0 ? `Pay ₹${pricing.totalPrice} & Register` : 'Transmit Registration Ledger'}
+              {pricing.totalPrice > 0 ? `Pay ₹${pricing.totalPrice} & Register` : 'Free Registration'}
             </span>
             <Send size={12} className="text-white/70 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </>

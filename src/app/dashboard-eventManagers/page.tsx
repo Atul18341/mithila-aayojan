@@ -433,7 +433,7 @@ export default function ManagerDashboard() {
             }
             
             await db.guests.update(guest.id!, { checkInTime: Date.now() });
-            return { status: 'success', message: `${guest.type.toUpperCase()} badge verified.`, name: guest.name };
+            return { status: 'success', message: `${guest.category.toUpperCase()} badge verified.`, name: guest.name };
           }}
         />
       )}

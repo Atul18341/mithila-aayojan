@@ -26,7 +26,7 @@ async function fetchImageAsBlob(url: string | null): Promise<Blob | null> {
 export default function EventDynamicRoutingWrapper({ params }: PageProps) {
   const unwrappedParams = use(params);
   const slug = unwrappedParams.slug;
-
+ console.log("Slug:",slug)
   const [eventRecord, setEventRecord] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

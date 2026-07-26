@@ -237,7 +237,7 @@ export default function VolunteerCheckInPanel() {
               }
               
               await db.guests.update(guest.id!, { checkInTime: Date.now() });
-              return { status: 'success', message: `${guest.type.toUpperCase()} pass authenticated.`, name: guest.name };
+              return { status: 'success', message: `${guest.category.toUpperCase()} pass authenticated.`, name: guest.name };
             }
 
             // 🚀 OPERATION B: FOOD COUNTER VOUCHER EVALUATION

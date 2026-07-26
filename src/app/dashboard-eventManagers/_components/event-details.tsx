@@ -11,8 +11,6 @@ import {
   Utensils, IndianRupee
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
-// Unified Attendee Category Definitions
-
 
 const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'patron', label: 'Chief Patrons & Core Members' },
@@ -26,7 +24,6 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
-// Explicit interfaces matching structural local IndexedDB store indexes
 export interface EventData {
   id?: number;
   name: string;
@@ -155,7 +152,6 @@ export default function EventDetailEditor({
   const coverInputRef = useRef<HTMLInputElement>(null);
   const posterInputRef = useRef<HTMLInputElement>(null);
 
-  // Default empty dictionary template for category mappings
   const initialCategoryFees = ATTENDEE_CATEGORIES.reduce((acc, cat) => {
     acc[cat.id] = 0;
     return acc;
@@ -231,6 +227,7 @@ export default function EventDetailEditor({
       setIsCreateMode(false);
       setSaveStatus('idle');
 
+      // 🟢 Automatically populate previews from existing Blobs if present
       if (event.coverBlob) {
         setCoverBlob(event.coverBlob);
         setCoverPreview(URL.createObjectURL(event.coverBlob));
@@ -354,7 +351,7 @@ export default function EventDetailEditor({
       type: details.type,
       protocol: details.protocol, 
       status: forcedStatus || currentStatus, 
-      slug: generatedSlug || 'live-slug',
+      slug: generatedSlug || event?.slug || 'live-slug',
       hypeThreshold: details.hypeThreshold,
       visibility: details.visibility,
       foodConfig: details.foodConfig,
@@ -366,15 +363,20 @@ export default function EventDetailEditor({
     };
 
     try {
-      const { db } = await import('../../../lib/db');
-      if (isCreateMode) {
+      if (isCreateMode || !event) {
         const newId = await db.events.add(compiledData as any);
         setSaveStatus('success');
         setIsCreateMode(false);
         if (onCreationSuccess) await onCreationSuccess(newId as number);
       } else {
-        if (!event?.id) return;
-        await db.events.update(event.id, compiledData);
+        if (event.id) {
+          await db.events.update(event.id, compiledData);
+        } else if (event.slug) {
+          const existingEvent = await db.events.where('slug').equals(event.slug).first();
+          if (existingEvent?.id) {
+            await db.events.update(existingEvent.id, compiledData);
+          }
+        }
         setSaveStatus('success');
         if (forcedStatus) setCurrentStatus(forcedStatus);
       }
@@ -425,7 +427,7 @@ export default function EventDetailEditor({
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
           <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30`}>
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event') : (saveStatus === 'success' ? 'Changes Cached' : 'Save Changes')}
+            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Event Details')}
           </button>
           <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20"><X size={18} /></button>
         </div>
@@ -493,22 +495,60 @@ export default function EventDetailEditor({
           </div>
         )}
 
-        {/* MODULE 2: MEDIA LAYOUT */}
+        {/* 🟢 MODULE 2: MEDIA LAYOUT - RENDERS EXISTING IMAGE BLOBS OR NEW PREVIEWS */}
         {activeModule === 'media' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div className="space-y-2">
               <label className={styles.label}>Hero Layout Banner (16:9)</label>
               <input type="file" ref={coverInputRef} accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'cover')} />
-              <div onClick={() => coverInputRef.current?.click()} className={`w-full aspect-[16/6] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-50'}`}>
-                {coverPreview ? <img src={coverPreview} alt="Cover" className="w-full h-full object-cover" /> : <p className="text-xs font-bold text-slate-400">Select responsive cover layouts</p>}
+              <div 
+                onClick={() => coverInputRef.current?.click()} 
+                className={`w-full aspect-[16/6] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden relative group transition-all ${isDark ? 'border-white/10 bg-white/5 hover:border-blue-500/50' : 'border-slate-200 bg-slate-50 hover:border-blue-500/50'}`}
+              >
+                {coverPreview ? (
+                  <div className="w-full h-full relative">
+                    <img src={coverPreview} alt="Hero Banner Preview" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <div className="flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-lg text-xs font-bold">
+                        <UploadCloud size={14} />
+                        <span>Click to Replace Banner</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-slate-400 p-4 text-center">
+                    <UploadCloud size={24} />
+                    <p className="text-xs font-bold">Select responsive cover layouts</p>
+                    <span className="text-[10px] text-slate-500">Supports WebP, PNG, JPG (16:9 ratio recommended)</span>
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="space-y-2">
               <label className={styles.label}>Distribution Poster (4:5 / Square)</label>
               <input type="file" ref={posterInputRef} accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'poster')} />
-              <div onClick={() => posterInputRef.current?.click()} className={`w-44 aspect-[4/5] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-50'}`}>
-                {posterPreview ? <img src={posterPreview} alt="Poster" className="w-full h-full object-cover" /> : <p className="text-[10px] font-bold text-slate-400 text-center px-2">Select event media graphic asset</p>}
+              <div 
+                onClick={() => posterInputRef.current?.click()} 
+                className={`w-44 aspect-[4/5] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden relative group transition-all ${isDark ? 'border-white/10 bg-white/5 hover:border-blue-500/50' : 'border-slate-200 bg-slate-50 hover:border-blue-500/50'}`}
+              >
+                {posterPreview ? (
+                  <div className="w-full h-full relative">
+                    <img src={posterPreview} alt="Distribution Poster Preview" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-center p-2">
+                      <div className="flex flex-col items-center gap-1 bg-black/70 text-white p-2 rounded-lg text-[10px] font-bold">
+                        <UploadCloud size={12} />
+                        <span>Replace Poster</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-1.5 text-slate-400 text-center px-2">
+                    <UploadCloud size={20} />
+                    <p className="text-[10px] font-bold">Select event media graphic asset</p>
+                    <span className="text-[9px] text-slate-500">4:5 portrait aspect ratio</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -650,7 +690,6 @@ export default function EventDetailEditor({
                 {details.pricingConfig.isRequired && (
                   <div className="space-y-4 pt-2 animate-in fade-in duration-200">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* DYNAMIC DROP-DOWN: Is registration fee applicable for all */}
                       <div className="space-y-1.5">
                         <label className={styles.label}>Is registration fee applicable for all?</label>
                         <select 
@@ -672,7 +711,6 @@ export default function EventDetailEditor({
                       )}
                     </div>
 
-                    {/* DYNAMIC CATEGORY PRICING ENTRY MATRIX PANEL */}
                     {details.pricingConfig.applicableForAll === 'no' && (
                       <div className="space-y-3 border border-white/5 dark:border-slate-800 p-4 rounded-2xl bg-black/5 animate-in slide-in-from-top-2 duration-200">
                         <div>
@@ -750,7 +788,7 @@ export default function EventDetailEditor({
         <p className="text-[9px] font-black text-slate-500 tracking-widest">
           {isCreateMode ? 'Storage Target: ' : 'Event Page Link: '}
           <span className={`text-${accentColor}-400 italic`}>
-             {isCreateMode ? 'IndexedDB.AayojanDB.events' : `/events/${event?.slug || 'draft'}`}
+             {isCreateMode ? 'IndexedDB.AayojanDB.events' : `/events/${event?.slug || details.title.toLowerCase().replace(/\s+/g, '-')}`}
           </span>
         </p>
       </div>

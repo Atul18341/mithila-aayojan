@@ -8,14 +8,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: true },
 });
-const convertBlobToBase64 = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => resolve(reader.result as string);
-    reader.readAsDataURL(blob);
-  });
-};
+
 // Helper utility to convert base64 image strings to standard binary Buffers for R2 transfer
 function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: string } | null {
   if (!base64Data) return null;
@@ -68,10 +61,14 @@ export async function POST(request: Request) {
     // ==========================================
     // 1. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2
     // ==========================================
-    const realEventIdMap: Record<number, number> = {};
+    const realEventIdMap: Record<string | number, number> = {};
     const bucketName = 'mithila-aayojan';
     
     for (const ev of events) {
+      const generatedSlug = ev.slug || (typeof ev.name === 'string' 
+        ? ev.name.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '')
+        : `event-${Date.now()}`);
+
       const eventUpsertQuery = `
         INSERT INTO events (
           name, type, protocol, status, date, start_time, end_time, 
@@ -95,7 +92,7 @@ export async function POST(request: Request) {
           location = EXCLUDED.location,
           tagline = COALESCE(EXCLUDED.tagline, events.tagline),       
           description = COALESCE(EXCLUDED.description, events.description), 
-          venue_name = EXCLUDED.venue_Name,
+          venue_name = EXCLUDED.venue_name,
           visibility = EXCLUDED.visibility,
           food_config = EXCLUDED.food_config,
           pricing_config = EXCLUDED.pricing_config,
@@ -110,30 +107,24 @@ export async function POST(request: Request) {
       const result = await client.query(eventUpsertQuery, [
         ev.name, ev.type, ev.protocol, ev.status, ev.date, ev.startTime || null, ev.endTime || null,
         ev.location || null, ev.tagline || null, ev.description || null, ev.venueName || null, visibilityData,
-        foodConfigData, pricingConfigData, ev.createdAt || Date.now(), ev.slug
+        foodConfigData, pricingConfigData, ev.createdAt || Date.now(), generatedSlug
       ]); 
       
       const serverGeneratedId = result.rows[0].id;
-      realEventIdMap[ev.id] = serverGeneratedId; 
 
-      // Initialize keys with fallback to existing clean tracking variables if present
-      let finalCoverKey = ev.cover_image || null;
-      let finalPosterKey = ev.poster_image || null;
-      let finalCoverName;
-      let finalPosterName;
-      // Safe URL naming fallback
-      const safeEventSlug = ev.slug || 
-  (typeof ev.name === 'string' 
-    ? ev.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') 
-    : `event-${serverGeneratedId || Math.floor(Math.random() * 100000)}`);
+      // Register both local numeric ID and slug into mapping dictionary
+      if (ev.id) realEventIdMap[ev.id] = serverGeneratedId; 
+      if (ev.slug) realEventIdMap[ev.slug] = serverGeneratedId;
 
-      // 🚀 Check if a new cover image base64 data string exists for processing
+      let finalCoverName = ev.cover_image || null;
+      let finalPosterName = ev.poster_image || null;
+
+      // Process new cover image upload to Cloudflare R2
       if (ev.coverBlobBase64) {
         const coverMedia = base64ToBuffer(ev.coverBlobBase64);
         if (coverMedia) {
-          // FIX: Assign directly to outer scope variable and place in event-banner/
-          finalCoverKey = `event-banner/event-${safeEventSlug}-cover.webp`;
-          finalCoverName = `event-${safeEventSlug}-cover.webp`;
+          finalCoverName = `event-${generatedSlug}-cover.webp`;
+          const finalCoverKey = `event-banner/${finalCoverName}`;
           await r2Client.send(new PutObjectCommand({
             Bucket: bucketName,
             Key: finalCoverKey,
@@ -144,13 +135,12 @@ export async function POST(request: Request) {
         }
       }
 
-      // 🚀 Check if a new poster image base64 data string exists for processing
+      // Process new poster image upload to Cloudflare R2
       if (ev.posterBlobBase64) {
         const posterMedia = base64ToBuffer(ev.posterBlobBase64);
         if (posterMedia) {
-          // FIX: Assign directly to outer scope variable and place in event-cover-image/
-          finalPosterKey = `event-cover-image/event-${safeEventSlug}-poster.webp`;
-          finalPosterName= `event-${safeEventSlug}-poster.webp`;
+          finalPosterName = `event-${generatedSlug}-poster.webp`;
+          const finalPosterKey = `event-cover-image/${finalPosterName}`;
           await r2Client.send(new PutObjectCommand({
             Bucket: bucketName,
             Key: finalPosterKey,
@@ -161,8 +151,8 @@ export async function POST(request: Request) {
         }
       }
 
-      // 🚀 FIX: Evaluates the corrected outer-scope path keys cleanly
-      if (finalCoverKey || finalPosterKey) {
+      // Update image references in PostgreSQL if updated
+      if (finalCoverName || finalPosterName) {
         await client.query(
           `UPDATE events 
            SET cover_image = COALESCE($1, cover_image), 
@@ -178,7 +168,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 2. SYNCHRONIZE USERS, JUNCTION MAPPINGS, GUESTS (Kept pristine below)
+    // 2. SYNCHRONIZE USERS & ACCESS RIGHTS
     // ==========================================
     for (const usr of users) {
       const userUpsertQuery = `
@@ -216,23 +206,51 @@ export async function POST(request: Request) {
       syncedLinksCount++;
     }
 
+    // ==========================================
+    // 3. SYNCHRONIZE GUESTS & TICKET ENTITLEMENTS
+    // ==========================================
     for (const gst of guests) {
       let targetEventId = gst.eventId; 
       if (targetEventId && realEventIdMap[targetEventId]) {
         targetEventId = realEventIdMap[targetEventId]; 
       }
       if (!targetEventId) continue; 
+
+      const guestType = gst.category || gst.type || 'general-public';
+
       const guestUpsertQuery = `
         INSERT INTO guests (
           event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, has_food_access, check_in_time, server_updated_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
         ON CONFLICT (qr_token) 
-        DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type, email = EXCLUDED.email, phone = EXCLUDED.phone, is_check_in = EXCLUDED.is_check_in, amount_paid = EXCLUDED.amount_paid, has_food_access = EXCLUDED.has_food_access, check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), server_updated_at = timezone('utc', now())
+        DO UPDATE SET 
+          name = EXCLUDED.name, 
+          type = EXCLUDED.type, 
+          email = EXCLUDED.email, 
+          phone = EXCLUDED.phone, 
+          is_check_in = EXCLUDED.is_check_in, 
+          amount_paid = EXCLUDED.amount_paid, 
+          has_food_access = EXCLUDED.has_food_access, 
+          check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), 
+          server_updated_at = timezone('utc', now())
         RETURNING id;
       `; 
-      const checkInStatus = gst.checkInTime || gst.isCheckIn === 1 ? 1 : 0;
-      const result = await client.query(guestUpsertQuery, [targetEventId, gst.name, gst.type || 'general-public', gst.qrToken, gst.email || null, gst.phone || null, checkInStatus, gst.amountPaid || 0.00, gst.hasFoodAccess || 0, gst.checkInTime ? BigInt(gst.checkInTime) : null]); 
+
+      const checkInStatus = gst.checkInTime || gst.isCheckedIn || gst.isCheckIn === 1 ? 1 : 0;
+      const result = await client.query(guestUpsertQuery, [
+        targetEventId, 
+        gst.name, 
+        guestType, 
+        gst.qrToken, 
+        gst.email || null, 
+        gst.phone || null, 
+        checkInStatus, 
+        gst.amountPaid || 0.00, 
+        gst.hasFoodAccess ? 1 : 0, 
+        gst.checkInTime ? BigInt(gst.checkInTime) : null
+      ]); 
+
       const serverGuestId = result.rows[0].id;
       await logSyncAction('guests', gst.checkInTime ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp || gst.checkInTime);
       syncedGuestsCount++;  
@@ -242,7 +260,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       success: true, 
       message: 'All relational transaction matrices verified and synchronized.', 
-      counts: { events: syncedEventsCount, users: syncedUsersCount, links: syncedLinksCount, guests: syncedGuestsCount, total: syncedEventsCount + syncedUsersCount + syncedLinksCount + syncedGuestsCount }
+      counts: { 
+        events: syncedEventsCount, 
+        users: syncedUsersCount, 
+        links: syncedLinksCount, 
+        guests: syncedGuestsCount, 
+        total: syncedEventsCount + syncedUsersCount + syncedLinksCount + syncedGuestsCount 
+      }
     });
 
   } catch (error: any) {
