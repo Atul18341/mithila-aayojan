@@ -67,6 +67,7 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
         await db.managerEvents.add({
           managerIdentifier: link.managerIdentifier || link.manager_identifier,
           eventId: Number(link.eventId || link.event_id),
+          assignedAt:Date.now(),
           syncStatus: 'synced'
         });
       }

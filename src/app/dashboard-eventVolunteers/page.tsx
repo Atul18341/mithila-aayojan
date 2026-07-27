@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useRouter } from 'next/navigation';
 import { 
   QrCode, Clock, Loader, Bell, Sun, Moon, 
-  LogOut, Calendar, Sparkles, LogIn, Utensils 
+  LogOut, Calendar, Sparkles, LogIn, Utensils, RefreshCw, Lock
 } from 'lucide-react';
 import { db } from '../../lib/db';
-import EntryDeskCameraScanner from '../../components/CheckIn-Scanner';
+import EntryDeskCameraScanner from '../../components/Scanner';
 
 type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
 
@@ -15,40 +16,201 @@ export default function VolunteerCheckInPanel() {
   const [isDark, setIsDark] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  
-  // 🚀 Added: State switcher context for the scanning hardware trigger
+  const [isHydrating, setIsHydrating] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
   const [scanMode, setScanMode] = useState<ScanMode>('CHECK_IN');
-  
-  // Explicitly bound to assigned event context on the ground
-  const volunteerEventId = 1; 
 
-  // 1. DEXIE LIVE QUERIES (Lightweight footprints for mobile devices)
+  const router = useRouter();
+
+  // 1. RESOLVE ACTIVE VOLUNTEER IDENTITY AND EVENT ID FROM LOCAL DEXIE SESSION
+  const activeUser = useLiveQuery(async () => {
+    if (!db.isOpen()) await db.open();
+    return await db.users.toCollection().first();
+  });
+
+  const activeEventId = activeUser?.activeEventId || null;
+
+  // 2. DEXIE LIVE QUERIES FOR ACTIVE WORKSPACE & ASSIGNED DESK PERMISSIONS
   const activeEvent = useLiveQuery(
-    () => db.events.get(volunteerEventId),
-    [volunteerEventId]
+    async () => {
+      if (!activeEventId) {
+        if (activeUser?.identifier) {
+          const assignment = await db.managerEvents
+            .where('managerIdentifier')
+            .equals(activeUser.identifier)
+            .first();
+          if (assignment?.eventId) {
+            return await db.events.get(assignment.eventId);
+          }
+        }
+        return null;
+      }
+      return await db.events.get(activeEventId);
+    },
+    [activeEventId, activeUser?.identifier]
   );
+
+  const resolvedEventId = activeEvent?.id || activeEventId || null;
+
+  // FETCH VOLUNTEER'S ASSIGNED DESK SCOPE FROM managerEvents TABLE
+  const activeAssignment = useLiveQuery(
+    async () => {
+      if (!activeUser?.identifier || !resolvedEventId) return null;
+      return await db.managerEvents
+        .where('managerIdentifier')
+        .equals(activeUser.identifier.toLowerCase())
+        .filter(link => Number(link.eventId) === Number(resolvedEventId))
+        .first();
+    },
+    [activeUser?.identifier, resolvedEventId]
+  );
+
+  const assignedDesk = activeAssignment?.assignedDesk || 'CHECK_IN';
+
+  // 🟢 AUTOMATICALLY LOCK AND SYNC SCAN MODE BASED ON ASSIGNED DESK PERMISSION
+  useEffect(() => {
+    if (assignedDesk === 'CHECK_IN') {
+      setScanMode('CHECK_IN');
+    } else if (assignedDesk === 'FOOD_CLAIM') {
+      setScanMode('FOOD_CLAIM');
+    }
+  }, [assignedDesk]);
 
   const recentCheckIns = useLiveQuery(
     async () => {
+      if (!resolvedEventId) return [];
       return await db.guests
         .where('eventId')
-        .equals(volunteerEventId)
+        .equals(resolvedEventId)
         .reverse()
         .limit(5)
         .toArray();
     },
-    [volunteerEventId]
+    [resolvedEventId]
   ) || [];
 
   const totalCheckedIn = useLiveQuery(
-    () => db.guests.where('eventId').equals(volunteerEventId).count()
+    async () => {
+      if (!resolvedEventId) return 0;
+      return await db.guests
+        .where('eventId')
+        .equals(resolvedEventId)
+        .filter(g => Boolean(g.checkInTime || g.isCheckedIn === true))
+        .count();
+    },
+    [resolvedEventId]
   ) || 0;
+
+  // 3. HYDRATION ENGINE: FETCH FROM POSTGRESQL IF DATA IS MISSING IN INDEXEDDB
+  const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null) => {
+    if (!navigator.onLine) return;
+    setIsHydrating(true);
+    setSyncMessage('Fetching event data & guest manifests from cloud...');
+
+    try {
+      const response = await fetch(`/api/sync/pull?identifier=${encodeURIComponent(identifier)}`);
+      if (!response.ok) throw new Error('Cloud dataset fetch failed.');
+
+      const data = await response.json();
+      const { events = [], guests = [], managerEvents = [] } = data;
+
+      await db.transaction('rw', [db.events, db.guests, db.managerEvents, db.users], async () => {
+        for (const ev of events) {
+          if (ev.id) await db.events.put(ev);
+        }
+
+        for (const link of managerEvents) {
+          const existing = await db.managerEvents
+            .where('[managerIdentifier+eventId]')
+            .equals([link.managerIdentifier, link.eventId])
+            .first();
+          if (!existing) {
+            await db.managerEvents.add(link);
+          }
+        }
+
+        for (const gst of guests) {
+          if (gst.qrToken) {
+            const existingGuest = await db.guests.where('qrToken').equals(gst.qrToken).first();
+            if (existingGuest) {
+              await db.guests.update(existingGuest.id!, gst);
+            } else {
+              await db.guests.add(gst);
+            }
+          }
+        }
+
+        const effectiveEventId = targetEventId || (events[0] ? events[0].id : null);
+        if (effectiveEventId) {
+          await db.users.where('identifier').equals(identifier).modify({
+            activeEventId: Number(effectiveEventId)
+          });
+        }
+      });
+
+      console.log('✅ Local IndexedDB successfully populated from PostgreSQL.');
+    } catch (err) {
+      console.error('❌ Sync hydration error:', err);
+    } finally {
+      setIsHydrating(false);
+      setSyncMessage('');
+    }
+  };
+
+  useEffect(() => {
+    const verifyAndHydrate = async () => {
+      if (!activeUser?.identifier) return;
+
+      const hasEventLocal = Boolean(activeEvent);
+      let localGuestCount = 0;
+
+      if (resolvedEventId) {
+        localGuestCount = await db.guests.where('eventId').equals(resolvedEventId).count();
+      }
+
+      if ((!hasEventLocal || localGuestCount === 0) && navigator.onLine && !isHydrating) {
+        await hydrateWorkspaceFromPostgres(activeUser.identifier, resolvedEventId);
+      }
+    };
+
+    verifyAndHydrate();
+  }, [activeUser?.identifier, activeEvent, resolvedEventId]);
+
+  const handleLogout = async () => {
+    try {
+      if (!db.isOpen()) await db.open();
+      await db.users.clear();
+      router.push('/login');
+    } catch (err) {
+      console.error("Failed to disconnect gate terminal node:", err);
+    }
+  };
+
+  if (isHydrating || (!activeEvent && isLoadingState(activeUser))) {
+    return (
+      <div className={`h-screen w-full flex flex-col items-center justify-center p-6 ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
+        <Loader className="animate-spin text-purple-500 mb-3" size={36} />
+        <p className="text-xs font-black uppercase tracking-widest text-slate-400 animate-pulse">
+          {syncMessage || 'Initializing Gate Terminal Records...'}
+        </p>
+      </div>
+    );
+  }
 
   if (!activeEvent) {
     return (
-      <div className={`h-screen w-full flex items-center justify-center ${isDark ? 'bg-[#020617]' : 'bg-slate-50'}`}>
-        <Loader className="animate-spin text-purple-500" size={32} />
-        <p>No event active.</p>
+      <div className={`h-screen w-full flex flex-col items-center justify-center p-6 text-center ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
+        <Sparkles className="text-purple-500 mb-4 animate-pulse" size={48} />
+        <h2 className="text-2xl font-black italic">No Event Assigned</h2>
+        <p className="text-xs text-slate-400 mt-2 max-w-sm">
+          Your account is not currently provisioned for an active event gate desk.
+        </p>
+        <button 
+          onClick={() => activeUser?.identifier && hydrateWorkspaceFromPostgres(activeUser.identifier, null)}
+          className="mt-6 px-6 py-3 bg-purple-600 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-purple-500 transition-all"
+        >
+          <RefreshCw size={14} /> Refresh Cloud Assignments
+        </button>
       </div>
     );
   }
@@ -61,14 +223,10 @@ export default function VolunteerCheckInPanel() {
     dropdownMenu: isDark ? 'bg-[#0a0f1d] border-white/10' : 'bg-white border-slate-200 shadow-2xl'
   };
 
-  const handleLogout = () => {
-    console.log("Volunteer terminal disconnecting...");
-  };
-
   return (
     <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-between overflow-x-hidden custom-scrollbar`}>
       
-      {/* BRAND NEW FIXED HEADER - MATCHES MANAGER SPECIFICATION */}
+      {/* HEADER */}
       <header className={`sticky top-0 z-40 w-full px-6 py-4 border-b ${isDark ? 'border-white/5' : 'border-slate-200'} backdrop-blur-xl bg-inherit/80 flex items-center justify-between`}>
         <div className="flex items-center gap-4">
           <div className="text-left space-y-0.5">
@@ -80,14 +238,21 @@ export default function VolunteerCheckInPanel() {
             </div>
             <div className="flex items-center gap-3 text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">
               <span className="flex items-center gap-1"><Calendar size={11} className="text-purple-500" /> {activeEvent.date || 'Live Gate'}</span>
-              <span className="flex items-center gap-1"><Sparkles size={11} className="text-purple-500" /> {activeEvent.protocol}</span>
+              <span className="flex items-center gap-1"><Sparkles size={11} className="text-purple-500" /> {activeEvent.protocol || 'open'}</span>
             </div>
           </div>
         </div>
 
         {/* RIGHT HEADER ACTION UTILITIES */}
         <div className="flex items-center gap-2.5">
-          {/* THEME SWITCHER */}
+          <button 
+            onClick={() => activeUser?.identifier && hydrateWorkspaceFromPostgres(activeUser.identifier, resolvedEventId)}
+            className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center ${theme.inputBg}`}
+            title="Sync Latest Data from Cloud"
+          >
+            <RefreshCw size={16} className={`text-purple-400 ${isHydrating ? 'animate-spin' : ''}`} />
+          </button>
+
           <button 
             onClick={() => setIsDark(!isDark)} 
             className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
@@ -100,7 +265,6 @@ export default function VolunteerCheckInPanel() {
             </div>
           </button>
 
-          {/* NOTIFICATIONS TERMINAL HUB */}
           <div className="relative">
             <button 
               onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
@@ -137,7 +301,6 @@ export default function VolunteerCheckInPanel() {
             )}
           </div>
 
-          {/* QUICK TERMINAL EXIT LOGOUT ACCESSIBILITY */}
           <button 
             onClick={handleLogout}
             className={`w-10 h-10 rounded-xl border flex items-center justify-center text-red-400 hover:bg-red-500/10 transition-colors ${theme.inputBg}`}
@@ -151,11 +314,12 @@ export default function VolunteerCheckInPanel() {
       {/* CORE CONTROL COUNTER SUB-PANEL */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
         
-        {/* 🚀 MODE SELECTOR BRIDGE */}
+        {/* 🟢 RESTRICTED MODE SELECTOR BRIDGE */}
         <div className={`grid grid-cols-2 gap-2 p-1 rounded-xl border w-full max-w-xs ${theme.card}`}>
           <button
+            disabled={assignedDesk !== 'ALL' && assignedDesk !== 'CHECK_IN'}
             onClick={() => setScanMode('CHECK_IN')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               scanMode === 'CHECK_IN' 
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20' 
                 : 'text-slate-400 hover:text-slate-200'
@@ -165,8 +329,9 @@ export default function VolunteerCheckInPanel() {
             Gate Check-In
           </button>
           <button
+            disabled={assignedDesk !== 'ALL' && assignedDesk !== 'FOOD_CLAIM'}
             onClick={() => setScanMode('FOOD_CLAIM')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               scanMode === 'FOOD_CLAIM' 
                 ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20' 
                 : 'text-slate-400 hover:text-slate-200'
@@ -183,12 +348,13 @@ export default function VolunteerCheckInPanel() {
             <p className="text-2xl font-black text-purple-500 tracking-tight">{totalCheckedIn}</p>
           </div>
           <div className="w-px h-8 bg-white/10" />
-          <div className="text-left">
-            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border tracking-wider transition-colors ${
+          <div className="text-left flex items-center gap-1.5">
+            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border tracking-wider transition-colors flex items-center gap-1 ${
               scanMode === 'CHECK_IN' 
                 ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
                 : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
             }`}>
+              {assignedDesk !== 'ALL' && <Lock size={10} />}
               {scanMode === 'CHECK_IN' ? 'Gate Operator Node' : 'Food Stall Scanner'}
             </span>
           </div>
@@ -216,45 +382,48 @@ export default function VolunteerCheckInPanel() {
       </footer>
 
       {/* DETACHED CAMERA SCANNER ENGINE PORTAL */}
-      {isScanning && (
+      {isScanning && resolvedEventId && (
         <EntryDeskCameraScanner 
-          currentEventId={volunteerEventId}
+          currentEventId={resolvedEventId}
           variant={scanMode === 'CHECK_IN' ? 'purple' : 'amber'}
           isDark={isDark}
+          scanMode={scanMode}
           onClose={() => setIsScanning(false)}
           onScanExecute={async (token) => {
-            // Locate dynamic token parameters in local IndexedDB pool
             const guest = await db.guests.where('qrToken').equals(token).first();
             
-            if (!guest || guest.eventId !== volunteerEventId) {
+            if (!guest || guest.eventId !== resolvedEventId) {
               return { status: 'error', message: 'Access Denied: Invalid credential for this venue.' };
             }
 
-            // 🚀 OPERATION A: GATE CHECK-IN STATE EVALUATION
+            // GATE CHECK-IN EVALUATION
             if (scanMode === 'CHECK_IN') {
-              if (guest.checkInTime) {
+              if (guest.checkInTime || guest.isCheckedIn === true) {
                 return { status: 'warning', message: 'Pass duplicate scan exception.', name: guest.name };
               }
               
-              await db.guests.update(guest.id!, { checkInTime: Date.now() });
-              return { status: 'success', message: `${guest.category.toUpperCase()} pass authenticated.`, name: guest.name };
+              await db.guests.update(guest.id!, { 
+                checkInTime: Date.now(),
+                isCheckedIn: true,
+                syncStatus: 'pending'
+              });
+              return { status: 'success', message: `${(guest.category || 'General').toUpperCase()} pass authenticated.`, name: guest.name };
             }
 
-            // 🚀 OPERATION B: FOOD COUNTER VOUCHER EVALUATION
+            // FOOD COUNTER VOUCHER EVALUATION
             if (scanMode === 'FOOD_CLAIM') {
-              // Gracefully handle credentials that don't have food mapping configs attached
-              if (guest.hasFoodAccess === true) {
+              if (!guest.hasFoodAccess) {
                 return { status: 'error', message: 'Denied: Food not included with this pass tier.', name: guest.name };
               }
               
-              if (guest.hasFoodAccess) {
+              if (guest.hasFoodClaimed) {
                 return { status: 'warning', message: 'Food already claimed for this pass reference.', name: guest.name };
               }
 
               await db.guests.update(guest.id!, { 
-              
                 hasFoodClaimed: true, 
-                foodClaimedTime: Date.now() 
+                foodClaimedTime: Date.now(),
+                syncStatus: 'pending'
               });
               
               return { status: 'success', message: 'Meal Plate Allocation Approved.', name: guest.name };
@@ -266,4 +435,8 @@ export default function VolunteerCheckInPanel() {
       )}
     </div>
   );
+}
+
+function isLoadingState(user: any): boolean {
+  return user === undefined;
 }

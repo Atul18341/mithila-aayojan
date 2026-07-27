@@ -6,7 +6,7 @@ import { hydrateDeviceFromCloud } from '@/lib/sync-recovery';
 import { 
   ShieldCheck, KeyRound, User, Sparkles, 
   ArrowRight, Moon, Sun, Loader2, Lock, UserPlus,
-  Home // 🚀 Imported Home icon for visitor escaping
+  Home 
 } from 'lucide-react';
 import { db } from '../../lib/db';
 
@@ -14,37 +14,44 @@ export default function UnifiedLoginPage() {
   const [isDark, setIsDark] = useState(true);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(true); // Started as true to prevent flash during automatic session checking
+  const [isLoading, setIsLoading] = useState(true);
   const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState('');
   
   const router = useRouter();
 
-  // 🚀 HYBRID TOKEN SESSION RECOVERY: Check if an active, valid session is already cached locally
+  // Helper function to navigate based on verified role
+  const navigateByRole = (role: string) => {
+    const normalizedRole = role.toLowerCase().trim();
+    if (normalizedRole === 'manager') {
+      router.push('/dashboard-eventManagers');
+      return true;
+    } else if (normalizedRole === 'volunteer') {
+      router.push('/dashboard-eventVolunteers');
+      return true;
+    }
+    return false;
+  };
+
+  // HYBRID TOKEN SESSION RECOVERY: Restore existing local active session if valid
   useEffect(() => {
     const checkExistingSession = async () => {
       try {
         if (!db.isOpen()) await db.open();
 
-        // Peek at the first active operator row cached in the system
         const cachedUser = await db.users.toCollection().first();
 
         if (cachedUser) {
-          // Verify cache validity matrix constraints (7-day window expiration rule)
-          const isCacheExpired = Date.now() - cachedUser.cachedAt > 7 * 24 * 60 * 60 * 1000;
+          const isCacheExpired = Date.now() - (cachedUser.cachedAt || 0) > 7 * 24 * 60 * 60 * 1000;
           
-          if (!isCacheExpired) {
+          if (!isCacheExpired && cachedUser.role) {
             console.log(`Restoring verified cached offline session for ${cachedUser.identifier}`);
-            if (cachedUser.role === 'manager') {
-              router.push('/dashboard-eventManagers');
-            } else {
-              router.push('/dashboard-eventVolunteers');
-            }
-            return;
-          } else {
-            // Clean up stale session entries to force a fresh online validation handshake
-            await db.users.clear();
+            const redirected = navigateByRole(cachedUser.role);
+            if (redirected) return;
           }
+          
+          // Clear invalid or stale sessions
+          await db.users.clear();
         }
       } catch (err) {
         console.error("Local session tracking index lookup error:", err);
@@ -60,6 +67,7 @@ export default function UnifiedLoginPage() {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setLoadingText('');
 
     try {
       if (!db.isOpen()) await db.open();
@@ -70,96 +78,110 @@ export default function UnifiedLoginPage() {
     }
 
     const cleanIdentifier = identifier.trim().toLowerCase();
+    const cleanPassword = password.trim();
 
-    if (!cleanIdentifier || !password) {
+    if (!cleanIdentifier || !cleanPassword) {
       setError('Operational parameters require absolute configuration vectors.');
       setIsLoading(false);
       return;
     }
 
     try {
-      // 🚀 ONLINE-FIRST GATEKEEPER PRINCIPLE: Initial logins MUST hit the authentication service route
+      // 1. FIRST ATTEMPT: Check local IndexedDB cache (works offline or for fast local verification)
+      let localUser = await db.users.where('identifier').equals(cleanIdentifier).first();
+
+      // Verify local password matching if present locally
+      const isLocalMatch = localUser && localUser.passkey && localUser.passkey === cleanPassword;
+
+      if (isLocalMatch) {
+        const isCacheExpired = Date.now() - (localUser.cachedAt || 0) > 7 * 24 * 60 * 60 * 1000;
+        if (isCacheExpired) {
+          setError('Offline security clearance has expired. Establish network access to refresh access token keys.');
+          setIsLoading(false);
+          return;
+        }
+
+        const userRole = String(localUser.role).toLowerCase().trim();
+        if (userRole !== 'manager' && userRole !== 'volunteer') {
+          setError('Unauthorized user role level detected.');
+          setIsLoading(false);
+          return;
+        }
+
+        navigateByRole(userRole);
+        return;
+      }
+
+      // 2. SECOND ATTEMPT: Fallback to Server Handshake (If missing locally OR password mismatch on initial setup)
       if (navigator.onLine) {
+        setLoadingText('Verifying credentials against central directory server...');
+
         const response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: cleanIdentifier, password }),
+          body: JSON.stringify({ identifier: cleanIdentifier, password: cleanPassword }),
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-          setError(data.message || 'Authentication rejected by secure directory nodes.');
+          setError(data.message || 'Invalid username or password.');
           setIsLoading(false);
           return;
         }
 
         const remoteUser = data.user || data;
-        console.log("data:",remoteUser)
+
         if (!remoteUser || !remoteUser.identifier || !remoteUser.role) {
           setError('Malformed identification payload returned by cloud network nodes.');
           setIsLoading(false);
           return;
         }
 
-        // 🚀 HYBRID DATA SEEDING: Wipe old matrices and pin the new authoritative token configuration
+        const userRole = String(remoteUser.role).toLowerCase().trim();
+
+        // Check if role is authorized (Manager or Volunteer)
+        if (userRole !== 'manager' && userRole !== 'volunteer') {
+          setError('Access denied. Account is not provisioned with Manager or Volunteer privileges.');
+          setIsLoading(false);
+          return;
+        }
+
+        // Cache authenticated user session locally in IndexedDB for subsequent offline access
         await db.users.clear();
         await db.users.add({
           identifier: remoteUser.identifier,
           name: remoteUser.name || 'Matrix Operator',
-          passkey:'', // Retained purely for local credential checking fallback operations
-          role: remoteUser.role,
+          passkey: cleanPassword, // Stored locally for offline authentication fallback
+          role: userRole,
           activeEventId: remoteUser.assignedEventId || 0,
           token: data.token || 'LOCAL_FALLBACK_TOKEN',
           cachedAt: Date.now(),
-          syncStatus: 'synced' // User profile itself is clean post-handshake setup
+          syncStatus: 'synced'
         });
-        setLoadingText('Synchronizing workspace records from cloud data anchors...');
-      await hydrateDeviceFromCloud(remoteUser.identifier);
 
-      // 3. Auto-select the first newly pulled event as active context so workspace fills seamlessly
-      const firstEvent = await db.events.toCollection().first();
-      if (firstEvent && firstEvent.id) {
-        await db.users.where('identifier').equals(remoteUser.identifier).modify({
-          activeEventId: firstEvent.id
-        })
-      }
-        // Safe client redirection routing to the active control terminal
-        if (remoteUser.role === 'manager') {
-          router.push('/dashboard-eventManagers');
-        } else {
-          router.push('/dashboard-eventVolunteers');
+        setLoadingText('Synchronizing workspace records from cloud data anchors...');
+        await hydrateDeviceFromCloud(remoteUser.identifier);
+
+        // Auto-select the first available event as active workspace context
+        const firstEvent = await db.events.toCollection().first();
+        if (firstEvent && firstEvent.id) {
+          await db.users.where('identifier').equals(remoteUser.identifier).modify({
+            activeEventId: firstEvent.id
+          });
         }
+
+        // Redirect based on verified role
+        navigateByRole(userRole);
 
       } else {
-        // --- HARDENED OFFLINE AUTONOMOUS VERIFICATION ---
-        // If the device drops mid-shift and needs to re-auth, allow matching ONLY if seeded previously
-        const localUser = await db.users.where('identifier').equals(cleanIdentifier).first();
-        
+        // Device is offline AND local lookup failed
         if (!localUser) {
-          setError('This device terminal has not been provisioned. Initial login requires an active network link.');
-          setIsLoading(false);
-          return;
-        }
-
-        if (!localUser.passkey || localUser.passkey !== password) {
-          setError('Invalid operational clearance credentials supplied.');
-          setIsLoading(false);
-          return;
-        }
-
-        const isCacheExpired = Date.now() - localUser.cachedAt > 7 * 24 * 60 * 60 * 1000;
-        if (isCacheExpired) {
-          setError('Offline security clearance has expired. Establish network access to refresh access token keys.');
-          setIsLoading(false);
-          return;
-        }
-        
-        if (localUser.role === 'manager') {
-          router.push('/dashboard-eventManagers');
+          setError('Volunteer/User account not found on this device. Establish an internet connection to perform initial credential verification.');
         } else {
-          router.push('/dashboard-eventVolunteers');
+          setError('Invalid password supplied.');
         }
+        setIsLoading(false);
       }
     } catch (err) {
       console.error("Dexie processing exception runtime trace:", err);
@@ -167,11 +189,6 @@ export default function UnifiedLoginPage() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleQuickBypass = async (role: 'manager' | 'volunteer') => {
-    setIdentifier(role === 'manager' ? 'manager@lyss.in' : 'volunteer_gate1@lyss.in');
-    setPassword('password123');
   };
 
   const theme = {
@@ -185,7 +202,7 @@ export default function UnifiedLoginPage() {
     <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-center items-center p-4 relative overflow-hidden pt-10`}>
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* 🚀 EXTRACTION ACTION DRAWER: Escape hatch button for public visitors */}
+      {/* Escape hatch button for public visitors */}
       <div className="absolute top-6 left-6">
         <button 
           type="button"
@@ -193,7 +210,7 @@ export default function UnifiedLoginPage() {
           className={`w-40 h-12 rounded-2xl border transition-all flex items-center justify-center group ${theme.input}`}
         >
           <Home size={18} className="text-slate-400 group-hover:text-blue-500 transition-colors mr-2" />
-          {!isDark ?(<p className='text-black font-semibold'>Go to Home</p>):(<p className='text-white font-semibold'>Go to Home</p>)}
+          <p className={`${!isDark ? 'text-black' : 'text-white'} font-semibold text-xs`}>Go to Home</p>
         </button>
       </div>
 
@@ -266,7 +283,10 @@ export default function UnifiedLoginPage() {
             className="w-full mt-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
           >
             {isLoading ? (
-              <Loader2 size={14} className="animate-spin" />
+              <span className="flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                {loadingText || 'Authenticating...'}
+              </span>
             ) : (
               <>
                 Initialize System Workspace <ArrowRight size={14} />

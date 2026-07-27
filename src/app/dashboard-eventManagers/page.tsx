@@ -6,13 +6,14 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   LayoutDashboard, Users, Box, QrCode, Loader,
   Settings, Bell, Clock, Calendar, Sparkles, Plus,
-  Heart, Briefcase, Globe, X, ShieldCheck,
+  Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
   Pencil, Sun, Moon, ChevronDown, Layers
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
 import EventDetailEditor from './_components/event-details';
-import EntryDeskCameraScanner from '../../components/CheckIn-Scanner';
+import VolunteerManager from './_components/volunteer-manager'; // 👈 Imported component
+import EntryDeskCameraScanner from '../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
 
@@ -38,6 +39,7 @@ export default function ManagerDashboard() {
   const [isEditing, setIsEditing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [isManagingVolunteers, setIsManagingVolunteers] = useState(false);
   const [currentManagerEmail, setCurrentManagerEmail] = useState<string | null>(null);
 
   useEffect(() => {
@@ -103,6 +105,7 @@ export default function ManagerDashboard() {
     setIsDropdownOpen(false);
     setIsEditing(false);
     setIsCreatingNew(false);
+    setIsManagingVolunteers(false);
   };
 
   if (currentManagerEmail === null) {
@@ -123,6 +126,7 @@ export default function ManagerDashboard() {
           onClick={() => {
             setIsCreatingNew(true);
             setIsEditing(false);
+            setIsManagingVolunteers(false);
           }} 
           className="mt-6 px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase text-xs tracking-widest hover:scale-105 transition-all shadow-xl shadow-blue-600/10"
         >
@@ -170,21 +174,27 @@ export default function ManagerDashboard() {
           
           <nav className="space-y-1">
             {[
-              { icon: LayoutDashboard, label: 'Overview', active: !showEditorScreen },
+              { icon: LayoutDashboard, label: 'Overview', active: !showEditorScreen && !isManagingVolunteers },
               { icon: Users, label: 'Guest List' },
+              { icon: UserCheck, label: 'Volunteers', active: isManagingVolunteers },
               { icon: QrCode, label: 'Check-in Desk' },
               { icon: Settings, label: 'Settings', active: isEditing && !isCreatingNew }
             ].map((item) => (
               <button 
                 key={item.label} 
                 onClick={() => { 
-                  if (item.label === 'Settings' && activeEvent) {
+                  if (item.label === 'Volunteers') {
+                    setIsManagingVolunteers(true);
+                    setIsEditing(false);
+                    setIsCreatingNew(false);
+                  } else if (item.label === 'Settings' && activeEvent) {
                     setIsEditing(true); 
                     setIsCreatingNew(false);
-                  }
-                  if (item.label === 'Overview') {
+                    setIsManagingVolunteers(false);
+                  } else if (item.label === 'Overview') {
                     setIsEditing(false); 
                     setIsCreatingNew(false);
+                    setIsManagingVolunteers(false);
                   }
                 }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${item.active ? `${theme.accentBg} text-white shadow-lg` : 'text-slate-500 hover:bg-white/5'}`}
@@ -198,12 +208,10 @@ export default function ManagerDashboard() {
       </aside>
 
       {/* MAIN CONTENT WORKSPACE */}
-      {/* 🚀 CONDITIONAL PADDING: Swapped dynamic padding based on form state to maximize fullscreen look */}
-      <main className={`flex-1 flex flex-col space-y-8 overflow-hidden h-full ${showEditorScreen ? 'p-0' : 'p-8 overflow-y-auto custom-scrollbar'}`}>
+      <main className={`flex-1 flex flex-col space-y-8 overflow-hidden h-full ${showEditorScreen || isManagingVolunteers ? 'p-6 overflow-y-auto custom-scrollbar' : 'p-8 overflow-y-auto custom-scrollbar'}`}>
         
         {/* UNIFIED HEADER BAR */}
-        {/* 🚀 FIXED: Wrapped in conditional block to completely vanish from DOM when the configuration form is loaded */}
-        {!showEditorScreen && (
+        {!showEditorScreen && !isManagingVolunteers && (
           <header className={`shrink-0 w-full py-4 border-b ${theme.bg} flex items-center justify-between z-40`}>
             <div className="flex items-center gap-6">
               <div className="relative">
@@ -251,6 +259,7 @@ export default function ManagerDashboard() {
                         onClick={() => {
                           setIsCreatingNew(true);
                           setIsEditing(false);
+                          setIsManagingVolunteers(false);
                           setIsDropdownOpen(false);
                         }}
                         className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all hover:scale-[1.02] shadow-sm ${
@@ -344,7 +353,15 @@ export default function ManagerDashboard() {
         )}
 
         {/* WORKSPACE LAYER TOGGLE ROUTER */}
-        {showEditorScreen ? (
+        {isManagingVolunteers ? (
+          <div className="flex-1 flex items-center justify-center py-6">
+            <VolunteerManager 
+              isDark={isDark} 
+              events={sessionData} 
+              onClose={() => setIsManagingVolunteers(false)} 
+            />
+          </div>
+        ) : showEditorScreen ? (
           <div className="flex-1 overflow-hidden min-h-0 w-full flex flex-col pt-0">
             <EventDetailEditor 
               event={isCreatingNew ? null : (activeEvent ?? null)}
@@ -360,6 +377,7 @@ export default function ManagerDashboard() {
                   await db.managerEvents.add({
                     managerIdentifier: currentManagerEmail,
                     eventId: targetedId,
+                    assignedAt:Date.now(),
                     syncStatus: 'pending'
                   });
                   await db.users.where('identifier').equals(currentManagerEmail).modify({

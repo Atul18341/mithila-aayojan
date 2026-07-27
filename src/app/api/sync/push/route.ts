@@ -112,8 +112,12 @@ export async function POST(request: Request) {
       
       const serverGeneratedId = result.rows[0].id;
 
-      // Register both local numeric ID and slug into mapping dictionary
-      if (ev.id) realEventIdMap[ev.id] = serverGeneratedId; 
+      // Register local ID (both numeric and string representations) and slug into mapping dictionary
+      if (ev.id !== undefined && ev.id !== null) {
+        realEventIdMap[ev.id] = serverGeneratedId;
+        realEventIdMap[Number(ev.id)] = serverGeneratedId;
+        realEventIdMap[String(ev.id)] = serverGeneratedId;
+      } 
       if (ev.slug) realEventIdMap[ev.slug] = serverGeneratedId;
 
       let finalCoverName = ev.cover_image || null;
@@ -178,28 +182,76 @@ export async function POST(request: Request) {
         DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, updated_at = timezone('utc', now())
         RETURNING id;
       `; 
-      const userIdentifier = usr.email || usr.identifier; 
+      const rawIdentifier = usr.email || usr.identifier;
+      if (!rawIdentifier) continue;  
+      
+      const userIdentifier = rawIdentifier.trim().toLowerCase(); // 🟢 Case-insensitive normalization
       const fallbackHash = usr.passwordHash || '$2b$10$UnassignedOfflinePlaceholderHashString';  
-      if (!userIdentifier) continue;  
-      const result = await client.query(userUpsertQuery, [userIdentifier, usr.name || 'Unnamed Offline User', fallbackHash, usr.role || 'volunteer']); 
+      
+      const result = await client.query(userUpsertQuery, [
+        userIdentifier, 
+        usr.name || 'Unnamed Offline User', 
+        fallbackHash, 
+        usr.role || 'volunteer'
+      ]); 
+
       await logSyncAction('users', 'UPSERT', result.rows[0].id, usr.clientTimestamp || Date.now());
       syncedUsersCount++;  
     }
 
+    // ==========================================
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER ASSIGNMENT LINKS
+    // ==========================================
     for (const link of managerEvents) {
-      let targetEventId = link.eventId;
-      if (targetEventId && realEventIdMap[targetEventId]) {
-        targetEventId = realEventIdMap[targetEventId];
+      let rawTargetEventId = link.eventId;
+
+      // 🟢 Resilient lookup checking numeric, string, or direct slug keys
+      let targetEventId = 
+        realEventIdMap[rawTargetEventId] || 
+        realEventIdMap[Number(rawTargetEventId)] || 
+        realEventIdMap[String(rawTargetEventId)] || 
+        rawTargetEventId;
+
+      const rawManagerIdentifier = link.managerIdentifier || link.managerEmail;
+      if (!rawManagerIdentifier || !targetEventId) continue;
+
+      const managerIdentifier = rawManagerIdentifier.trim().toLowerCase(); // 🟢 Normalized matching
+
+      // 1. Check if the user exists in users table (case-insensitive)
+      const userCheck = await client.query(
+        'SELECT identifier FROM users WHERE LOWER(identifier) = LOWER($1)',
+        [managerIdentifier]
+      );
+
+      if (userCheck.rows.length === 0) {
+        console.warn(`⚠️ Skipping assignment link: Manager/Volunteer identifier '${managerIdentifier}' not found in PostgreSQL.`);
+        continue;
       }
-      const managerIdentifier = link.managerIdentifier || link.managerEmail;
-      if (!managerIdentifier || !targetEventId) continue;
+
+      const verifiedUserIdentifier = userCheck.rows[0].identifier;
+
+      // 2. Check if the event actually exists in Postgres to prevent FK failure
+      const eventCheck = await client.query(
+        'SELECT id FROM events WHERE id = $1', 
+        [Number(targetEventId)]
+      );
+
+      if (eventCheck.rows.length === 0) {
+        console.warn(`⚠️ Skipping assignment: Event ID ${targetEventId} not found in PostgreSQL.`);
+        continue;
+      }
+
+      // 3. Perform the Upsert WITH RETURNING clause using verified FK references
       const linkUpsertQuery = `
         INSERT INTO manager_events (manager_identifier, event_id, assigned_at)
         VALUES ($1, $2, timezone('utc', now()))
-        ON CONFLICT (manager_identifier, event_id) DO UPDATE SET manager_identifier = EXCLUDED.manager_identifier 
+        ON CONFLICT (manager_identifier, event_id) 
+        DO UPDATE SET manager_identifier = EXCLUDED.manager_identifier
         RETURNING manager_identifier, event_id;
       `; 
-      const result = await client.query(linkUpsertQuery, [managerIdentifier, targetEventId]); 
+      
+      const result = await client.query(linkUpsertQuery, [verifiedUserIdentifier, Number(targetEventId)]); 
+
       if (result.rows.length > 0) {
         await logSyncAction('manager_events', 'UPSERT', 0, link.clientTimestamp || Date.now());
       }
@@ -207,13 +259,16 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 3. SYNCHRONIZE GUESTS & TICKET ENTITLEMENTS
+    // 4. SYNCHRONIZE GUESTS & TICKET ENTITLEMENTS
     // ==========================================
     for (const gst of guests) {
-      let targetEventId = gst.eventId; 
-      if (targetEventId && realEventIdMap[targetEventId]) {
-        targetEventId = realEventIdMap[targetEventId]; 
-      }
+      let rawTargetEventId = gst.eventId; 
+      let targetEventId = 
+        realEventIdMap[rawTargetEventId] || 
+        realEventIdMap[Number(rawTargetEventId)] || 
+        realEventIdMap[String(rawTargetEventId)] || 
+        rawTargetEventId;
+
       if (!targetEventId) continue; 
 
       const guestType = gst.category || gst.type || 'general-public';
@@ -239,7 +294,7 @@ export async function POST(request: Request) {
 
       const checkInStatus = gst.checkInTime || gst.isCheckedIn || gst.isCheckIn === 1 ? 1 : 0;
       const result = await client.query(guestUpsertQuery, [
-        targetEventId, 
+        Number(targetEventId), 
         gst.name, 
         guestType, 
         gst.qrToken, 
