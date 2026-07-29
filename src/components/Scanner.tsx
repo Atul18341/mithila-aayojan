@@ -142,7 +142,7 @@ export default function EntryDeskCameraScanner({
 
       // Step C: Evaluate Check-In vs. Food Claim Logic based on active scanMode
       if (scanMode === 'CHECK_IN') {
-        const alreadyCheckedIn = Boolean(guest.checkInTime) || guest.isCheckedIn === true || guest.isCheckIn === 1;
+        const alreadyCheckedIn = Boolean(guest.checkInTime) || guest.isCheckedIn === true;
 
         if (alreadyCheckedIn) {
           setScanResult({
