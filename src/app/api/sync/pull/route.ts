@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   try {
     client = await pool.connect();
 
-    // 1. Fetch all events assigned to this volunteer/manager through the junction table
+    // 1. Fetch all events assigned to or created by this volunteer/manager
     const eventsQuery = `
       SELECT DISTINCT e.*, me.assigned_desk FROM events e
       JOIN manager_events me ON e.id = me.event_id
@@ -40,6 +40,7 @@ export async function GET(request: Request) {
     let rawGuests: any[] = [];
     let rawRegistrations: any[] = [];
     let rawLinks: any[] = [];
+    let rawUsers: any[] = [];
 
     if (eventIds.length > 0) {
       // 2. Fetch all guests belonging to the assigned events
@@ -66,20 +67,55 @@ export async function GET(request: Request) {
         rawRegistrations = altResult.rows;
       }
 
-      // 4. Fetch assignment records to preserve user desk rights
+      // 4. Fetch all volunteer/manager assignment junction records for these events
       const linksQuery = `
-        SELECT * FROM manager_events 
-        WHERE LOWER(manager_identifier) = LOWER($1);
+        SELECT DISTINCT me.* FROM manager_events me
+        WHERE me.event_id = ANY($1)
+        OR LOWER(me.manager_identifier) = LOWER($2);
       `;
-      const linksResult = await client.query(linksQuery, [userIdentifier]);
+      const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
       rawLinks = linksResult.rows;
+
+      // 🟢 5. RELATIONAL JOIN: PULL VOLUNTEER PROFILES BY JOINING manager_events -> users
+      const usersQuery = `
+        SELECT DISTINCT 
+          u.id,
+          u.name,
+          u.email,
+          u.phone,
+          u.role,
+          me.assigned_desk,
+          me.event_id AS assigned_event_id
+        FROM manager_events me
+        LEFT JOIN users u ON 
+          LOWER(u.email) = LOWER(me.manager_identifier) OR 
+          LOWER(u.identifier) = LOWER(me.manager_identifier)
+        WHERE me.event_id = ANY($1)
+        OR LOWER(me.manager_identifier) = LOWER($2);
+      `;
+      
+      try {
+        const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]);
+        rawUsers = usersResult.rows;
+      } catch (userErr) {
+        // Fallback: Query users table directly if JOIN fails
+        const assignedEmails = Array.from(new Set(rawLinks.map(l => (l.manager_identifier || '').toLowerCase()).filter(Boolean)));
+        if (assignedEmails.length > 0) {
+          const fallbackUsersQuery = `
+            SELECT * FROM users 
+            WHERE LOWER(email) = ANY($1) OR LOWER(identifier) = ANY($1);
+          `;
+          const fallbackResult = await client.query(fallbackUsersQuery, [assignedEmails]).catch(() => ({ rows: [] }));
+          rawUsers = fallbackResult.rows;
+        }
+      }
     }
 
     // =========================================================
     // MAP POSTGRESQL SNAKE_CASE FIELDS TO DEXIE CAMELCASE
     // =========================================================
     
-    // Map Events to IndexedDB EventData interface
+    // Map Events
     const formattedEvents = rawEvents.map(e => ({
       id: Number(e.id),
       name: e.name || '',
@@ -104,7 +140,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Map Guests to IndexedDB Guest interface
+    // Map Guests
     const formattedGuests = rawGuests.map(g => ({
       id: Number(g.id),
       guestId: g.guest_id || `GUEST-${g.id}`,
@@ -126,7 +162,7 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // Map Event Registrations to IndexedDB EventRegistration interface
+    // Map Event Registrations
     const formattedRegistrations = rawRegistrations.map(r => ({
       id: Number(r.id),
       registrationId: r.registration_id || r.ticket_id || `REG-${r.id}`,
@@ -147,12 +183,28 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Map Manager Events Junction Table
+    // Map Manager/Volunteer Event Junction Records
     const formattedLinks = rawLinks.map(l => ({
+      id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
       eventId: Number(l.event_id),
       assignedDesk: l.assigned_desk || 'CHECK_IN',
-      assignedAt: l.assigned_at ? new Date(l.assigned_at).getTime() : Date.now()
+      assignedAt: l.assigned_at ? new Date(l.assigned_at).getTime() : Date.now(),
+      syncStatus: 'synced'
+    }));
+
+    // 🟢 Map Relational User / Volunteer Profiles
+    const formattedUsers = rawUsers.map(u => ({
+      id: u.id ? Number(u.id) : undefined,
+      name: u.name || (u.email ? u.email.split('@')[0] : 'Volunteer'),
+      email: u.email || '',
+      identifier: u.email || u.identifier || '',
+      phone: u.phone || '',
+      role: u.role || 'volunteer',
+      assignedDesk: u.assigned_desk || 'CHECK_IN',
+      activeEventId: u.assigned_event_id ? Number(u.assigned_event_id) : undefined,
+      createdAt: u.created_at ? new Date(u.created_at).getTime() : Date.now(),
+      syncStatus: 'synced'
     }));
 
     return NextResponse.json({
@@ -161,11 +213,13 @@ export async function GET(request: Request) {
       guests: formattedGuests,
       eventRegistrations: formattedRegistrations,
       managerEvents: formattedLinks,
+      users: formattedUsers,
       data: {
         events: formattedEvents,
         guests: formattedGuests,
         eventRegistrations: formattedRegistrations,
-        managerEvents: formattedLinks
+        managerEvents: formattedLinks,
+        users: formattedUsers
       }
     });
 

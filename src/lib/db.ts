@@ -167,11 +167,11 @@ export class AayojanDB extends Dexie {
   constructor() {
     super('MithilaAayojanDB');
     // Bumped database version state layer to clean internal store layouts
-    this.version(4).stores({
+    this.version(5).stores({
       events: '++id, slug, type, status, createdAt, syncStatus',
      guests: '++id, guestId, registrationId, eventId, qrToken, isCheckedIn, syncStatus',
-      users: '++id, identifier, role, syncStatus',
-      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, syncStatus',
+      users: '++id, email, identifier, role, activeEventId',
+      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',
       eventRegistrations: '++id, eventId, email, category, status, syncStatus' // 🚀 Added lookups
     });
   }
