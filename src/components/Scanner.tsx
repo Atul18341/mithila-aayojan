@@ -23,7 +23,6 @@ interface ReusableScannerProps {
   variant?: 'blue' | 'emerald' | 'purple' | 'amber';
   isDark?: boolean;
   scanMode?: ScanMode;
-  onModeChange?: (mode: ScanMode) => void;
   onClose: () => void;
   onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message: string; name?: string }>;
 }
@@ -32,23 +31,16 @@ export default function EntryDeskCameraScanner({
   currentEventId, 
   variant = 'blue', 
   isDark = true,
-  scanMode: initialScanMode = 'CHECK_IN',
-  onModeChange,
+  scanMode = 'CHECK_IN',
   onClose, 
   onScanExecute 
 }: ReusableScannerProps) {
-  const [activeScanMode, setActiveScanMode] = useState<ScanMode>(initialScanMode);
   const [scanResult, setScanResult] = useState<ScanResultState>({ status: 'idle', message: '' });
   const [isProcessing, setIsProcessing] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
-
-  const handleModeToggle = (mode: ScanMode) => {
-    setActiveScanMode(mode);
-    if (onModeChange) onModeChange(mode);
-  };
 
   // Helper function to extract user parameters from TicketQR JSON payload or plain token
   const parseQrContent = (rawText: string) => {
@@ -95,7 +87,7 @@ export default function EntryDeskCameraScanner({
 
       // Delegate to external handler if custom execution hook is passed
       if (onScanExecute) {
-        const customResult = await onScanExecute(rawInput, activeScanMode);
+        const customResult = await onScanExecute(rawInput, scanMode);
         setScanResult({
           status: customResult.status,
           message: customResult.message,
@@ -143,7 +135,7 @@ export default function EntryDeskCameraScanner({
       let mutationPayload: Record<string, any> = {};
 
       // Step C: Evaluate Check-In vs. Food Claim Logic
-      if (activeScanMode === 'CHECK_IN') {
+      if (scanMode === 'CHECK_IN') {
         if (guest.checkInTime || guest.isCheckedIn === true) {
           setScanResult({
             status: 'warning',
@@ -166,7 +158,7 @@ export default function EntryDeskCameraScanner({
           message: `✓ ${guest.category || 'General'} pass authenticated. Access granted.`
         });
 
-      } else if (activeScanMode === 'FOOD_CLAIM') {
+      } else if (scanMode === 'FOOD_CLAIM') {
         const isEligible = guest.hasFoodAccess === true || qrData.hasFood === true;
 
         if (!isEligible) {
@@ -267,10 +259,10 @@ export default function EntryDeskCameraScanner({
         scannerRef.current.clear().catch(err => console.error("Scanner stream drop failed:", err));
       }
     };
-  }, [currentEventId, showManualInput, activeScanMode]);
+  }, [currentEventId, showManualInput, scanMode]);
 
   // Dynamic color accents matching active scan mode
-  const activeVariant = activeScanMode === 'CHECK_IN' ? (variant === 'amber' ? 'purple' : variant) : 'amber';
+  const activeVariant = scanMode === 'CHECK_IN' ? (variant === 'amber' ? 'purple' : variant) : 'amber';
 
   const accentText = {
     blue: 'text-blue-500',
@@ -316,38 +308,21 @@ export default function EntryDeskCameraScanner({
             <button 
               onClick={onClose} 
               className={`p-2 transition-colors shrink-0 ${isDark ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}
+              title="Close Scanner"
             >
               <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* SCANNER MODE SWITCHER BUTTONS */}
-        <div className={`grid grid-cols-2 gap-2 p-1 mb-4 rounded-xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
-          <button
-            type="button"
-            onClick={() => handleModeToggle('CHECK_IN')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
-              activeScanMode === 'CHECK_IN'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <LogIn size={14} />
-            Gate Check-In
-          </button>
-          <button
-            type="button"
-            onClick={() => handleModeToggle('FOOD_CLAIM')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
-              activeScanMode === 'FOOD_CLAIM'
-                ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Utensils size={14} />
-            Food Counter
-          </button>
+        {/* LOCKED ACTIVE DESK MODE DISPLAY (READ-ONLY FOR VOLUNTEERS) */}
+        <div className={`p-3 mb-4 rounded-xl border flex items-center justify-center gap-2 text-xs font-black uppercase tracking-wider ${
+          scanMode === 'CHECK_IN'
+            ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+            : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+        }`}>
+          {scanMode === 'CHECK_IN' ? <LogIn size={15} /> : <Utensils size={15} />}
+          <span>Active Mode: {scanMode === 'CHECK_IN' ? 'Gate Check-In' : 'Food Counter'}</span>
         </div>
 
         {/* CAMERA OR KEYBOARD WORKSPACE FRAME */}
@@ -399,8 +374,21 @@ export default function EntryDeskCameraScanner({
         <p className="mt-4 text-[9px] text-slate-500 text-center font-bold uppercase tracking-widest leading-relaxed">
           {showManualInput 
             ? "Enter system ticket code explicitly" 
-            : `Align TicketQR code inside frame boundary (${activeScanMode})`}
+            : `Align TicketQR code inside frame boundary (${scanMode})`}
         </p>
+
+        {/* EXPLICIT CLOSE CAMERA BUTTON */}
+        <button
+          onClick={onClose}
+          className={`w-full mt-4 py-3 rounded-2xl border text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${
+            isDark 
+              ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white' 
+              : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+          }`}
+        >
+          <X size={16} />
+          Close Camera
+        </button>
       </div>
     </div>
   );

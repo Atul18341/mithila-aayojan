@@ -70,7 +70,7 @@ export default function LogoutButton() {
         className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 hover:bg-red-500/10 text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
       >
         {isLoggingOut ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
-        <span>Exit Terminal</span>
+        <span>Logout</span>
       </button>
 
       {/* WARNING MODAL OVERLAY */}

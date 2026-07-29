@@ -25,8 +25,9 @@ async function fetchImageAsBlob(url: string | null): Promise<Blob | null> {
 
 export default function EventDynamicRoutingWrapper({ params }: PageProps) {
   const unwrappedParams = use(params);
-  const slug = unwrappedParams.slug;
- console.log("Slug:",slug)
+  const rawSlug = unwrappedParams.slug;
+  const slug = rawSlug ? rawSlug.trim().toLowerCase() : '';
+
   const [eventRecord, setEventRecord] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -44,10 +45,13 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
     async function evaluateHybridDataLayer() {
       try {
         setLoading(true);
+        if (!slug) throw new Error("Invalid event identifier supplied.");
+
+        // 🟢 1. STRICT LOCAL LOOKUP BY SLUG
         const cachedLocalEvent = await db.events.where('slug').equals(slug).first();
 
         if (cachedLocalEvent) {
-          // 🚀 Case A: Local Cache Hits -> Hydrate Object URLs instantly from local storage memory
+          // Case A: Local Cache Hits -> Hydrate Object URLs instantly from local storage memory
           const processedLocalData = {
             ...cachedLocalEvent,
             coverImageUrl: cachedLocalEvent.coverBlob ? createSafeObjectURL(cachedLocalEvent.coverBlob) : cachedLocalEvent.coverImageUrl,
@@ -56,15 +60,22 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
           
           setEventRecord(processedLocalData);
           setLoading(false);
+
           // Quiet background reconciliation if internet availability is confirmed
           if (navigator.onLine) {
             fetch(`/api/events/public?slug=${slug}`) 
               .then(res => res.ok ? res.json() : null)
               .then(async (freshCloudData) => {
                 if (freshCloudData && Array.isArray(freshCloudData.events) && freshCloudData.events.length > 0) {
-                  const remoteEvent = freshCloudData.events[0];
-                  
-                  // Check if images require parsing updates
+                  // 🟢 FIX: Strictly filter matching event by slug
+                  const remoteEvent = freshCloudData.events.find(
+                    (e: any) => e.slug?.toLowerCase() === slug || String(e.id) === slug
+                  ) || freshCloudData.events[0];
+
+                  if (!remoteEvent || (remoteEvent.slug && remoteEvent.slug.toLowerCase() !== slug)) {
+                    return;
+                  }
+
                   let updatedCoverBlob = cachedLocalEvent.coverBlob;
                   let updatedPosterBlob = cachedLocalEvent.posterBlob;
 
@@ -75,7 +86,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
                     updatedPosterBlob = await fetchImageAsBlob(remoteEvent.posterImageUrl);
                   }
 
-                  // 🚀 FIX: Explicit put using the absolute local primary key ID reference to avoid collisions
+                  // 🟢 FIX: Preserve exact local primary key ID to prevent overwriting other events
                   await db.events.put({
                     ...remoteEvent,
                     id: cachedLocalEvent.id, 
@@ -88,7 +99,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
               .catch(() => console.log("Background synchronization deferred."));
           }
         } else {
-          // 🚀 Case B: Local Cache Misses -> Hydrate from public route, convert to binary arrays, and cache
+          // Case B: Local Cache Misses -> Hydrate from public route
           if (!navigator.onLine) {
             throw new Error("This event ledger isn't cached locally, and your system is currently offline.");
           }
@@ -100,31 +111,34 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
           
           const onlineCloudData = await response.json();
           
-          if (onlineCloudData && onlineCloudData.events && onlineCloudData.events.length > 0) {
-            const remoteEvent = onlineCloudData.events[0];
+          if (onlineCloudData && Array.isArray(onlineCloudData.events) && onlineCloudData.events.length > 0) {
+            // 🟢 FIX: Find the EXACT matching event for this slug instead of defaulting to events[0]
+            const remoteEvent = onlineCloudData.events.find(
+              (e: any) => e.slug?.toLowerCase() === slug
+            ) || onlineCloudData.events[0];
 
-            // Downstream conversion logic processing the R2 keys before writing to IndexedDB
+            if (!remoteEvent || (remoteEvent.slug && remoteEvent.slug.toLowerCase() !== slug)) {
+              throw new Error(`Event matching slug '${slug}' was not found.`);
+            }
+
             const [coverBlob, posterBlob] = await Promise.all([
               fetchImageAsBlob(remoteEvent.coverImageUrl),
               fetchImageAsBlob(remoteEvent.posterImageUrl)
             ]);
 
-            // 🚀 FIX: Look up index registry records to locate any hidden keys before tracking mappings
+            // Check if a local record already exists under this slug or ID
             const existingRecordBySlug = await db.events.where('slug').equals(slug).first();
 
             const newLocalRecord = {
               ...remoteEvent,
-              // Preserves internal local auto-increment key parameters safely
-              id: existingRecordBySlug ? existingRecordBySlug.id : remoteEvent.id,
+              id: existingRecordBySlug ? existingRecordBySlug.id : (remoteEvent.id || undefined),
               coverBlob,
               posterBlob,
               syncStatus: 'synced'
             };
 
-            // 🚀 FIX: Swapped .add() out for .put() to gracefully allow upserts and overwrite key conflicts
             await db.events.put(newLocalRecord);
 
-            // Hydrate the layout view context variables safely using temporary Object memory urls
             const renderedRecordData = {
               ...newLocalRecord,
               coverImageUrl: coverBlob ? createSafeObjectURL(coverBlob) : remoteEvent.coverImageUrl,
@@ -148,7 +162,6 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
       evaluateHybridDataLayer();
     }
 
-    // CLEANUP: Revoke all object paths safely on cleanup to clear browser RAM arrays
     return () => {
       createdObjectUrls.forEach(url => URL.revokeObjectURL(url));
     };

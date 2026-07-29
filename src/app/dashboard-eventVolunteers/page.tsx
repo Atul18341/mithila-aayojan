@@ -1,24 +1,31 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
 import { 
   QrCode, Clock, Loader, Bell, Sun, Moon, 
-  LogOut, Calendar, Sparkles, LogIn, Utensils, RefreshCw, Lock
+  LogOut, Calendar, Sparkles, LogIn, Utensils, RefreshCw, Lock,
+  MoreVertical, X
 } from 'lucide-react';
 import { db } from '../../lib/db';
 import EntryDeskCameraScanner from '../../components/Scanner';
+import SyncStatusBar from '@/components/SyncStatusBar';
+import LogoutButton from '@/components/LogoutButton';
 
 type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
 
 export default function VolunteerCheckInPanel() {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isUtilitiesOpen, setIsUtilitiesOpen] = useState(false);
   const [isHydrating, setIsHydrating] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [scanMode, setScanMode] = useState<ScanMode>('CHECK_IN');
+
+  // HYDRATION GUARD REF: Prevents infinite re-hydration loops across device screen sizes
+  const hasHydratedRef = useRef(false);
 
   const router = useRouter();
 
@@ -30,7 +37,7 @@ export default function VolunteerCheckInPanel() {
 
   const activeEventId = activeUser?.activeEventId || null;
 
-  // 2. DEXIE LIVE QUERIES FOR ACTIVE WORKSPACE & ASSIGNED DESK PERMISSIONS
+  // 2. DEXIE LIVE QUERIES FOR ACTIVE WORKSPACE
   const activeEvent = useLiveQuery(
     async () => {
       if (!activeEventId) {
@@ -52,7 +59,7 @@ export default function VolunteerCheckInPanel() {
 
   const resolvedEventId = activeEvent?.id || activeEventId || null;
 
-  // FETCH VOLUNTEER'S ASSIGNED DESK SCOPE FROM managerEvents TABLE
+  // FETCH ASSIGNED DESK SCOPE FROM INDEXEDDB managerEvents TABLE
   const activeAssignment = useLiveQuery(
     async () => {
       if (!activeUser?.identifier || !resolvedEventId) return null;
@@ -65,9 +72,10 @@ export default function VolunteerCheckInPanel() {
     [activeUser?.identifier, resolvedEventId]
   );
 
+  // Read assignedDesk stored in IndexedDB (defaulting to CHECK_IN)
   const assignedDesk = activeAssignment?.assignedDesk || 'CHECK_IN';
 
-  // 🟢 AUTOMATICALLY LOCK AND SYNC SCAN MODE BASED ON ASSIGNED DESK PERMISSION
+  // AUTOMATICALLY LOCK AND SYNC SCAN MODE BASED ON ASSIGNED DESK PERMISSION
   useEffect(() => {
     if (assignedDesk === 'CHECK_IN') {
       setScanMode('CHECK_IN');
@@ -89,20 +97,32 @@ export default function VolunteerCheckInPanel() {
     [resolvedEventId]
   ) || [];
 
-  const totalCheckedIn = useLiveQuery(
+  // 3. CONTEXTUAL METRICS FOR VOLUNTEER DESK (ADAPTS TO ACTIVE SCAN MODE)
+  const deskMetrics = useLiveQuery(
     async () => {
-      if (!resolvedEventId) return 0;
-      return await db.guests
-        .where('eventId')
-        .equals(resolvedEventId)
-        .filter(g => Boolean(g.checkInTime || g.isCheckedIn === true))
-        .count();
+      if (!resolvedEventId) {
+        return { totalRegistered: 0, totalCheckedIn: 0, totalFoodEligible: 0, totalFoodClaimed: 0 };
+      }
+
+      const guests = await db.guests.where('eventId').equals(resolvedEventId).toArray();
+
+      const totalRegistered = guests.length;
+      const totalCheckedIn = guests.filter(g => Boolean(g.checkInTime || g.isCheckedIn === true)).length;
+      const totalFoodEligible = guests.filter(g => Boolean(g.hasFoodAccess || (g as any).foodIncluded)).length;
+      const totalFoodClaimed = guests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed)).length;
+
+      return { totalRegistered, totalCheckedIn, totalFoodEligible, totalFoodClaimed };
     },
     [resolvedEventId]
-  ) || 0;
+  ) || { totalRegistered: 0, totalCheckedIn: 0, totalFoodEligible: 0, totalFoodClaimed: 0 };
 
-  // 3. HYDRATION ENGINE: FETCH FROM POSTGRESQL IF DATA IS MISSING IN INDEXEDDB
-  const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null) => {
+  // Calculate percentage progress for active mode
+  const currentCount = scanMode === 'CHECK_IN' ? deskMetrics.totalCheckedIn : deskMetrics.totalFoodClaimed;
+  const currentTotal = scanMode === 'CHECK_IN' ? deskMetrics.totalRegistered : deskMetrics.totalFoodEligible;
+  const progressPercent = currentTotal > 0 ? Math.min(100, Math.round((currentCount / currentTotal) * 100)) : 0;
+
+  // 4. HYDRATION ENGINE: FETCH FROM POSTGRESQL AND STORE assignedDesk IN INDEXEDDB
+  const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null, forceRefresh = false) => {
     if (!navigator.onLine) return;
     setIsHydrating(true);
     setSyncMessage('Fetching event data & guest manifests from cloud...');
@@ -120,12 +140,32 @@ export default function VolunteerCheckInPanel() {
         }
 
         for (const link of managerEvents) {
-          const existing = await db.managerEvents
-            .where('[managerIdentifier+eventId]')
-            .equals([link.managerIdentifier, link.eventId])
-            .first();
-          if (!existing) {
-            await db.managerEvents.add(link);
+          const managerIdentifier = (link.managerIdentifier || link.manager_identifier || '').toLowerCase();
+          const eventId = Number(link.eventId || link.event_id);
+          const desk = link.assignedDesk || link.assigned_desk || 'CHECK_IN';
+
+          if (managerIdentifier && eventId) {
+            const existing = await db.managerEvents
+              .where('managerIdentifier')
+              .equals(managerIdentifier)
+              .filter(l => Number(l.eventId) === eventId)
+              .first();
+
+            if (existing && existing.id) {
+              await db.managerEvents.update(existing.id, {
+                assignedDesk: desk,
+                assignedAt: link.assignedAt || link.assigned_at || Date.now(),
+                syncStatus: 'synced'
+              });
+            } else {
+              await db.managerEvents.add({
+                managerIdentifier,
+                eventId,
+                assignedDesk: desk,
+                assignedAt: link.assignedAt || link.assigned_at || Date.now(),
+                syncStatus: 'synced'
+              });
+            }
           }
         }
 
@@ -148,7 +188,7 @@ export default function VolunteerCheckInPanel() {
         }
       });
 
-      console.log('✅ Local IndexedDB successfully populated from PostgreSQL.');
+      console.log('✅ Local IndexedDB successfully populated from PostgreSQL (including assignedDesk).');
     } catch (err) {
       console.error('❌ Sync hydration error:', err);
     } finally {
@@ -159,7 +199,7 @@ export default function VolunteerCheckInPanel() {
 
   useEffect(() => {
     const verifyAndHydrate = async () => {
-      if (!activeUser?.identifier) return;
+      if (!activeUser?.identifier || hasHydratedRef.current || isHydrating) return;
 
       const hasEventLocal = Boolean(activeEvent);
       let localGuestCount = 0;
@@ -168,36 +208,28 @@ export default function VolunteerCheckInPanel() {
         localGuestCount = await db.guests.where('eventId').equals(resolvedEventId).count();
       }
 
-      if ((!hasEventLocal || localGuestCount === 0) && navigator.onLine && !isHydrating) {
+      if ((!hasEventLocal || localGuestCount === 0) && navigator.onLine) {
+        hasHydratedRef.current = true;
         await hydrateWorkspaceFromPostgres(activeUser.identifier, resolvedEventId);
       }
     };
 
     verifyAndHydrate();
-  }, [activeUser?.identifier, activeEvent, resolvedEventId]);
+  }, [activeUser?.identifier, Boolean(activeEvent), resolvedEventId]);
 
-  const handleLogout = async () => {
-    try {
-      if (!db.isOpen()) await db.open();
-      await db.users.clear();
-      router.push('/login');
-    } catch (err) {
-      console.error("Failed to disconnect gate terminal node:", err);
-    }
-  };
-
-  if (isHydrating || (!activeEvent && isLoadingState(activeUser))) {
+  if (activeUser === undefined) {
     return (
       <div className={`h-screen w-full flex flex-col items-center justify-center p-6 ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
         <Loader className="animate-spin text-purple-500 mb-3" size={36} />
         <p className="text-xs font-black uppercase tracking-widest text-slate-400 animate-pulse">
-          {syncMessage || 'Initializing Gate Terminal Records...'}
+          Initializing Terminal Session...
         </p>
       </div>
     );
   }
 
-  if (!activeEvent) {
+  // Non-blocking fallback: Render main shell with loading overlay if needed rather than unmounting entire layout
+  if (!activeEvent && !isHydrating) {
     return (
       <div className={`h-screen w-full flex flex-col items-center justify-center p-6 text-center ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
         <Sparkles className="text-purple-500 mb-4 animate-pulse" size={48} />
@@ -205,12 +237,6 @@ export default function VolunteerCheckInPanel() {
         <p className="text-xs text-slate-400 mt-2 max-w-sm">
           Your account is not currently provisioned for an active event gate desk.
         </p>
-        <button 
-          onClick={() => activeUser?.identifier && hydrateWorkspaceFromPostgres(activeUser.identifier, null)}
-          className="mt-6 px-6 py-3 bg-purple-600 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-purple-500 transition-all"
-        >
-          <RefreshCw size={14} /> Refresh Cloud Assignments
-        </button>
       </div>
     );
   }
@@ -232,30 +258,37 @@ export default function VolunteerCheckInPanel() {
           <div className="text-left space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
-              <h1 className={`text-xl font-black italic tracking-tight ${activeEvent.type === 'celebration' ? 'font-serif' : 'font-sans'}`}>
-                {activeEvent.name}
+              <h1 className={`text-xl font-black italic tracking-tight ${activeEvent?.type === 'celebration' ? 'font-serif' : 'font-sans'}`}>
+                {activeEvent?.name || 'Gate Terminal'}
               </h1>
             </div>
             <div className="flex items-center gap-3 text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">
-              <span className="flex items-center gap-1"><Calendar size={11} className="text-purple-500" /> {activeEvent.date || 'Live Gate'}</span>
-              <span className="flex items-center gap-1"><Sparkles size={11} className="text-purple-500" /> {activeEvent.protocol || 'open'}</span>
+              <span className="flex items-center gap-1"><Calendar size={11} className="text-purple-500" /> {activeEvent?.date || 'Live Gate'}</span>
+              <span className="flex items-center gap-1"><Sparkles size={11} className="text-purple-500" /> {activeEvent?.protocol || 'open'}</span>
             </div>
           </div>
         </div>
 
-        {/* RIGHT HEADER ACTION UTILITIES */}
-        <div className="flex items-center gap-2.5">
-          <button 
-            onClick={() => activeUser?.identifier && hydrateWorkspaceFromPostgres(activeUser.identifier, resolvedEventId)}
-            className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center ${theme.inputBg}`}
-            title="Sync Latest Data from Cloud"
+        {/* SMALL SCREEN HEADER CONTROLS */}
+        <div className="flex sm:hidden items-center gap-2">
+          <SyncStatusBar />
+
+          <button
+            onClick={() => setIsUtilitiesOpen(!isUtilitiesOpen)}
+            className={`p-2 rounded-xl border transition-all ${theme.inputBg}`}
+            aria-label="Toggle Header Menu"
           >
-            <RefreshCw size={16} className={`text-purple-400 ${isHydrating ? 'animate-spin' : ''}`} />
+            {isUtilitiesOpen ? <X size={18} /> : <MoreVertical size={18} />}
           </button>
+        </div>
+
+        {/* DESKTOP HEADER ACTION UTILITIES */}
+        <div className="hidden sm:flex items-center gap-2.5">
+          <SyncStatusBar />
 
           <button 
             onClick={() => setIsDark(!isDark)} 
-            className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
+            className={`w-12 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
           >
             <div className={`transition-all duration-500 transform ${isDark ? 'translate-y-0' : 'translate-y-10 opacity-0'}`}>
               <Moon size={16} className="text-purple-400 fill-purple-400/10" />
@@ -301,20 +334,50 @@ export default function VolunteerCheckInPanel() {
             )}
           </div>
 
-          <button 
-            onClick={handleLogout}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center text-red-400 hover:bg-red-500/10 transition-colors ${theme.inputBg}`}
-            title="Disconnect Gate Terminal Node"
-          >
-            <LogOut size={16} />
-          </button>
+          <LogoutButton />
         </div>
+
+        {/* COLLAPSIBLE SECONDARY MENU FOR SMALL SCREENS */}
+        {isUtilitiesOpen && (
+          <div className={`sm:hidden absolute top-full right-6 mt-2 p-4 rounded-2xl border z-50 shadow-2xl flex flex-col gap-3 animate-in slide-in-from-top-2 duration-200 ${theme.dropdownMenu}`}>
+            <div className="flex items-center justify-between gap-6">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Theme Switch</span>
+              <button 
+                onClick={() => setIsDark(!isDark)} 
+                className={`w-9 h-9 rounded-xl border flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
+              >
+                {isDark ? <Moon size={15} className="text-purple-400" /> : <Sun size={15} className="text-amber-500" />}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-6">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Recent Scans</span>
+              <button 
+                onClick={() => {
+                  setIsNotificationsOpen(!isNotificationsOpen);
+                  setIsUtilitiesOpen(false);
+                }}
+                className={`w-9 h-9 rounded-xl border flex items-center justify-center relative ${theme.inputBg}`}
+              >
+                <Bell size={15} className="text-purple-500" />
+                {recentCheckIns.length > 0 && (
+                  <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
+                )}
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-inherit flex items-center justify-between gap-6">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Terminal Exit</span>
+              <LogoutButton />
+            </div>
+          </div>
+        )}
       </header>
 
       {/* CORE CONTROL COUNTER SUB-PANEL */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
         
-        {/* 🟢 RESTRICTED MODE SELECTOR BRIDGE */}
+        {/* RESTRICTED MODE SELECTOR BRIDGE */}
         <div className={`grid grid-cols-2 gap-2 p-1 rounded-xl border w-full max-w-xs ${theme.card}`}>
           <button
             disabled={assignedDesk !== 'ALL' && assignedDesk !== 'CHECK_IN'}
@@ -342,38 +405,76 @@ export default function VolunteerCheckInPanel() {
           </button>
         </div>
 
-        <div className={`inline-flex items-center gap-4 px-6 py-3 rounded-2xl border ${theme.card}`}>
-          <div className="space-y-0.5">
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Desk Stream Count</p>
-            <p className="text-2xl font-black text-purple-500 tracking-tight">{totalCheckedIn}</p>
-          </div>
-          <div className="w-px h-8 bg-white/10" />
-          <div className="text-left flex items-center gap-1.5">
-            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border tracking-wider transition-colors flex items-center gap-1 ${
+        {/* CONTEXTUAL RATIO STAT CARD (ADAPTS TO CHECK_IN VS FOOD_CLAIM) */}
+        <div className={`w-full max-w-xs p-5 rounded-2xl border flex flex-col gap-3 ${theme.card}`}>
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <span className={`p-2 rounded-xl text-white ${scanMode === 'CHECK_IN' ? 'bg-purple-600' : 'bg-amber-600'}`}>
+                {scanMode === 'CHECK_IN' ? <LogIn size={16} /> : <Utensils size={16} />}
+              </span>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                {scanMode === 'CHECK_IN' ? 'Gate Stream Count' : 'Meals Served'}
+              </p>
+            </div>
+            
+            <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border ${
               scanMode === 'CHECK_IN' 
                 ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
                 : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
             }`}>
-              {assignedDesk !== 'ALL' && <Lock size={10} />}
-              {scanMode === 'CHECK_IN' ? 'Gate Operator Node' : 'Food Stall Scanner'}
+              {progressPercent}%
             </span>
+          </div>
+
+          <div className="flex items-baseline justify-between">
+            <h3 className={`text-2xl font-black tracking-tight ${scanMode === 'CHECK_IN' ? 'text-purple-500' : 'text-amber-500'}`}>
+              {currentCount} 
+              <span className="text-xs font-bold text-slate-500 uppercase ml-1">
+                / {currentTotal} {scanMode === 'CHECK_IN' ? 'Verified' : 'Claimed'}
+              </span>
+            </h3>
+            
+            {assignedDesk !== 'ALL' && (
+              <span className="text-[8px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                <Lock size={10} /> Locked Node
+              </span>
+            )}
+          </div>
+
+          {/* STREAM PROGRESS BAR */}
+          <div className="w-full h-2 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all duration-500 ${scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'}`} 
+              style={{ width: `${progressPercent}%` }} 
+            />
           </div>
         </div>
       </div>
 
-      {/* TARGETED SCAN TOUCH ZONE */}
-      <div className="flex-1 flex flex-col justify-center items-center p-6">
-        <button 
-          onClick={() => setIsScanning(true)}
-          className={`w-36 h-36 rounded-full flex flex-col items-center justify-center gap-2 shadow-2xl active:scale-95 transition-all border-4 border-white/10 group ${
-            scanMode === 'CHECK_IN' 
-              ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-500/20' 
-              : 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
-          }`}
-        >
-          <QrCode size={36} className="animate-pulse group-hover:scale-110 transition-transform text-white" />
-          <span className="text-[9px] font-black uppercase tracking-widest text-white/90">Scan QR Code</span>
-        </button>
+      {/* TARGETED SCAN TOUCH ZONE (ENLARGED TOUCH TARGET WITH PULSE EFFECT) */}
+      <div className="flex-1 flex flex-col justify-center items-center p-6 my-auto">
+        <div className="relative flex items-center justify-center">
+          
+          {/* OUTER RADAR PULSE GLOW */}
+          <div className={`absolute -inset-4 rounded-full opacity-30 animate-ping ${
+            scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'
+          }`} />
+
+          {/* MAIN ENLARGED BUTTON */}
+          <button 
+            onClick={() => setIsScanning(true)}
+            className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 ${
+              scanMode === 'CHECK_IN' 
+                ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-600/40 ring-8 ring-purple-500/20' 
+                : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/40 ring-8 ring-amber-500/20'
+            }`}
+          >
+            <QrCode size={56} className="group-hover:scale-110 transition-transform text-white drop-shadow-md" />
+            <span className="text-xs font-black uppercase tracking-[0.2em] text-white/90 drop-shadow">
+              Scan QR Code
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* FOOTER BAR */}
@@ -435,8 +536,4 @@ export default function VolunteerCheckInPanel() {
       )}
     </div>
   );
-}
-
-function isLoadingState(user: any): boolean {
-  return user === undefined;
 }

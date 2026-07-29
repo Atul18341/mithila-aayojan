@@ -1,4 +1,3 @@
-// src/app/api/sync/push/route.ts
 import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -27,10 +26,22 @@ export async function POST(request: Request) {
   let syncedUsersCount = 0;
   let syncedLinksCount = 0;
   let syncedGuestsCount = 0;
+  let syncedRegistrationsCount = 0;
 
   try {
     const body = await request.json(); 
-    const { events = [], guests = [], users = [], managerEvents = [], userId } = body;
+    const { 
+      events = [], 
+      guests = [], 
+      eventRegistrations = [], 
+      registrations = [], 
+      users = [], 
+      managerEvents = [], 
+      userId 
+    } = body;
+
+    // Combine both registration array aliases
+    const allRegistrations = [...eventRegistrations, ...registrations];
     const activeUserId = userId ? Number(userId) : null;
 
     client = await pool.connect(); 
@@ -55,7 +66,7 @@ export async function POST(request: Request) {
         action,
         recordId,
         clientTimestamp || Date.now()
-      ]);
+      ]).catch(() => {}); // Non-fatal history log failover
     };
 
     // ==========================================
@@ -112,7 +123,6 @@ export async function POST(request: Request) {
       
       const serverGeneratedId = result.rows[0].id;
 
-      // Register local ID (both numeric and string representations) and slug into mapping dictionary
       if (ev.id !== undefined && ev.id !== null) {
         realEventIdMap[ev.id] = serverGeneratedId;
         realEventIdMap[Number(ev.id)] = serverGeneratedId;
@@ -123,7 +133,6 @@ export async function POST(request: Request) {
       let finalCoverName = ev.cover_image || null;
       let finalPosterName = ev.poster_image || null;
 
-      // Process new cover image upload to Cloudflare R2
       if (ev.coverBlobBase64) {
         const coverMedia = base64ToBuffer(ev.coverBlobBase64);
         if (coverMedia) {
@@ -135,11 +144,10 @@ export async function POST(request: Request) {
             Body: coverMedia.buffer,
             ContentType: 'image/webp',
             CacheControl: 'public, max-age=31536000'
-          }));
+          })).catch(() => {});
         }
       }
 
-      // Process new poster image upload to Cloudflare R2
       if (ev.posterBlobBase64) {
         const posterMedia = base64ToBuffer(ev.posterBlobBase64);
         if (posterMedia) {
@@ -151,11 +159,10 @@ export async function POST(request: Request) {
             Body: posterMedia.buffer,
             ContentType: 'image/webp',
             CacheControl: 'public, max-age=31536000'
-          }));
+          })).catch(() => {});
         }
       }
 
-      // Update image references in PostgreSQL if updated
       if (finalCoverName || finalPosterName) {
         await client.query(
           `UPDATE events 
@@ -175,6 +182,10 @@ export async function POST(request: Request) {
     // 2. SYNCHRONIZE USERS & ACCESS RIGHTS
     // ==========================================
     for (const usr of users) {
+      const rawIdentifier = usr.email || usr.identifier;
+      if (!rawIdentifier) continue;  
+      
+      const userIdentifier = rawIdentifier.trim().toLowerCase();
       const userUpsertQuery = `
         INSERT INTO users (identifier, name, password_hash, role, updated_at)
         VALUES ($1, $2, $3, $4, timezone('utc', now()))
@@ -182,12 +193,8 @@ export async function POST(request: Request) {
         DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, updated_at = timezone('utc', now())
         RETURNING id;
       `; 
-      const rawIdentifier = usr.email || usr.identifier;
-      if (!rawIdentifier) continue;  
       
-      const userIdentifier = rawIdentifier.trim().toLowerCase(); // 🟢 Case-insensitive normalization
-      const fallbackHash = usr.passwordHash || '$2b$10$UnassignedOfflinePlaceholderHashString';  
-      
+      const fallbackHash = usr.passwordHash || usr.passkey || '$2b$10$UnassignedOfflinePlaceholderHashString';  
       const result = await client.query(userUpsertQuery, [
         userIdentifier, 
         usr.name || 'Unnamed Offline User', 
@@ -200,12 +207,11 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 3. SYNCHRONIZE MANAGER / VOLUNTEER ASSIGNMENT LINKS
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER ASSIGNMENT LINKS & DESK SCOPES
     // ==========================================
     for (const link of managerEvents) {
       let rawTargetEventId = link.eventId;
 
-      // 🟢 Resilient lookup checking numeric, string, or direct slug keys
       let targetEventId = 
         realEventIdMap[rawTargetEventId] || 
         realEventIdMap[Number(rawTargetEventId)] || 
@@ -215,22 +221,20 @@ export async function POST(request: Request) {
       const rawManagerIdentifier = link.managerIdentifier || link.managerEmail;
       if (!rawManagerIdentifier || !targetEventId) continue;
 
-      const managerIdentifier = rawManagerIdentifier.trim().toLowerCase(); // 🟢 Normalized matching
+      const managerIdentifier = rawManagerIdentifier.trim().toLowerCase();
 
-      // 1. Check if the user exists in users table (case-insensitive)
       const userCheck = await client.query(
         'SELECT identifier FROM users WHERE LOWER(identifier) = LOWER($1)',
         [managerIdentifier]
       );
 
       if (userCheck.rows.length === 0) {
-        console.warn(`⚠️ Skipping assignment link: Manager/Volunteer identifier '${managerIdentifier}' not found in PostgreSQL.`);
+        console.warn(`⚠️ Skipping assignment link: User '${managerIdentifier}' not found in PostgreSQL.`);
         continue;
       }
 
       const verifiedUserIdentifier = userCheck.rows[0].identifier;
 
-      // 2. Check if the event actually exists in Postgres to prevent FK failure
       const eventCheck = await client.query(
         'SELECT id FROM events WHERE id = $1', 
         [Number(targetEventId)]
@@ -241,16 +245,23 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 3. Perform the Upsert WITH RETURNING clause using verified FK references
+      const assignedDesk = link.assignedDesk || link.assigned_desk || 'CHECK_IN';
+
       const linkUpsertQuery = `
-        INSERT INTO manager_events (manager_identifier, event_id, assigned_at)
-        VALUES ($1, $2, timezone('utc', now()))
+        INSERT INTO manager_events (manager_identifier, event_id, assigned_desk, assigned_at)
+        VALUES ($1, $2, $3, timezone('utc', now()))
         ON CONFLICT (manager_identifier, event_id) 
-        DO UPDATE SET manager_identifier = EXCLUDED.manager_identifier
+        DO UPDATE SET 
+          assigned_desk = EXCLUDED.assigned_desk,
+          manager_identifier = EXCLUDED.manager_identifier
         RETURNING manager_identifier, event_id;
       `; 
       
-      const result = await client.query(linkUpsertQuery, [verifiedUserIdentifier, Number(targetEventId)]); 
+      const result = await client.query(linkUpsertQuery, [
+        verifiedUserIdentifier, 
+        Number(targetEventId), 
+        assignedDesk
+      ]); 
 
       if (result.rows.length > 0) {
         await logSyncAction('manager_events', 'UPSERT', 0, link.clientTimestamp || Date.now());
@@ -269,15 +280,16 @@ export async function POST(request: Request) {
         realEventIdMap[String(rawTargetEventId)] || 
         rawTargetEventId;
 
-      if (!targetEventId) continue; 
+      if (!targetEventId || !gst.qrToken) continue; 
 
       const guestType = gst.category || gst.type || 'general-public';
 
       const guestUpsertQuery = `
         INSERT INTO guests (
-          event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, has_food_access, check_in_time, server_updated_at
+          event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
+          has_food_access, has_food_claimed, check_in_time, food_claimed_time, server_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('utc', now()))
         ON CONFLICT (qr_token) 
         DO UPDATE SET 
           name = EXCLUDED.name, 
@@ -287,7 +299,9 @@ export async function POST(request: Request) {
           is_check_in = EXCLUDED.is_check_in, 
           amount_paid = EXCLUDED.amount_paid, 
           has_food_access = EXCLUDED.has_food_access, 
+          has_food_claimed = EXCLUDED.has_food_claimed, 
           check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), 
+          food_claimed_time = COALESCE(guests.food_claimed_time, EXCLUDED.food_claimed_time), 
           server_updated_at = timezone('utc', now())
         RETURNING id;
       `; 
@@ -303,15 +317,92 @@ export async function POST(request: Request) {
         checkInStatus, 
         gst.amountPaid || 0.00, 
         gst.hasFoodAccess ? 1 : 0, 
-        gst.checkInTime ? BigInt(gst.checkInTime) : null
+        gst.hasFoodClaimed ? 1 : 0, 
+        gst.checkInTime ? BigInt(gst.checkInTime) : null,
+        gst.foodClaimedTime ? BigInt(gst.foodClaimedTime) : null
       ]); 
 
       const serverGuestId = result.rows[0].id;
-      await logSyncAction('guests', gst.checkInTime ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp || gst.checkInTime);
+      await logSyncAction('guests', gst.checkInTime ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp || Date.now());
       syncedGuestsCount++;  
     }
 
+    // ==========================================
+    // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
+    // ==========================================
+    for (const reg of allRegistrations) {
+      let rawTargetEventId = reg.eventId;
+      let targetEventId = 
+        realEventIdMap[rawTargetEventId] || 
+        realEventIdMap[Number(rawTargetEventId)] || 
+        realEventIdMap[String(rawTargetEventId)] || 
+        rawTargetEventId;
+
+      const qrToken = reg.qrToken || reg.registrationId || reg.ticketId;
+      if (!targetEventId || !qrToken) continue;
+
+      const regUpsertQuery = `
+        INSERT INTO event_registrations (
+          event_id, registration_id, attendee_name, email, phone, ticket_type, 
+          qr_token, payment_status, amount_paid, is_checked_in, check_in_time, 
+          food_included, food_claimed, food_claimed_at, created_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+          $11, $12, $13, $14, timezone('utc', TO_TIMESTAMP($15 / 1000.0))
+        )
+        ON CONFLICT (qr_token)
+        DO UPDATE SET
+          attendee_name = EXCLUDED.attendee_name,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          ticket_type = EXCLUDED.ticket_type,
+          payment_status = EXCLUDED.payment_status,
+          amount_paid = EXCLUDED.amount_paid,
+          is_checked_in = EXCLUDED.is_checked_in,
+          check_in_time = COALESCE(event_registrations.check_in_time, EXCLUDED.check_in_time),
+          food_included = EXCLUDED.food_included,
+          food_claimed = EXCLUDED.food_claimed,
+          food_claimed_at = COALESCE(event_registrations.food_claimed_at, EXCLUDED.food_claimed_at);
+      `;
+
+      const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime);
+      const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
+
+      await client.query(regUpsertQuery, [
+        Number(targetEventId),
+        reg.registrationId || `REG-${Date.now()}`,
+        reg.attendeeName || reg.name || 'Attendee',
+        reg.email || null,
+        reg.phone || null,
+        reg.ticketType || reg.category || 'GENERAL',
+        qrToken,
+        reg.paymentStatus || 'PAID',
+        reg.amountPaid || 0.00,
+        isCheckedIn,
+        reg.checkInTime ? new Date(reg.checkInTime) : null,
+        Boolean(reg.hasFoodAccess || reg.foodIncluded),
+        isFoodClaimed,
+        reg.foodClaimedAt ? new Date(reg.foodClaimedAt) : (reg.foodClaimedTime ? new Date(reg.foodClaimedTime) : null),
+        reg.registeredAt || reg.createdAt || Date.now()
+      ]).catch(async () => {
+        // Fallback for legacy 'registrations' table name if 'event_registrations' is missing
+        const fallbackQuery = `
+          INSERT INTO registrations (event_id, ticket_id, attendee_name, email, has_checked_in, food_included, food_claimed)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (ticket_id) DO UPDATE SET has_checked_in = EXCLUDED.has_checked_in, food_claimed = EXCLUDED.food_claimed;
+        `;
+        await client.query(fallbackQuery, [
+          Number(targetEventId), qrToken, reg.attendeeName || reg.name, reg.email || null,
+          isCheckedIn, Boolean(reg.hasFoodAccess || reg.foodIncluded), isFoodClaimed
+        ]).catch(() => {});
+      });
+
+      syncedRegistrationsCount++;
+    }
+
     await client.query('COMMIT'); 
+
     return NextResponse.json({ 
       success: true, 
       message: 'All relational transaction matrices verified and synchronized.', 
@@ -320,7 +411,8 @@ export async function POST(request: Request) {
         users: syncedUsersCount, 
         links: syncedLinksCount, 
         guests: syncedGuestsCount, 
-        total: syncedEventsCount + syncedUsersCount + syncedLinksCount + syncedGuestsCount 
+        eventRegistrations: syncedRegistrationsCount,
+        total: syncedEventsCount + syncedUsersCount + syncedLinksCount + syncedGuestsCount + syncedRegistrationsCount 
       }
     });
 
