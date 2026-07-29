@@ -12,7 +12,13 @@ interface AttendeeData {
   name: string;
   category: string;
   eventId: number;
-  eventName?: string;
+  eventName: string;
+  eventDetails?: {
+    eventName: string;
+    date: string;
+    venue: string;
+    coverImageUrl?: string;
+  };
 }
 
 export default function TicketPage() {
@@ -43,24 +49,56 @@ export default function TicketPage() {
 
         // STEP 1: Load guest record directly from Dexie IndexedDB
         let localGuest: any = null;
+        let localEvent: any = null;
 
         if (typeof window !== 'undefined' && db && db.guests) {
-          // 🟢 Added missing await operator here
           localGuest = await db.guests
             .where('eventId')
             .equals(activeEventId)
             .reverse()
             .first();
+
+          // 🟢 STEP 2: Query db.events to get event details, banner image / cover Blob
+          if (localGuest) {
+            localEvent = await db.events
+              .where('id')
+              .equals(activeEventId)
+              .or('slug')
+              .equals(activeEventId)
+              .first();
+          }
         }
       
         if (localGuest && isMounted) {
-          console.log("⚡ Loaded Guest Details directly from local IndexedDB");
+          console.log("⚡ Loaded Guest & Event Details directly from local IndexedDB");
+
+          // Extract cover image string, blob URL, or fallbacks
+          const coverImage = 
+            localEvent?.coverImageUrl || 
+            localEvent?.coverBlob || 
+            localEvent?.image || 
+            localEvent?.banner || 
+            "";
+
+          const resolvedEventName = 
+            localEvent?.name || 
+            localEvent?.eventName || 
+            localGuest?.eventName || 
+            "the event";
+
           setAttendee({
             id: localGuest.qrToken || localGuest.guestId || `GUEST-${Date.now()}`,
             name: localGuest.name,
             category: localGuest.category || 'General',
             eventId: activeEventId,
-            eventName: localGuest.eventName || "Not registered"
+            eventName: resolvedEventName,
+            // 🟢 Pass full details object including cover image / blob to TicketQR
+            eventDetails: {
+              eventName: resolvedEventName,
+              date: localEvent?.date || "",
+              venue: localEvent?.venue || localEvent?.location || "",
+              coverImageUrl: coverImage,
+            }
           });
         } else {
           console.warn("⚠️ No local guest record matching eventId found in IndexedDB");
@@ -134,7 +172,7 @@ export default function TicketPage() {
           Registration Successful!
         </h1>
         <p className="text-sm text-slate-400 mt-2">
-          Thank you for registering for <span className="text-slate-200 font-semibold">{attendee.eventName || 'the event'}</span>. 
+          Thank you for registering for <span className="text-slate-200 font-semibold">{attendee.eventName}</span>. 
           Your entry pass has been generated below.
         </p>
       </div>
@@ -146,6 +184,7 @@ export default function TicketPage() {
           userName={attendee.name}
           userCategory={attendee.category}
           eventId={attendee.eventId}
+          eventDetails={attendee.eventDetails} // 🟢 Pass coverImageUrl / coverBlob props down
         />
       </div>
 

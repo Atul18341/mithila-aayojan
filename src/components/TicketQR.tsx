@@ -10,7 +10,8 @@ interface EventDetails {
   eventName: string;
   date: string;
   venue: string;
-  coverImageUrl?: string; // Optional event banner header image
+  coverImageUrl?: string; // Optional event banner image URL
+  coverBlob?: Blob | File | string; // Optional raw Blob or Blob URL for offline storage
 }
 
 interface TicketQRProps {
@@ -21,24 +22,73 @@ interface TicketQRProps {
   eventDetails?: EventDetails;
 }
 
+const DEFAULT_EVENT_DETAILS: EventDetails = {
+  eventName: "",
+  date: "",
+  venue: "",
+  coverImageUrl: "",
+  coverBlob: undefined,
+};
+
 export default function TicketQR({
   userId,
   userName,
   userCategory,
   eventId,
-  eventDetails: defaultEventDetails = {
-    eventName: "",
-    date: "",
-    venue: "",
-    coverImageUrl: "", // Banner image link
-  },
+  eventDetails: propsEventDetails,
 }: TicketQRProps) {
-  const [eventDetails, setEventDetails] = useState<EventDetails>(defaultEventDetails);
+  // 🟢 Safe default fallback reference
+  const fallbackDetails = propsEventDetails || DEFAULT_EVENT_DETAILS;
+
+  const [eventDetails, setEventDetails] = useState<EventDetails>(fallbackDetails);
+  const [bannerSrc, setBannerSrc] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
 
   // Normalize category for food access check
   const normalizedCategory = userCategory ? userCategory.trim().toUpperCase() : 'GENERAL';
   const isFoodIncluded = FOOD_ELIGIBLE_CATEGORIES.includes(normalizedCategory);
+
+  // 🟢 Synchronize props changes when parent passes coverImageUrl / coverBlob
+  useEffect(() => {
+    if (propsEventDetails) {
+      setEventDetails(propsEventDetails);
+    }
+  }, [propsEventDetails]);
+
+  // 🟢 Helper to resolve coverImageUrl vs coverBlob to a displayable src string
+  useEffect(() => {
+    let objectUrl: string | null = null;
+
+    const resolveBannerSource = () => {
+      // 1. Check for coverBlob
+      if (eventDetails.coverBlob) {
+        if (typeof eventDetails.coverBlob === 'string') {
+          setBannerSrc(eventDetails.coverBlob);
+          return;
+        } else if (eventDetails.coverBlob instanceof Blob) {
+          objectUrl = URL.createObjectURL(eventDetails.coverBlob);
+          setBannerSrc(objectUrl);
+          return;
+        }
+      }
+
+      // 2. Check for coverImageUrl
+      if (eventDetails.coverImageUrl) {
+        setBannerSrc(eventDetails.coverImageUrl);
+        return;
+      }
+
+      setBannerSrc('');
+    };
+
+    resolveBannerSource();
+
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [eventDetails.coverBlob, eventDetails.coverImageUrl]);
 
   // 🚀 HYBRID DATA FETCHING: IndexedDB (Offline) -> Online API -> Props Fallback
   useEffect(() => {
@@ -64,11 +114,22 @@ export default function TicketQR({
 
         if (localEvent && isMounted) {
           console.log("⚡ Loaded Event Details from IndexedDB (Offline-Ready)");
+
+          // Extract blob or image URL from local database
+          const extractedCover = 
+            localEvent.coverBlob || 
+            localEvent.coverImageUrl || 
+            localEvent.image || 
+            localEvent.banner || 
+            fallbackDetails.coverImageUrl || 
+            fallbackDetails.coverBlob;
+
           setEventDetails({
-            eventName: localEvent.name || localEvent.eventName || defaultEventDetails.eventName,
-            date: localEvent.date || defaultEventDetails.date,
-            venue: localEvent.venue || localEvent.location || defaultEventDetails.venue,
-            coverImageUrl: localEvent.coverImageUrl || localEvent.image || defaultEventDetails.coverImageUrl,
+            eventName: localEvent.name || localEvent.eventName || fallbackDetails.eventName,
+            date: localEvent.date || fallbackDetails.date,
+            venue: localEvent.venue || localEvent.location || fallbackDetails.venue,
+            coverImageUrl: typeof extractedCover === 'string' ? extractedCover : fallbackDetails.coverImageUrl,
+            coverBlob: extractedCover instanceof Blob ? extractedCover : fallbackDetails.coverBlob,
           });
           setLoading(false);
           return;
@@ -83,11 +144,19 @@ export default function TicketQR({
             const remoteData = await res.json();
             const fetchedEvent = remoteData.event || remoteData;
 
+            const remoteCover = 
+              fetchedEvent.coverImageUrl || 
+              fetchedEvent.coverBlob || 
+              fetchedEvent.image || 
+              fetchedEvent.banner || 
+              fallbackDetails.coverImageUrl;
+
             const mappedDetails: EventDetails = {
-              eventName: fetchedEvent.name || fetchedEvent.title || defaultEventDetails.eventName,
-              date: fetchedEvent.date || defaultEventDetails.date,
-              venue: fetchedEvent.venue || fetchedEvent.location || defaultEventDetails.venue,
-              coverImageUrl: fetchedEvent.coverImageUrl || fetchedEvent.image || defaultEventDetails.coverImageUrl,
+              eventName: fetchedEvent.name || fetchedEvent.title || fallbackDetails.eventName,
+              date: fetchedEvent.date || fallbackDetails.date,
+              venue: fetchedEvent.venue || fetchedEvent.location || fallbackDetails.venue,
+              coverImageUrl: typeof remoteCover === 'string' ? remoteCover : fallbackDetails.coverImageUrl,
+              coverBlob: remoteCover instanceof Blob ? remoteCover : undefined,
             };
 
             if (isMounted) {
@@ -119,7 +188,7 @@ export default function TicketQR({
     return () => {
       isMounted = false;
     };
-  }, [eventId, defaultEventDetails]);
+  }, [eventId]);
 
   // QR Payload data structure
   const qrPayload = JSON.stringify({
@@ -133,12 +202,12 @@ export default function TicketQR({
   return (
     <div className="flex flex-col items-center bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-2xl max-w-sm mx-auto overflow-hidden transition-all duration-300">
       
-      {/* 🖼️ EVENT BANNER HEADER */}
-      {eventDetails.coverImageUrl ? (
+      {/* 🖼️ EVENT BANNER HEADER (Supports coverImageUrl & coverBlob) */}
+      {bannerSrc ? (
         <div className="w-full h-32 bg-slate-100 overflow-hidden relative border-b border-slate-200">
           <img
-            src={eventDetails.coverImageUrl}
-            alt={eventDetails.eventName}
+            src={bannerSrc}
+            alt={eventDetails.eventName || "Event Cover"}
             className="w-full h-full object-cover"
           />
         </div>
@@ -151,8 +220,8 @@ export default function TicketQR({
             {eventDetails.eventName}
           </h2>
           <div className="flex flex-col items-center text-xs font-semibold text-slate-500 mt-1 gap-0.5">
-            <span>📅 {eventDetails.date}</span>
-            <span className="truncate max-w-[260px]">📍 {eventDetails.venue}</span>
+            {eventDetails.date && <span>📅 {eventDetails.date}</span>}
+            {eventDetails.venue && <span className="truncate max-w-[260px]">📍 {eventDetails.venue}</span>}
           </div>
         </div>
 
@@ -181,31 +250,27 @@ export default function TicketQR({
         <div className="mt-5 w-full">
           {isFoodIncluded ? (
             <div>
-            <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-black tracking-wide uppercase shadow-sm">
-              <span>🍱</span>
-              <span>Food Included</span>
-              
+              <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-black tracking-wide uppercase shadow-sm">
+                <span>🍱</span>
+                <span>Food Included</span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
+                Scan at entry gates & food counters • ID: {userId}
+              </p>
             </div>
-            <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
-          Scan at entry gates & food counters • ID: {userId}
-        </p>
-            </div>
-            
           ) : (
             <div>
-            <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-50 border border-slate-200 text-slate-500 rounded-xl text-xs font-bold tracking-wide uppercase">
-              <span>🚫</span>
-              <span>Standard Entry (No Food)</span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
-                Scan at entry gates<br/>• ID: {}
-            </p>
+              <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-50 border border-slate-200 text-slate-500 rounded-xl text-xs font-bold tracking-wide uppercase">
+                <span>🚫</span>
+                <span>Standard Entry (No Food)</span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
+                Scan at entry gates • ID: {userId}
+              </p>
             </div>
           )}
         </div>
 
-        {/* FOOTER */}
-        
       </div>
     </div>
   );

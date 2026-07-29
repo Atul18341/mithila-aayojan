@@ -42,7 +42,9 @@ export default function EntryDeskCameraScanner({
 
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
-  // Helper function to extract user parameters from TicketQR JSON payload or plain token
+  /**
+   * Helper function to extract user parameters from TicketQR JSON payload or plain token
+   */
   const parseQrContent = (rawText: string) => {
     try {
       const parsed = JSON.parse(rawText);
@@ -67,7 +69,9 @@ export default function EntryDeskCameraScanner({
     };
   };
 
-  // Core execution engine for offline DB update + optional online DB flush
+  /**
+   * Core execution pipeline for offline DB update + optional online DB flush
+   */
   const executePipeline = async (scannedText: string) => {
     const rawInput = scannedText.trim();
     if (!rawInput || isProcessing) return;
@@ -107,10 +111,12 @@ export default function EntryDeskCameraScanner({
       // Flexible secondary lookup by User ID / Email if token match missed
       if (!guest && qrData.userId) {
         guest = await db.guests
-          .where('email')
+          .where('qrToken')
           .equals(qrData.userId)
-          .or('id')
-          .equals(Number(qrData.userId) || 0)
+          .or('email')
+          .equals(qrData.userId)
+          .or('guestId')
+          .equals(qrData.userId)
           .first();
       }
 
@@ -134,13 +140,15 @@ export default function EntryDeskCameraScanner({
       const now = Date.now();
       let mutationPayload: Record<string, any> = {};
 
-      // Step C: Evaluate Check-In vs. Food Claim Logic
+      // Step C: Evaluate Check-In vs. Food Claim Logic based on active scanMode
       if (scanMode === 'CHECK_IN') {
-        if (guest.checkInTime || guest.isCheckedIn === true) {
+        const alreadyCheckedIn = Boolean(guest.checkInTime) || guest.isCheckedIn === true || guest.isCheckIn === 1;
+
+        if (alreadyCheckedIn) {
           setScanResult({
             status: 'warning',
             title: guest.name,
-            message: 'Duplicate Scan Exception: Ticket has already checked in.'
+            message: 'Duplicate Scan Warning: Attendee has already checked in.'
           });
           return;
         }
@@ -148,7 +156,7 @@ export default function EntryDeskCameraScanner({
         mutationPayload = {
           checkInTime: now,
           isCheckedIn: true,
-          isCheckIn: 1,
+          isCheckIn: 1, // Dual support for integer / boolean DB columns
           syncStatus: 'pending'
         };
 
@@ -159,7 +167,7 @@ export default function EntryDeskCameraScanner({
         });
 
       } else if (scanMode === 'FOOD_CLAIM') {
-        const isEligible = guest.hasFoodAccess === true || qrData.hasFood === true;
+        const isEligible = Boolean(guest.hasFoodAccess) || qrData.hasFood === true;
 
         if (!isEligible) {
           setScanResult({
@@ -206,7 +214,7 @@ export default function EntryDeskCameraScanner({
           });
 
           if (syncResponse.ok) {
-            // Update local state to synced post-commit
+            // Update local status to synced post-commit
             await db.guests.update(guest.id!, { syncStatus: 'synced' });
             console.log(`⚡ Instant online DB sync committed for guest: ${guest.name}`);
           }

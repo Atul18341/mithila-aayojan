@@ -1,10 +1,9 @@
-// src/components/EventRegistration.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee } from 'lucide-react';
-import { getApplicableCategoriesForType, db } from '@/lib/db'; // Integrated Dexie/IndexedDB instance
+import { Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, WifiOff } from 'lucide-react';
+import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
 
 // Unified Attendee Category Definitions
@@ -144,37 +143,70 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       customAnswers: { ...prev.customAnswers, [fieldId]: value }
     }));
   };
+
   /**
- * Fail-safe QR Token Generator
- * Guaranteed Format: "XX26-1234" (Always 9 characters max)
- */
-const generateQrToken = (eventData: EventData, phone: string): string => {
-  // 1. Try extracting prefix from event.name, event.title, event.slug, or event.id
-  const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
-  
-  // Clean non-alphabetical characters and take first 2 letters
-  let prefix = rawEventTitle.replace(/[^A-Za-z]/g, '').substring(0, 2).toUpperCase();
-  if (prefix.length < 2) prefix = (prefix + 'X').substring(0, 2); // Ensure exactly 2 characters
-
-  // 2. Extract last 4 digits of phone number
-  const cleanPhoneDigits = phone ? phone.replace(/\D/g, '') : '';
-  let phoneTail = cleanPhoneDigits.slice(-4);
-
-  // If phone has fewer than 4 digits, fallback to a deterministic/random 4-digit number
-  if (phoneTail.length < 4) {
-    phoneTail = Math.floor(1000 + Math.random() * 9000).toString();
-  }
-
-  // Guaranteed Output: e.g. "MA26-4412" or "EV26-9821"
-  return `${prefix}26-${phoneTail}`;
-};
-  /**
-   * Helper function to save registration & primary guest record into IndexedDB tables
+   * Fail-safe QR Token Generator
+   * Guaranteed Format: "XX26-1234" (Always 9 characters max)
    */
-  const saveRegistrationToIndexedDB = async (paymentDetails?: { paymentId?: string; orderId?: string }) => {
+  const generateQrToken = (eventData: EventData, phone: string): string => {
+    const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
+    let prefix = rawEventTitle.replace(/[^A-Za-z]/g, '').substring(0, 2).toUpperCase();
+    if (prefix.length < 2) prefix = (prefix + 'X').substring(0, 2);
+
+    const cleanPhoneDigits = phone ? phone.replace(/\D/g, '') : '';
+    let phoneTail = cleanPhoneDigits.slice(-4);
+
+    if (phoneTail.length < 4) {
+      phoneTail = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+
+    return `${prefix}26-${phoneTail}`;
+  };
+
+  /**
+   * 🟢 Push Registration to Dedicated Central API Route (/api/registrations)
+   */
+  const sendRegistrationToServer = async (registrationPayload: any, guestPayload: any, paymentResponse?: any) => {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+      console.warn("⚠️ Client offline. Cloud endpoint sync skipped.");
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/registrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          registration: registrationPayload,
+          guest: guestPayload,
+          paymentDetails: paymentResponse ? {
+            razorpay_order_id: paymentResponse.razorpay_order_id,
+            razorpay_payment_id: paymentResponse.razorpay_payment_id,
+            razorpay_signature: paymentResponse.razorpay_signature,
+          } : null
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Server registration record failed.');
+      }
+
+      console.log("☁️ Successfully recorded registration on PostgreSQL server.");
+      return data;
+    } catch (err: any) {
+      console.error("❌ Cloud endpoint registration error:", err.message);
+    }
+  };
+
+  /**
+   * Helper function to save registration & primary guest record into IndexedDB tables & PostgreSQL
+   */
+  const saveRegistrationRecord = async (paymentDetails?: { paymentId?: string; orderId?: string; signature?: string }) => {
     const eventIdParam = event.id || event.slug || 'default';
     const registrationId = `REG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const qrToken = generateQrToken(event, formData.phone);
+    const isOnline = typeof window !== 'undefined' && navigator.onLine;
 
     const registrationPayload = {
       registrationId: registrationId,
@@ -196,7 +228,7 @@ const generateQrToken = (eventData: EventData, phone: string): string => {
       
       // Status & Metadata
       status: 'CONFIRMED',
-      syncStatus: 'pending',
+      syncStatus: isOnline ? 'synced' : 'pending',
       registrationTimestamp: Date.now()
     };
 
@@ -209,34 +241,40 @@ const generateQrToken = (eventData: EventData, phone: string): string => {
       phone: formData.phone,
       category: formData.category,
       
-      // QR & Gate Verification (Clean human-readable token)
+      // QR & Gate Verification
       qrToken: qrToken,
       isCheckedIn: false,
       
-      // Catering Logistics (Defaults based on category)
+      // Catering Logistics
       hasFoodAccess: ['vip', 'speaker', 'patron', 'dignitary', 'ops-team'].includes(formData.category),
       hasFoodClaimed: false,
       
       // Sync & Metadata
       amountPaid: pricing.totalPrice,
-      syncStatus: 'pending',
+      syncStatus: isOnline ? 'synced' : 'pending',
       registeredAt: Date.now()
     };
 
-    // Store safely in Dexie IndexedDB using a unified transaction
+    // 1. Store safely in Dexie IndexedDB
     if (typeof window !== 'undefined' && db) {
       try {
-        console.log("Attempting Dexie write...", { registrationPayload, guestPayload });
-        
         await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
           await db.eventRegistrations.add(registrationPayload);
           await db.guests.add(guestPayload);
         });
-
-        console.log("✅ Successfully stored in IndexedDB!");
+        console.log("✅ Successfully stored in local Dexie database!");
       } catch (error) {
         console.error("❌ Dexie Write Failure Trace:", error);
       }
+    }
+
+    // 2. Post to central API endpoint if network is available
+    if (isOnline) {
+      await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
+        razorpay_order_id: paymentDetails.orderId,
+        razorpay_payment_id: paymentDetails.paymentId,
+        razorpay_signature: paymentDetails.signature
+      } : undefined);
     }
 
     return eventIdParam;
@@ -248,9 +286,17 @@ const generateQrToken = (eventData: EventData, phone: string): string => {
 
     const eventIdParam = event.id || event.slug || 'default';
     const isFeeApplicable = event.pricingConfig?.isRequired && pricing.totalPrice > 0;
+    const isOffline = typeof window !== 'undefined' && !navigator.onLine;
+
+    // 🔴 HYBRID PROTECTION RULE 1: Block Paid Registrations Offline
+    if (isFeeApplicable && isOffline) {
+      alert('Payment processing requires an active internet connection. Please connect to the internet to complete your ticket purchase.');
+      setIsSubmitting(false);
+      return;
+    }
 
     if (isFeeApplicable) {
-      // SCENARIO 1: Fee Required -> Execute Razorpay Flow
+      // SCENARIO 1: Paid Tier -> Online Checkout Flow
       try {
         const isScriptLoaded = await loadRazorpayScript();
         if (!isScriptLoaded) {
@@ -283,17 +329,18 @@ const generateQrToken = (eventData: EventData, phone: string): string => {
           order_id: orderData.order.id,
           handler: async function (response: any) {
             try {
-              // Persist entry into IndexedDB prior to redirection
-              const eventId = await saveRegistrationToIndexedDB({
+              // Persist entry locally and on central server
+              const eventId = await saveRegistrationRecord({
                 paymentId: response.razorpay_payment_id,
                 orderId: response.razorpay_order_id,
+                signature: response.razorpay_signature
               });
 
               setIsSubmitting(false);
               setFormSubmitted(true);
               router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
             } catch (dbErr) {
-              console.error("IndexedDB write failed after payment:", dbErr);
+              console.error("Database write failed after payment:", dbErr);
               setIsSubmitting(false);
               router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
             }
@@ -323,14 +370,14 @@ const generateQrToken = (eventData: EventData, phone: string): string => {
         setIsSubmitting(false);
       }
     } else {
-      // SCENARIO 2: Free Registration -> Save to IndexedDB and Redirect
+      // 🟢 HYBRID PROTECTION RULE 2: Free Registration -> Allowed Offline & Online
       try {
-        const eventId = await saveRegistrationToIndexedDB();
+        const eventId = await saveRegistrationRecord();
         setIsSubmitting(false);
         setFormSubmitted(true);
         router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
       } catch (dbErr) {
-        console.error("IndexedDB write failure on free tier:", dbErr);
+        console.error("Database write failure on free tier:", dbErr);
         setIsSubmitting(false);
         router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
       }
