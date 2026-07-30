@@ -43,34 +43,38 @@ export default function EntryDeskCameraScanner({
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
   /**
-   * Helper function to extract user parameters from TicketQR JSON payload or plain token
+   * Helper function to extract qrToken & attendee parameters from JSON payload or raw text
    */
   const parseQrContent = (rawText: string) => {
+    const trimmedText = rawText.trim();
     try {
-      const parsed = JSON.parse(rawText);
+      const parsed = JSON.parse(trimmedText);
       if (parsed && typeof parsed === 'object') {
         return {
+          // 🟢 Extract explicit qrToken from JSON payload or fallback
+          qrToken: parsed.qrToken || parsed.token || parsed.uid || trimmedText,
           userId: parsed.uid ? String(parsed.uid) : null,
           eventId: parsed.eid ? Number(parsed.eid) : null,
           category: parsed.cat || null,
           hasFood: Boolean(parsed.food),
-          rawToken: rawText
+          rawToken: trimmedText
         };
       }
     } catch (e) {
-      // Fallback for non-JSON string tokens
+      // Fallback for plain text qrToken (e.g. MI26-9122)
     }
     return {
-      userId: rawText.trim(),
+      qrToken: trimmedText,
+      userId: trimmedText,
       eventId: null,
       category: null,
       hasFood: false,
-      rawToken: rawText.trim()
+      rawToken: trimmedText
     };
   };
 
   /**
-   * Core execution pipeline for offline DB update + optional online DB flush
+   * Core execution pipeline: Fetch via qrToken -> Validate -> Mutate local Dexie DB -> Sync online
    */
   const executePipeline = async (scannedText: string) => {
     const rawInput = scannedText.trim();
@@ -86,12 +90,15 @@ export default function EntryDeskCameraScanner({
     }
 
     try {
-      // Step A: Parse TicketQR payload parameters
+      // Step A: Parse scanned payload to extract exact qrToken
       const qrData = parseQrContent(rawInput);
+      const targetQrToken = qrData.qrToken;
 
-      // Delegate to external handler if custom execution hook is passed
+      console.log(`🔍 Scanning pass for qrToken: "${targetQrToken}" under Mode: ${scanMode}`);
+
+      // Delegate to custom execution handler if provided
       if (onScanExecute) {
-        const customResult = await onScanExecute(rawInput, scanMode);
+        const customResult = await onScanExecute(targetQrToken, scanMode);
         setScanResult({
           status: customResult.status,
           message: customResult.message,
@@ -100,39 +107,49 @@ export default function EntryDeskCameraScanner({
         return;
       }
 
-      // Step B: Locate guest record in Dexie IndexedDB (Offline First)
+      // Step B: Locate guest record in Dexie IndexedDB using targetQrToken
       if (!db.isOpen()) await db.open();
 
+      // 🟢 Primary query filtering strictly by qrToken index
       let guest = await db.guests
         .where('qrToken')
-        .equals(qrData.rawToken)
+        .equals(targetQrToken)
         .first();
 
-      // Flexible secondary lookup by User ID / Email if token match missed
-      if (!guest && qrData.userId) {
+      // Secondary fallback query for legacy column naming (qr_token)
+      if (!guest) {
+        guest = await db.guests
+          .where('qr_token')
+          .equals(targetQrToken)
+          .first();
+      }
+
+      // Flexible fallback query for raw text or user ID matches
+      if (!guest && qrData.rawToken !== targetQrToken) {
         guest = await db.guests
           .where('qrToken')
-          .equals(qrData.userId)
-          .or('email')
-          .equals(qrData.userId)
-          .or('guestId')
-          .equals(qrData.userId)
+          .equals(qrData.rawToken)
           .first();
       }
 
       if (!guest) {
         setScanResult({
           status: 'error',
-          message: 'Access Denied: Ticket credential not found in event roster.'
+          message: `Access Denied: Ticket pass (${targetQrToken}) not found in roster.`
         });
         return;
       }
 
-      // Verify event match
-      if (Number(guest.eventId) !== Number(currentEventId) && qrData.eventId && Number(qrData.eventId) !== Number(currentEventId)) {
+      // Verify event ID venue match
+      if (
+        guest.eventId && 
+        Number(guest.eventId) !== Number(currentEventId) && 
+        qrData.eventId && 
+        Number(qrData.eventId) !== Number(currentEventId)
+      ) {
         setScanResult({
           status: 'error',
-          message: 'Access Denied: Ticket is registered for a different event venue.'
+          message: 'Access Denied: Ticket pass is registered for a different event venue.'
         });
         return;
       }
@@ -140,55 +157,65 @@ export default function EntryDeskCameraScanner({
       const now = Date.now();
       let mutationPayload: Record<string, any> = {};
 
-      // Step C: Evaluate Check-In vs. Food Claim Logic based on active scanMode
+      // Step C: Update columns according to active scanMode
       if (scanMode === 'CHECK_IN') {
-        const alreadyCheckedIn = Boolean(guest.checkInTime) || guest.isCheckedIn === true;
+        const isAlreadyCheckedIn = 
+          Boolean(guest.checkInTime) || 
+          guest.isCheckedIn === true ;
 
-        if (alreadyCheckedIn) {
+        if (isAlreadyCheckedIn) {
           setScanResult({
             status: 'warning',
             title: guest.name,
-            message: 'Duplicate Scan Warning: Attendee has already checked in.'
+            message: `Duplicate Gate Scan: ${guest.name} has already checked in.`
           });
           return;
         }
 
+        // 🟢 Column updates for CHECK_IN mode
         mutationPayload = {
           checkInTime: now,
           isCheckedIn: true,
-          isCheckIn: 1, // Dual support for integer / boolean DB columns
+          isCheckIn: 1, // Dual support for boolean & integer column types
           syncStatus: 'pending'
         };
 
         setScanResult({
           status: 'success',
           title: guest.name,
-          message: `✓ ${guest.category || 'General'} pass authenticated. Access granted.`
+          message: `✓ Pass Verified (${guest.category || 'General'}). Gate check-in complete.`
         });
 
       } else if (scanMode === 'FOOD_CLAIM') {
-        const isEligible = Boolean(guest.hasFoodAccess) || qrData.hasFood === true;
+        const isFoodEligible = 
+          Boolean(guest.hasFoodAccess) || 
+          qrData.hasFood === true;
 
-        if (!isEligible) {
+        if (!isFoodEligible) {
           setScanResult({
             status: 'error',
             title: guest.name,
-            message: 'Meal Allocation Denied: Food entitlement not included with this pass tier.'
+            message: 'Meal Access Denied: Food entitlement is not included with this pass tier.'
           });
           return;
         }
 
-        if (guest.hasFoodClaimed === true) {
+        const isFoodAlreadyClaimed = 
+          guest.hasFoodClaimed === true 
+
+        if (isFoodAlreadyClaimed) {
           setScanResult({
             status: 'warning',
             title: guest.name,
-            message: 'Duplicate Food Voucher: Meal plate already claimed for this pass.'
+            message: `Duplicate Meal Voucher: Food plate already redeemed for ${guest.name}.`
           });
           return;
         }
 
+        // 🟢 Column updates for FOOD_CLAIM mode
         mutationPayload = {
           hasFoodClaimed: true,
+          isFoodClaimed: true,
           foodClaimedTime: now,
           syncStatus: 'pending'
         };
@@ -196,36 +223,37 @@ export default function EntryDeskCameraScanner({
         setScanResult({
           status: 'success',
           title: guest.name,
-          message: '🍱 Meal Allocation Approved. Voucher redeemed.'
+          message: '🍱 Meal Allocation Approved. Voucher successfully redeemed.'
         });
       }
 
-      // Step D: Write Mutation to Local Offline DB (Dexie IndexedDB)
+      // Step D: Write Mutation to Local Offline DB by matching guest record ID
       await db.guests.update(guest.id!, mutationPayload);
-      const updatedLocalGuest = { ...guest, ...mutationPayload };
+      const updatedGuestRecord = { ...guest, ...mutationPayload };
 
-      // Step E: Opportune Push Sync to Online DB (PostgreSQL) if device is online
+      console.log(`💾 Local IndexedDB updated for pass (${targetQrToken}):`, mutationPayload);
+
+      // Step E: Online Push Sync to PostgreSQL server if device is online
       if (navigator.onLine) {
         try {
           const syncResponse = await fetch('/api/sync/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ guests: [updatedLocalGuest] }),
+            body: JSON.stringify({ guests: [updatedGuestRecord] }),
           });
 
           if (syncResponse.ok) {
-            // Update local status to synced post-commit
             await db.guests.update(guest.id!, { syncStatus: 'synced' });
-            console.log(`⚡ Instant online DB sync committed for guest: ${guest.name}`);
+            console.log(`⚡ Online DB sync committed for pass (${targetQrToken})`);
           }
         } catch (syncErr) {
-          console.warn("🌐 Online push unreachable. Cached in offline DB for auto-sync.");
+          console.warn("🌐 Device offline/unreachable. Mutation saved locally for auto-sync.");
         }
       }
 
     } catch (err: any) {
-      console.error("Fatal scan processing error:", err);
-      setScanResult({ status: 'error', message: 'Terminal processing fault.' });
+      console.error("Fatal scan execution error:", err);
+      setScanResult({ status: 'error', message: 'Terminal camera processing error.' });
     } finally {
       setIsProcessing(false);
       setManualToken('');
@@ -259,7 +287,7 @@ export default function EntryDeskCameraScanner({
 
     scannerRef.current.render(
       (decodedText) => executePipeline(decodedText),
-      (err) => {} // Fail-silent frame parsing
+      (err) => {} // Silent camera frame parser
     );
 
     return () => {
@@ -309,7 +337,7 @@ export default function EntryDeskCameraScanner({
             <button 
               onClick={() => setShowManualInput(!showManualInput)}
               className={`p-2 transition-colors shrink-0 ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
-              title="Toggle Keyboard Input Fallback"
+              title="Toggle Manual Input"
             >
               <Keyboard size={18} />
             </button>
@@ -323,7 +351,7 @@ export default function EntryDeskCameraScanner({
           </div>
         </div>
 
-        {/* LOCKED ACTIVE DESK MODE DISPLAY (READ-ONLY FOR VOLUNTEERS) */}
+        {/* ACTIVE SCANNER MODE BADGE */}
         <div className={`p-3 mb-4 rounded-xl border flex items-center justify-center gap-2 text-xs font-black uppercase tracking-wider ${
           scanMode === 'CHECK_IN'
             ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
@@ -333,16 +361,16 @@ export default function EntryDeskCameraScanner({
           <span>Active Mode: {scanMode === 'CHECK_IN' ? 'Gate Check-In' : 'Food Counter'}</span>
         </div>
 
-        {/* CAMERA OR KEYBOARD WORKSPACE FRAME */}
+        {/* CAMERA / MANUAL ENTRY FRAME */}
         <div className="relative rounded-3xl overflow-hidden bg-black min-h-[260px] flex flex-col justify-center items-center border border-white/5">
           {showManualInput ? (
-            /* FALLBACK MANUAL INTERFACE */
+            /* MANUAL INPUT FALLBACK */
             <div className="w-full p-6 space-y-4 animate-in zoom-in-95 duration-200">
               <div className="space-y-2">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Manual Ticket / User ID</label>
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Manual QR Token</label>
                 <input 
                   type="text"
-                  placeholder="Enter User ID or Ticket Code"
+                  placeholder="e.g. MI26-9122"
                   value={manualToken}
                   onChange={(e) => setManualToken(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-sm font-mono uppercase tracking-widest outline-none text-white focus:border-purple-500 transition-all text-center"
@@ -357,11 +385,11 @@ export default function EntryDeskCameraScanner({
               </button>
             </div>
           ) : (
-            /* CAMERA FRAME MOUNT */
+            /* CAMERA FEED CONTAINER */
             <div id="qr-reader-container" className="w-full" />
           )}
 
-          {/* REALTIME FEEDBACK OVERLAYS */}
+          {/* OVERLAY FEEDBACK STATUS */}
           {scanResult.status !== 'idle' && (
             <div className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-20 ${
               scanResult.status === 'success' ? 'bg-emerald-950/95 text-emerald-400' :
@@ -381,11 +409,11 @@ export default function EntryDeskCameraScanner({
 
         <p className="mt-4 text-[9px] text-slate-500 text-center font-bold uppercase tracking-widest leading-relaxed">
           {showManualInput 
-            ? "Enter system ticket code explicitly" 
+            ? "Enter ticket qrToken explicitly" 
             : `Align TicketQR code inside frame boundary (${scanMode})`}
         </p>
 
-        {/* EXPLICIT CLOSE CAMERA BUTTON */}
+        {/* CLOSE BUTTON */}
         <button
           onClick={onClose}
           className={`w-full mt-4 py-3 rounded-2xl border text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${

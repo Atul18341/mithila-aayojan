@@ -16,6 +16,7 @@ interface EventDetails {
 
 interface TicketQRProps {
   userId: string;
+  qrToken?: string; // 🟢 Pass explicit qrToken prop (e.g., MI26-9122)
   userName: string;
   userCategory: string;
   eventId: number;
@@ -32,11 +33,15 @@ const DEFAULT_EVENT_DETAILS: EventDetails = {
 
 export default function TicketQR({
   userId,
+  qrToken,
   userName,
   userCategory,
   eventId,
   eventDetails: propsEventDetails,
 }: TicketQRProps) {
+  // 🟢 Resolve token to prop qrToken or fallback to userId
+  const activeQrToken = qrToken || userId;
+
   // 🟢 Safe default fallback reference
   const fallbackDetails = propsEventDetails || DEFAULT_EVENT_DETAILS;
 
@@ -190,9 +195,9 @@ export default function TicketQR({
     };
   }, [eventId]);
 
-  // QR Payload data structure
+  // 🟢 QR Payload data structure incorporating activeQrToken
   const qrPayload = JSON.stringify({
-    uid: userId,
+    qrToken: activeQrToken, // 👈 Explicit qrToken passed to QR code
     eid: eventId,
     cat: normalizedCategory,
     food: isFoodIncluded,
@@ -254,8 +259,8 @@ export default function TicketQR({
                 <span>🍱</span>
                 <span>Food Included</span>
               </div>
-              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
-                Scan at entry gates & food counters • ID: {userId}
+              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium font-mono">
+                Scan at entry gates & food counters • Pass: {activeQrToken}
               </p>
             </div>
           ) : (
@@ -264,8 +269,8 @@ export default function TicketQR({
                 <span>🚫</span>
                 <span>Standard Entry (No Food)</span>
               </div>
-              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium">
-                Scan at entry gates • ID: {userId}
+              <p className="text-[10px] text-slate-400 mt-4 text-center font-medium font-mono">
+                Scan at entry gates • Pass: {activeQrToken}
               </p>
             </div>
           )}

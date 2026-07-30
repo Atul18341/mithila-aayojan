@@ -8,7 +8,8 @@ import { Loader2 } from 'lucide-react';
 import { db } from '@/lib/db'; // Dexie IndexedDB instance
 
 interface AttendeeData {
-  id: string; // Used for qrToken or guestId
+  id: string; 
+  qrToken: string; // 🟢 Dedicated pass QR Token property
   name: string;
   category: string;
   eventId: number;
@@ -86,13 +87,20 @@ export default function TicketPage() {
             localGuest?.eventName || 
             "the event";
 
+          // 🟢 Resolve exact qrToken from localGuest record
+          const resolvedQrToken = 
+            localGuest.qrToken || 
+            localGuest.qr_token || 
+            localGuest.guestId || 
+            `EV26-${localGuest.phone ? localGuest.phone.slice(-4) : '0000'}`;
+
           setAttendee({
-            id: localGuest.qrToken || localGuest.guestId || `GUEST-${Date.now()}`,
+            id: String(localGuest.id || localGuest.guestId || `GUEST-${Date.now()}`),
+            qrToken: resolvedQrToken, // 🟢 Set qrToken
             name: localGuest.name,
             category: localGuest.category || 'General',
             eventId: activeEventId,
             eventName: resolvedEventName,
-            // 🟢 Pass full details object including cover image / blob to TicketQR
             eventDetails: {
               eventName: resolvedEventName,
               date: localEvent?.date || "",
@@ -180,11 +188,11 @@ export default function TicketPage() {
       {/* TICKET PASS CONTAINER (Target for Download Screenshot) */}
       <div ref={ticketRef} className="w-full max-w-sm">
         <TicketQR
-          userId={attendee.id}
+          userId={attendee.qrToken} // 🟢 Passes guest qrToken (e.g. MI26-9122) instead of raw userId
           userName={attendee.name}
           userCategory={attendee.category}
           eventId={attendee.eventId}
-          eventDetails={attendee.eventDetails} // 🟢 Pass coverImageUrl / coverBlob props down
+          eventDetails={attendee.eventDetails} 
         />
       </div>
 
