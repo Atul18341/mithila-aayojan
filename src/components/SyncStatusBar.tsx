@@ -15,7 +15,9 @@ const convertBlobToBase64 = (blob: Blob): Promise<string> => {
     reader.readAsDataURL(blob);
   });
 };
+
 let isSyncMutexLocked = false;
+
 export default function SyncStatusBar() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export default function SyncStatusBar() {
   };
 
   const handleGlobalSync = async () => {
-    // 🚀 2. Enforce mutual exclusion lock structures immediately
+    // 🚀 Enforce mutual exclusion lock structures immediately
     if (isSyncing || isSyncMutexLocked || telemetryData.totalCount === 0) return;
     
     setIsSyncing(true);
@@ -60,42 +62,46 @@ export default function SyncStatusBar() {
     setSyncError(null);
     setLastSyncCounts(null);
 
+    // 🟢 Fix 1: Initialize AbortController for 10-second request timeout limit
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
-      // 🚀 3. HARDENING: Strictly isolate and process ONLY pending items
-      // This prevents the sync loop from picking up rows transitioning states
+      // 🚀 HARDENING: Strictly isolate and process ONLY pending items
       const pendingEventsOnly = telemetryData.events.filter(ev => ev.syncStatus === 'pending');
-      
-      if (pendingEventsOnly.length === 0 && telemetryData.totalCount > 0) {
-        // If events are already processed but other items remain, adjust execution
-        console.log("Media queues already synchronized. Skipping structural event loop.");
-      }
-
       const sanitizedEvents = [];
-      for (const ev of pendingEventsOnly) {
-        const eventPayload: any = {
-          ...ev,
-          clientTimestamp: ev.createdAt || Date.now(),
-          coverBlobBase64: false,
-          posterBlobBase64: false
-        };
 
-        if (ev.coverBlob instanceof Blob) {
-          try {
-            eventPayload.coverBlobBase64 = await convertBlobToBase64(ev.coverBlob);
-          } catch (e) {
-            console.error(`Failed to encode cover file string for event: ${ev.id}`, e);
+      // 🟢 Fix 2: Only perform heavy base64 Blob conversion IF there are actual pending events!
+      // This prevents image encoding loops when volunteers are purely scanning check-ins/food passes.
+      if (pendingEventsOnly.length > 0) {
+        for (const ev of pendingEventsOnly) {
+          const eventPayload: any = {
+            ...ev,
+            clientTimestamp: ev.createdAt || Date.now(),
+            coverBlobBase64: false,
+            posterBlobBase64: false
+          };
+
+          if (ev.coverBlob instanceof Blob) {
+            try {
+              eventPayload.coverBlobBase64 = await convertBlobToBase64(ev.coverBlob);
+            } catch (e) {
+              console.error(`Failed to encode cover file string for event: ${ev.id}`, e);
+            }
           }
-        }
 
-        if (ev.posterBlob instanceof Blob) {
-          try {
-            eventPayload.posterBlobBase64 = await convertBlobToBase64(ev.posterBlob);
-          } catch (e) {
-            console.error(`Failed to encode poster file string for event: ${ev.id}`, e);
+          if (ev.posterBlob instanceof Blob) {
+            try {
+              eventPayload.posterBlobBase64 = await convertBlobToBase64(ev.posterBlob);
+            } catch (e) {
+              console.error(`Failed to encode poster file string for event: ${ev.id}`, e);
+            }
           }
-        }
 
-        sanitizedEvents.push(eventPayload);
+          sanitizedEvents.push(eventPayload);
+        }
+      } else {
+        console.log("⚡ Fast-Path: No pending event media to encode. Syncing guest passes directly.");
       }
 
       const sanitizedGuests = telemetryData.guests
@@ -112,9 +118,11 @@ export default function SyncStatusBar() {
           clientTimestamp: Date.now()
         }));
 
+      // 🟢 Fix 1: Attach AbortSignal to prevent network requests from hanging forever
       const response = await fetch('/api/sync/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           events: sanitizedEvents,
           guests: sanitizedGuests,
@@ -143,7 +151,6 @@ export default function SyncStatusBar() {
       if (result.success && result.counts) {
         // UNIFIED MULTI-TABLE TRANSACTION
         await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents], async () => {
-          // 🚀 4. Batch update states atomically
           for (const ev of pendingEventsOnly) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
           }
@@ -163,13 +170,19 @@ export default function SyncStatusBar() {
       }
     } catch (err: any) {
       console.error("Global sync flush failed:", err);
-      setSyncError(err.message || "Network link issue. Tap to retry.");
+      if (err.name === 'AbortError') {
+        setSyncError("Sync Timeout: Spotty connection. Tap to retry.");
+      } else {
+        setSyncError(err.message || "Network link issue. Tap to retry.");
+      }
     } finally {
-      // 🚀 5. Release locks safely at the very end of the execution timeline
+      // 🟢 Clear timer and release locks safely in all execution paths
+      clearTimeout(timeoutId);
       setIsSyncing(false);
       isSyncMutexLocked = false; 
     }
   };
+
   // AUTOMATIC BACKGROUND SYNCHRONIZATION ENGINE
   useEffect(() => {
     const triggerAutoSync = async () => {
