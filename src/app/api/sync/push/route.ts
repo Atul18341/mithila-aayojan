@@ -270,7 +270,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 4. SYNCHRONIZE GUESTS & TICKET ENTITLEMENTS
+    // 4. SYNCHRONIZE GUESTS & CHECK-IN / FOOD CLAIM DATA
     // ==========================================
     for (const gst of guests) {
       let rawTargetEventId = gst.eventId; 
@@ -284,6 +284,15 @@ export async function POST(request: Request) {
 
       const guestType = gst.category || gst.type || 'general-public';
 
+      // 🟢 Resolve Check-In State & Timestamps
+      const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? 1 : 0;
+      const rawCheckInTime = gst.checkInTime ? BigInt(gst.checkInTime) : null;
+
+      // 🟢 Resolve Food Claim State & Timestamps
+      const hasFoodAccess = (gst.hasFoodAccess === true || gst.isFoodAccess === true || gst.foodIncluded === true) ? 1 : 0;
+      const hasFoodClaimed = (gst.hasFoodClaimed === true || gst.isFoodClaimed === true || gst.foodClaimed === true) ? 1 : 0;
+      const rawFoodClaimedTime = gst.foodClaimedTime || gst.foodClaimedAt ? BigInt(gst.foodClaimedTime || gst.foodClaimedAt) : null;
+
       const guestUpsertQuery = `
         INSERT INTO guests (
           event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
@@ -294,8 +303,8 @@ export async function POST(request: Request) {
         DO UPDATE SET 
           name = EXCLUDED.name, 
           type = EXCLUDED.type, 
-          email = EXCLUDED.email, 
-          phone = EXCLUDED.phone, 
+          email = COALESCE(EXCLUDED.email, guests.email), 
+          phone = COALESCE(EXCLUDED.phone, guests.phone), 
           is_check_in = EXCLUDED.is_check_in, 
           amount_paid = EXCLUDED.amount_paid, 
           has_food_access = EXCLUDED.has_food_access, 
@@ -306,7 +315,6 @@ export async function POST(request: Request) {
         RETURNING id;
       `; 
 
-      const checkInStatus = gst.checkInTime || gst.isCheckedIn || gst.isCheckIn === 1 ? 1 : 0;
       const result = await client.query(guestUpsertQuery, [
         Number(targetEventId), 
         gst.name, 
@@ -316,14 +324,15 @@ export async function POST(request: Request) {
         gst.phone || null, 
         checkInStatus, 
         gst.amountPaid || 0.00, 
-        gst.hasFoodAccess ? 1 : 0, 
-        gst.hasFoodClaimed ? 1 : 0, 
-        gst.checkInTime ? BigInt(gst.checkInTime) : null,
-        gst.foodClaimedTime ? BigInt(gst.foodClaimedTime) : null
+        hasFoodAccess, 
+        hasFoodClaimed, 
+        rawCheckInTime,
+        rawFoodClaimedTime
       ]); 
 
       const serverGuestId = result.rows[0].id;
-      await logSyncAction('guests', gst.checkInTime ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp || Date.now());
+      const syncActionType = hasFoodClaimed ? 'FOOD_CLAIM' : (checkInStatus ? 'CHECK_IN' : 'UPDATE');
+      await logSyncAction('guests', syncActionType, serverGuestId, gst.clientTimestamp || Date.now());
       syncedGuestsCount++;  
     }
 
@@ -341,6 +350,9 @@ export async function POST(request: Request) {
       const qrToken = reg.qrToken || reg.registrationId || reg.ticketId;
       if (!targetEventId || !qrToken) continue;
 
+      const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime || reg.isCheckIn === 1);
+      const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.isFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
+
       const regUpsertQuery = `
         INSERT INTO event_registrations (
           event_id, registration_id, attendee_name, email, phone, ticket_type, 
@@ -354,8 +366,8 @@ export async function POST(request: Request) {
         ON CONFLICT (qr_token)
         DO UPDATE SET
           attendee_name = EXCLUDED.attendee_name,
-          email = EXCLUDED.email,
-          phone = EXCLUDED.phone,
+          email = COALESCE(EXCLUDED.email, event_registrations.email),
+          phone = COALESCE(EXCLUDED.phone, event_registrations.phone),
           ticket_type = EXCLUDED.ticket_type,
           payment_status = EXCLUDED.payment_status,
           amount_paid = EXCLUDED.amount_paid,
@@ -365,9 +377,6 @@ export async function POST(request: Request) {
           food_claimed = EXCLUDED.food_claimed,
           food_claimed_at = COALESCE(event_registrations.food_claimed_at, EXCLUDED.food_claimed_at);
       `;
-
-      const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime);
-      const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
 
       await client.query(regUpsertQuery, [
         Number(targetEventId),
@@ -381,7 +390,7 @@ export async function POST(request: Request) {
         reg.amountPaid || 0.00,
         isCheckedIn,
         reg.checkInTime ? new Date(reg.checkInTime) : null,
-        Boolean(reg.hasFoodAccess || reg.foodIncluded),
+        Boolean(reg.hasFoodAccess || reg.foodIncluded || reg.isFoodAccess),
         isFoodClaimed,
         reg.foodClaimedAt ? new Date(reg.foodClaimedAt) : (reg.foodClaimedTime ? new Date(reg.foodClaimedTime) : null),
         reg.registeredAt || reg.createdAt || Date.now()

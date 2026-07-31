@@ -62,7 +62,7 @@ export default function SyncStatusBar() {
     setSyncError(null);
     setLastSyncCounts(null);
 
-    // 🟢 Fix 1: Initialize AbortController for 10-second request timeout limit
+    // 🟢 Initialize AbortController for 10-second request timeout limit
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -71,8 +71,7 @@ export default function SyncStatusBar() {
       const pendingEventsOnly = telemetryData.events.filter(ev => ev.syncStatus === 'pending');
       const sanitizedEvents = [];
 
-      // 🟢 Fix 2: Only perform heavy base64 Blob conversion IF there are actual pending events!
-      // This prevents image encoding loops when volunteers are purely scanning check-ins/food passes.
+      // 🟢 Fast-Path: Only perform heavy base64 Blob conversion IF there are actual pending events!
       if (pendingEventsOnly.length > 0) {
         for (const ev of pendingEventsOnly) {
           const eventPayload: any = {
@@ -104,11 +103,24 @@ export default function SyncStatusBar() {
         console.log("⚡ Fast-Path: No pending event media to encode. Syncing guest passes directly.");
       }
 
+      // 🟢 Explicitly map all check-in and food claim fields for volunteer/manager dashboard sync
       const sanitizedGuests = telemetryData.guests
         .filter(gst => gst.syncStatus === 'pending')
         .map(gst => ({
           ...gst,
-          clientTimestamp: gst.checkInTime || Date.now()
+          // Explicit Check-In fields
+          checkInTime: gst.checkInTime || null,
+          isCheckedIn: Boolean(gst.isCheckedIn || gst.checkInTime),
+          isCheckIn: (gst.checkInTime || gst.isCheckedIn) ? 1 : 0,
+
+          // Explicit Food Access & Voucher Claim fields
+          hasFoodAccess: Boolean(gst.hasFoodAccess || (gst as any).isFoodAccess || (gst as any).foodIncluded),
+          hasFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
+          isFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
+          foodClaimedTime: (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || null,
+
+          // Timestamp for sync sequence
+          clientTimestamp: gst.checkInTime || (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || Date.now()
         }));
 
       const sanitizedLinks = telemetryData.managerEvents
@@ -118,7 +130,7 @@ export default function SyncStatusBar() {
           clientTimestamp: Date.now()
         }));
 
-      // 🟢 Fix 1: Attach AbortSignal to prevent network requests from hanging forever
+      // 🟢 Attach AbortSignal to prevent network requests from hanging forever
       const response = await fetch('/api/sync/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
