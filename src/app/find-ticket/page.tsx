@@ -3,9 +3,10 @@
 import React, { useState, useRef } from 'react';
 import TicketQR from '@/components/TicketQR';
 import { toPng } from 'html-to-image';
-import { Loader2, Search, ArrowLeft, Ticket, AlertCircle } from 'lucide-react';
+import { Loader2, Search, ArrowLeft, Ticket, AlertCircle, Sun, Moon } from 'lucide-react';
 import Link from 'next/link';
-import { db } from '@/lib/db'; // Dexie IndexedDB instance
+import { db } from '@/lib/db';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface MatchedAttendee {
   id: string;
@@ -24,6 +25,20 @@ interface MatchedAttendee {
 
 export default function FindTicketPage() {
   const ticketRef = useRef<HTMLDivElement>(null);
+
+  // Theme Context integration with fallback state
+  let themeContext: { isDark: boolean; toggleTheme: () => void } | null = null;
+  try {
+    themeContext = useTheme();
+  } catch (e) {
+    // Graceful fallback if context provider is not wrapped higher up
+  }
+
+  const [localIsDark, setLocalIsDark] = useState<boolean>(true);
+  const isDark = themeContext ? themeContext.isDark : localIsDark;
+  const toggleTheme = themeContext
+    ? themeContext.toggleTheme
+    : () => setLocalIsDark((prev) => !prev);
 
   const [query, setQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -49,7 +64,6 @@ export default function FindTicketPage() {
       const sanitizedPhone = cleanQuery.replace(/\D/g, '');
 
       // 🔍 1. Smart Multi-Field Indexed Lookup Sequence
-      // Check qrToken / qr_token first
       guestRecord = await db.guests
         .where('qrToken')
         .equals(cleanQuery)
@@ -57,7 +71,6 @@ export default function FindTicketPage() {
         .equals(cleanQuery)
         .first();
 
-      // Check email if not matched yet
       if (!guestRecord && cleanQuery.includes('@')) {
         guestRecord = await db.guests
           .where('email')
@@ -65,7 +78,6 @@ export default function FindTicketPage() {
           .first();
       }
 
-      // Check phone number if not matched yet
       if (!guestRecord) {
         guestRecord = await db.guests
           .where('phone')
@@ -75,7 +87,7 @@ export default function FindTicketPage() {
           .first();
       }
 
-      // 🔍 2. Universal Fallback Matcher (if unindexed or formatted differently)
+      // 🔍 2. Universal Fallback Matcher
       if (!guestRecord) {
         const allGuests = await db.guests.toArray();
         guestRecord = allGuests.find((g: any) => {
@@ -163,33 +175,29 @@ export default function FindTicketPage() {
     }
   };
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
-      
-      {/* HEADER NAVIGATION */}
-      <div className="w-full max-w-md mb-6 flex items-center justify-between">
-        <Link 
-          href="/" 
-          className="inline-flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={16} />
-          <span>Back to Home</span>
-        </Link>
-        <span className="text-xs font-mono font-bold uppercase tracking-widest text-blue-500 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
-          Offline Pass Lookup
-        </span>
-      </div>
+  // Dynamic theme mapping
+  const theme = {
+    bg: isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900',
+    card: isDark ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200 shadow-xl',
+    headerText: isDark ? 'text-white' : 'text-slate-900',
+    subText: isDark ? 'text-slate-400' : 'text-slate-500',
+    inputBg: isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-900 placeholder:text-slate-400',
+    toggleBtn: isDark ? 'bg-slate-900 border-slate-800 text-amber-400 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 shadow-sm',
+    badge: isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200',
+  };
 
+  return (
+    <main className={`min-h-screen ${theme.bg} transition-colors duration-300 flex flex-col items-center justify-center p-4 sm:p-6`}>
       {/* SEARCH CARD CONTAINER */}
-      <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl mb-8">
+      <div className={`w-full max-w-md rounded-3xl p-6 border transition-colors duration-300 ${theme.card} mb-8`}>
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 mb-3">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-500 mb-3">
             <Ticket size={24} />
           </div>
-          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+          <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${theme.headerText}`}>
             Find Your Event Pass
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className={`text-xs ${theme.subText} mt-1`}>
             Search registered passes saved in local device storage.
           </p>
         </div>
@@ -197,7 +205,7 @@ export default function FindTicketPage() {
         {/* SINGLE UNIFIED SEARCH INPUT FORM */}
         <form onSubmit={handleSearch} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
+            <label className={`text-[10px] font-black uppercase tracking-widest ${theme.subText} ml-1`}>
               Search by Phone, Email, or Pass Code
             </label>
             <div className="relative">
@@ -207,9 +215,9 @@ export default function FindTicketPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="e.g. 9876543210, guest@example.com, or MI26-9122"
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 pl-11 text-xs sm:text-sm font-semibold text-white placeholder:text-slate-500 outline-none focus:border-blue-500 transition-all"
+                className={`w-full rounded-2xl px-4 py-3.5 pl-11 text-xs sm:text-sm font-semibold outline-none focus:border-blue-500 transition-all border ${theme.inputBg}`}
               />
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                 <Search size={16} />
               </div>
             </div>
@@ -245,7 +253,7 @@ export default function FindTicketPage() {
         <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95 duration-300">
           
           <div className="text-center mb-4">
-            <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
+            <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
               ✓ Registration Match Found
             </span>
           </div>
@@ -274,7 +282,7 @@ export default function FindTicketPage() {
               <span>Download Ticket Pass</span>
             </button>
 
-            <p className="text-[11px] text-center text-slate-500">
+            <p className={`text-[11px] text-center ${theme.subText}`}>
               Save this ticket image to your mobile gallery for offline gate scanning.
             </p>
           </div>

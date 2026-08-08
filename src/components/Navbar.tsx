@@ -13,7 +13,8 @@ import {
   X,
   ShieldCheck,
   Sun,
-  Moon
+  Moon,
+  Ticket
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -24,19 +25,20 @@ export default function Navbar() {
   const [isSolutionsOpen, setIsSolutionsOpen] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // 🚀 Added native dark mode binary state tracking framework
   
   const langRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
   useEffect(() => {
-  if ('serviceWorker' in navigator && window.location.hostname === 'localhost') {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
-        .then((reg) => console.log('🚀 Service Worker successfully registered with scope: ', reg.scope))
-        .catch((err) => console.error('❌ Service Worker registration failed: ', err));
-    });
-  }
-}, []);
+    if ('serviceWorker' in navigator && window.location.hostname === 'localhost') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((reg) => console.log('🚀 Service Worker successfully registered with scope: ', reg.scope))
+          .catch((err) => console.error('❌ Service Worker registration failed: ', err));
+      });
+    }
+  }, []);
+
   useEffect(() => {
     setMounted(true);
     const handleClickOutside = (event: MouseEvent) => {
@@ -62,7 +64,7 @@ export default function Navbar() {
     <>
       <div className="h-20 w-full lg:hidden block" /> 
 
-      {/* 🚀 FIXED: Dynamic framework container adapts base color arrays per state toggle */}
+      {/* 🚀 Dynamic framework container adapts base color arrays per state toggle */}
       <nav className={`fixed top-0 left-0 w-full z-[100] backdrop-blur-md border-b transition-colors duration-300 ${
         isDark ? 'bg-slate-950/90 border-slate-900 text-slate-100' : 'bg-white/90 border-gray-100 text-gray-800'
       }`}>
@@ -88,14 +90,25 @@ export default function Navbar() {
             <ul className={`flex items-center gap-8 text-sm font-semibold ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
               <li><Link href="/" className="hover:text-orange-600 transition-colors">Home</Link></li>
               <li><Link href="#features" className="hover:text-orange-600 transition-colors">{t.navFeatures}</Link></li>
+              <li><Link href="/events" className="hover:text-orange-600 transition-colors">{t.navEvents}</Link></li>
               
-             <li><Link href="/events" className="hover:text-orange-600 transition-colors">{t.navEvents}</Link></li>
+              {/* 🟢 Updated Find Pass option to turn orange only on hover */}
+              <li>
+                <Link 
+                  href="/find-ticket" 
+                  className="flex items-center gap-1.5 hover:text-orange-600 transition-colors"
+                >
+                  <Ticket size={16} />
+                  <span>Find Pass</span>
+                </Link>
+              </li>
+
               <li><Link href="#pricing" className="hover:text-orange-600 transition-colors">{t.navPricing}</Link></li>
             </ul>
 
             <div className={`flex items-center gap-5 border-l pl-8 ${isDark ? 'border-slate-800' : 'border-gray-200'}`}>
               
-              {/* 🚀 DESKTOP THEME TOGGLE ACCESS NODE */}
+              {/* DESKTOP THEME TOGGLE */}
               <button
                 type="button"
                 onClick={toggleTheme}
@@ -173,7 +186,19 @@ export default function Navbar() {
           }`}>
              <ul className={`space-y-4 text-lg font-semibold ${isDark ? 'text-slate-200' : 'text-gray-700'}`}>
                <li><Link href="#features" onClick={() => setMobileMenuOpen(false)}>{t.navFeatures}</Link></li>
-               <li><Link href="#solutions" onClick={() => setMobileMenuOpen(false)}>{t.navSolutions}</Link></li>
+               <li><Link href="/events" onClick={() => setMobileMenuOpen(false)}>{t.navEvents}</Link></li>
+               
+               <li>
+                 <Link 
+                   href="/find-ticket" 
+                   onClick={() => setMobileMenuOpen(false)}
+                   className="flex items-center gap-2 hover:text-orange-600 transition-colors"
+                 >
+                   <Ticket size={20} />
+                   <span>Find Pass</span>
+                 </Link>
+               </li>
+
                <li><Link href="#pricing" onClick={() => setMobileMenuOpen(false)}>{t.navPricing}</Link></li>
                
                <li className="pt-2">
@@ -188,12 +213,12 @@ export default function Navbar() {
                </li>
              </ul>
 
-             {/* 🚀 MOBILE INTEGRATED EXPLICIT THEME PANEL */}
+             {/* MOBILE THEME PANEL */}
              <div className={`pt-6 border-t flex items-center justify-between ${isDark ? 'border-slate-900' : 'border-gray-100'}`}>
                <span className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Template Scheme Appearance</span>
                <button
                  type="button"
-                onClick={toggleTheme}
+                 onClick={toggleTheme}
                  className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
                    isDark 
                      ? 'bg-slate-900 border-slate-800 text-amber-400' 
