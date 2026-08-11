@@ -2,7 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, WifiOff } from 'lucide-react';
+import Link from 'next/link';
+import { 
+  Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
+  Lock, CalendarX, Ticket 
+} from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
 
@@ -50,6 +54,8 @@ interface EventData {
   slug?: string;
   name?: string;
   type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference';
+  registrationEndDate?: string;
+  registration_end_date?: string;
   pricingConfig?: {
     isRequired: boolean;
     baseFee: number;
@@ -89,6 +95,18 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     gstAmount: 0,
     totalPrice: 0
   });
+
+  // 🔴 REGISTRATION CUTOFF EVALUATION RULE
+  const cutoffDateStr = event.registrationEndDate || event.registration_end_date;
+  let isRegistrationClosed = false;
+
+  if (cutoffDateStr) {
+    // Parse cutoff date set to 23:59:59 on target day
+    const cutoffDate = new Date(`${cutoffDateStr}T23:59:59`);
+    if (!isNaN(cutoffDate.getTime()) && Date.now() > cutoffDate.getTime()) {
+      isRegistrationClosed = true;
+    }
+  }
 
   // Calculate fees dynamically whenever category selection changes
   useEffect(() => {
@@ -146,7 +164,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
   /**
    * Fail-safe QR Token Generator
-   * Guaranteed Format: "XX26-1234" (Always 9 characters max)
    */
   const generateQrToken = (eventData: EventData, phone: string): string => {
     const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
@@ -163,9 +180,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     return `${prefix}26-${phoneTail}`;
   };
 
-  /**
-   * 🟢 Push Registration to Dedicated Central API Route (/api/registrations)
-   */
   const sendRegistrationToServer = async (registrationPayload: any, guestPayload: any, paymentResponse?: any) => {
     if (typeof window !== 'undefined' && !navigator.onLine) {
       console.warn("⚠️ Client offline. Cloud endpoint sync skipped.");
@@ -199,9 +213,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     }
   };
 
-  /**
-   * Helper function to save registration & primary guest record into IndexedDB tables & PostgreSQL
-   */
   const saveRegistrationRecord = async (paymentDetails?: { paymentId?: string; orderId?: string; signature?: string }) => {
     const eventIdParam = event.id || event.slug || 'default';
     const registrationId = `REG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -217,16 +228,13 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       category: formData.category as AttendeeCategory,
       customAnswers: formData.customAnswers,
       
-      // Financial Breakdown
       basePrice: pricing.basePrice,
       gstAmount: pricing.gstAmount,
       totalPrice: pricing.totalPrice,
       
-      // Payment Gateway Ledger
       paymentId: paymentDetails?.paymentId || 'FREE_ENTRY',
       orderId: paymentDetails?.orderId || null,
       
-      // Status & Metadata
       status: 'CONFIRMED',
       syncStatus: isOnline ? 'synced' : 'pending',
       registrationTimestamp: Date.now()
@@ -241,21 +249,17 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       phone: formData.phone,
       category: formData.category,
       
-      // QR & Gate Verification
       qrToken: qrToken,
       isCheckedIn: false,
       
-      // Catering Logistics
       hasFoodAccess: ['vip', 'speaker', 'patron', 'dignitary', 'ops-team'].includes(formData.category),
       hasFoodClaimed: false,
       
-      // Sync & Metadata
       amountPaid: pricing.totalPrice,
       syncStatus: isOnline ? 'synced' : 'pending',
       registeredAt: Date.now()
     };
 
-    // 1. Store safely in Dexie IndexedDB
     if (typeof window !== 'undefined' && db) {
       try {
         await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
@@ -268,7 +272,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       }
     }
 
-    // 2. Post to central API endpoint if network is available
     if (isOnline) {
       await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
         razorpay_order_id: paymentDetails.orderId,
@@ -282,13 +285,19 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Block submission if cutoff has elapsed
+    if (isRegistrationClosed) {
+      alert('Registrations for this event are closed.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     const eventIdParam = event.id || event.slug || 'default';
     const isFeeApplicable = event.pricingConfig?.isRequired && pricing.totalPrice > 0;
     const isOffline = typeof window !== 'undefined' && !navigator.onLine;
 
-    // 🔴 HYBRID PROTECTION RULE 1: Block Paid Registrations Offline
     if (isFeeApplicable && isOffline) {
       alert('Payment processing requires an active internet connection. Please connect to the internet to complete your ticket purchase.');
       setIsSubmitting(false);
@@ -296,7 +305,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     }
 
     if (isFeeApplicable) {
-      // SCENARIO 1: Paid Tier -> Online Checkout Flow
       try {
         const isScriptLoaded = await loadRazorpayScript();
         if (!isScriptLoaded) {
@@ -329,7 +337,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           order_id: orderData.order.id,
           handler: async function (response: any) {
             try {
-              // Persist entry locally and on central server
               const eventId = await saveRegistrationRecord({
                 paymentId: response.razorpay_payment_id,
                 orderId: response.razorpay_order_id,
@@ -356,7 +363,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           modal: {
             ondismiss: function () {
               setIsSubmitting(false);
-              console.log("Payment flow abandoned by operator.");
             }
           }
         };
@@ -365,12 +371,11 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         paymentWindow.open();
 
       } catch (err: any) {
-        console.error("Payment setup trace runtime execution failure:", err);
-        alert(err.message || "Failed to initialize standard checkout gateway framework.");
+        console.error("Payment setup failure:", err);
+        alert(err.message || "Failed to initialize checkout gateway.");
         setIsSubmitting(false);
       }
     } else {
-      // 🟢 HYBRID PROTECTION RULE 2: Free Registration -> Allowed Offline & Online
       try {
         const eventId = await saveRegistrationRecord();
         setIsSubmitting(false);
@@ -383,6 +388,41 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       }
     }
   };
+
+  // 🔴 LOCKED REGISTRATION VIEW WHEN DEADLINE HAS PASSED
+  if (isRegistrationClosed) {
+    return (
+      <div className="w-full text-center p-6 bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 rounded-2xl space-y-4 animate-in fade-in duration-300">
+        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-500">
+          <Lock size={22} />
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-amber-500">
+            <CalendarX size={14} />
+            <span>Registrations Closed</span>
+          </div>
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            Online Registration Deadline Reached
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+            Public registration for this event closed on <strong className="text-slate-700 dark:text-slate-200">{cutoffDateStr}</strong>.
+          </p>
+        </div>
+
+        {/* CTA TO RETRIEVE EXISTING TICKET PASS */}
+        <div className="pt-2 border-t border-amber-500/10">
+          <Link
+            href="/find-ticket"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 active:scale-95"
+          >
+            <Ticket size={14} />
+            <span>Find My Registered Pass</span>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (formSubmitted) {
     return (

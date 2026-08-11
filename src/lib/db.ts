@@ -168,7 +168,7 @@ export class AayojanDB extends Dexie {
     super('MithilaAayojanDB');
     // Bumped database version state layer to clean internal store layouts
     this.version(5).stores({
-      events: '++id, slug, type, status, createdAt, syncStatus',
+      events: '++id, slug, type, status, registrationEndDate, createdAt, syncStatus',
      guests: '++id, guestId, registrationId, eventId, qrToken, qr_token,phone, email,isCheckedIn, syncStatus',
       users: '++id, email, identifier, role, activeEventId,syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',

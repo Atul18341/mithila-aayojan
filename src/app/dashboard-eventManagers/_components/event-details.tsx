@@ -1,4 +1,3 @@
-// src/app/dashboard/_components/event-details.tsx
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -31,6 +30,7 @@ export interface EventData {
   date?: string;
   startTime?: string;
   endTime?: string;
+  registrationEndDate?: string; // 🟢 Registration Cutoff Date
   protocol: string;
   tagline?: string;
   description?: string;
@@ -166,6 +166,7 @@ export default function EventDetailEditor({
     primaryDate: '',
     startTime: '',
     endTime: '',
+    registrationEndDate: '', // 🟢 Registration End Date Initial State
     hypeThreshold: 0,
     type: 'conference', 
     protocol: 'ticketed' as 'ticketed' | 'open-registration' | 'invite-only',
@@ -204,6 +205,7 @@ export default function EventDetailEditor({
         primaryDate: event.date || '',
         startTime: event.startTime || '',
         endTime: event.endTime || '',
+        registrationEndDate: event.registrationEndDate || '', // 🟢 Bind Registration End Date
         hypeThreshold: event.hypeThreshold || 0,
         type: event.type || 'conference',
         protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
@@ -227,7 +229,6 @@ export default function EventDetailEditor({
       setIsCreateMode(false);
       setSaveStatus('idle');
 
-      // 🟢 Automatically populate previews from existing Blobs if present
       if (event.coverBlob) {
         setCoverBlob(event.coverBlob);
         setCoverPreview(URL.createObjectURL(event.coverBlob));
@@ -250,7 +251,7 @@ export default function EventDetailEditor({
 
   const handleResetToCreation = () => {
     setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
+      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
       visibility: { map: true, rsvp: true, schedule: true, gallery: false },
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
@@ -348,6 +349,7 @@ export default function EventDetailEditor({
       date: details.primaryDate,
       startTime: details.startTime,
       endTime: details.endTime,
+      registrationEndDate: details.registrationEndDate, // 🟢 Compile Registration Cutoff Date
       type: details.type,
       protocol: details.protocol, 
       status: forcedStatus || currentStatus, 
@@ -495,7 +497,7 @@ export default function EventDetailEditor({
           </div>
         )}
 
-        {/* 🟢 MODULE 2: MEDIA LAYOUT - RENDERS EXISTING IMAGE BLOBS OR NEW PREVIEWS */}
+        {/* MODULE 2: MEDIA LAYOUT */}
         {activeModule === 'media' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div className="space-y-2">
@@ -573,6 +575,29 @@ export default function EventDetailEditor({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* 🟢 REGISTRATION DEADLINE CUTOFF CONTROL */}
+            <div>
+              <div className={styles.sectionHeader}>Registration Deadline & Access Rules</div>
+              <div className={`p-5 rounded-3xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="space-y-1.5">
+                  <label className={styles.label}>Registration End Date (Cutoff)</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
+                    <input 
+                      name="registrationEndDate" 
+                      type="date" 
+                      value={details.registrationEndDate} 
+                      onChange={handleChange} 
+                      className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-500 block ml-1">
+                    Public registration forms will automatically lock after this date. Leave blank for continuous open registration until event day.
+                  </span>
+                </div>
               </div>
             </div>
 

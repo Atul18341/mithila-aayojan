@@ -80,16 +80,17 @@ export async function POST(request: Request) {
         ? ev.name.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '')
         : `event-${Date.now()}`);
 
+      // 🟢 MERGED: Includes registration_end_date in column list & DO UPDATE SET clause
       const eventUpsertQuery = `
         INSERT INTO events (
-          name, type, protocol, status, date, start_time, end_time, 
+          name, type, protocol, status, date, start_time, end_time, registration_end_date,
           location, tagline, description, venue_name, visibility, 
           food_config, pricing_config, created_at, updated_at, slug
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, 
-          $8, $9, $10, $11, $12::jsonb, 
-          $13::jsonb, $14::jsonb, timezone('utc', TO_TIMESTAMP($15 / 1000.0)), timezone('utc', now()), $16
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13::jsonb, 
+          $14::jsonb, $15::jsonb, timezone('utc', TO_TIMESTAMP($16 / 1000.0)), timezone('utc', now()), $17
         )
         ON CONFLICT (slug) 
         DO UPDATE SET 
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
           date = EXCLUDED.date,
           start_time = EXCLUDED.start_time,
           end_time = EXCLUDED.end_time,
+          registration_end_date = EXCLUDED.registration_end_date,
           location = EXCLUDED.location,
           tagline = COALESCE(EXCLUDED.tagline, events.tagline),       
           description = COALESCE(EXCLUDED.description, events.description), 
@@ -116,9 +118,23 @@ export async function POST(request: Request) {
       const pricingConfigData = ev.pricingConfig ? JSON.stringify(ev.pricingConfig) : '{"isRequired": false, "baseFee": 0, "gstApplicable": false, "applicableForAll": "yes", "categoryFees": {}}';
       
       const result = await client.query(eventUpsertQuery, [
-        ev.name, ev.type, ev.protocol, ev.status, ev.date, ev.startTime || null, ev.endTime || null,
-        ev.location || null, ev.tagline || null, ev.description || null, ev.venueName || null, visibilityData,
-        foodConfigData, pricingConfigData, ev.createdAt || Date.now(), generatedSlug
+        ev.name, 
+        ev.type, 
+        ev.protocol, 
+        ev.status, 
+        ev.date, 
+        ev.startTime || null, 
+        ev.endTime || null, 
+        ev.registrationEndDate || ev.registration_end_date || null, // 🟢 $8: Passed registration deadline cutoff
+        ev.location || null, 
+        ev.tagline || null, 
+        ev.description || null, 
+        ev.venueName || null, 
+        visibilityData,
+        foodConfigData, 
+        pricingConfigData, 
+        ev.createdAt || Date.now(), 
+        generatedSlug
       ]); 
       
       const serverGeneratedId = result.rows[0].id;
@@ -284,11 +300,11 @@ export async function POST(request: Request) {
 
       const guestType = gst.category || gst.type || 'general-public';
 
-      // 🟢 Resolve Check-In State & Timestamps
+      // Resolve Check-In State & Timestamps
       const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? 1 : 0;
       const rawCheckInTime = gst.checkInTime ? BigInt(gst.checkInTime) : null;
 
-      // 🟢 Resolve Food Claim State & Timestamps
+      // Resolve Food Claim State & Timestamps
       const hasFoodAccess = (gst.hasFoodAccess === true || gst.isFoodAccess === true || gst.foodIncluded === true) ? 1 : 0;
       const hasFoodClaimed = (gst.hasFoodClaimed === true || gst.isFoodClaimed === true || gst.foodClaimed === true) ? 1 : 0;
       const rawFoodClaimedTime = gst.foodClaimedTime || gst.foodClaimedAt ? BigInt(gst.foodClaimedTime || gst.foodClaimedAt) : null;

@@ -54,6 +54,8 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
           // Case A: Local Cache Hits -> Hydrate Object URLs instantly from local storage memory
           const processedLocalData = {
             ...cachedLocalEvent,
+            // Normalize registration cutoff date field for child components
+            registrationEndDate: cachedLocalEvent.registrationEndDate || cachedLocalEvent.registration_end_date || null,
             coverImageUrl: cachedLocalEvent.coverBlob ? createSafeObjectURL(cachedLocalEvent.coverBlob) : cachedLocalEvent.coverImageUrl,
             posterImageUrl: cachedLocalEvent.posterBlob ? createSafeObjectURL(cachedLocalEvent.posterBlob) : cachedLocalEvent.posterImageUrl,
           };
@@ -67,7 +69,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
               .then(res => res.ok ? res.json() : null)
               .then(async (freshCloudData) => {
                 if (freshCloudData && Array.isArray(freshCloudData.events) && freshCloudData.events.length > 0) {
-                  // 🟢 FIX: Strictly filter matching event by slug
+                  // Strictly filter matching event by slug
                   const remoteEvent = freshCloudData.events.find(
                     (e: any) => e.slug?.toLowerCase() === slug || String(e.id) === slug
                   ) || freshCloudData.events[0];
@@ -86,10 +88,11 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
                     updatedPosterBlob = await fetchImageAsBlob(remoteEvent.posterImageUrl);
                   }
 
-                  // 🟢 FIX: Preserve exact local primary key ID to prevent overwriting other events
+                  // Preserve exact local primary key ID to prevent overwriting other events
                   await db.events.put({
                     ...remoteEvent,
                     id: cachedLocalEvent.id, 
+                    registrationEndDate: remoteEvent.registrationEndDate || remoteEvent.registration_end_date || cachedLocalEvent.registrationEndDate,
                     coverBlob: updatedCoverBlob,
                     posterBlob: updatedPosterBlob,
                     syncStatus: 'synced'
@@ -112,7 +115,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
           const onlineCloudData = await response.json();
           
           if (onlineCloudData && Array.isArray(onlineCloudData.events) && onlineCloudData.events.length > 0) {
-            // 🟢 FIX: Find the EXACT matching event for this slug instead of defaulting to events[0]
+            // Find the EXACT matching event for this slug instead of defaulting to events[0]
             const remoteEvent = onlineCloudData.events.find(
               (e: any) => e.slug?.toLowerCase() === slug
             ) || onlineCloudData.events[0];
@@ -129,9 +132,12 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
             // Check if a local record already exists under this slug or ID
             const existingRecordBySlug = await db.events.where('slug').equals(slug).first();
 
+            const normalizedCutoffDate = remoteEvent.registrationEndDate || remoteEvent.registration_end_date || null;
+
             const newLocalRecord = {
               ...remoteEvent,
               id: existingRecordBySlug ? existingRecordBySlug.id : (remoteEvent.id || undefined),
+              registrationEndDate: normalizedCutoffDate,
               coverBlob,
               posterBlob,
               syncStatus: 'synced'
@@ -141,6 +147,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
 
             const renderedRecordData = {
               ...newLocalRecord,
+              registrationEndDate: normalizedCutoffDate,
               coverImageUrl: coverBlob ? createSafeObjectURL(coverBlob) : remoteEvent.coverImageUrl,
               posterImageUrl: posterBlob ? createSafeObjectURL(posterBlob) : remoteEvent.posterImageUrl
             };
