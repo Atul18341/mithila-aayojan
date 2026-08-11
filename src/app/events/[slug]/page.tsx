@@ -55,7 +55,7 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
           const processedLocalData = {
             ...cachedLocalEvent,
             // Normalize registration cutoff date field for child components
-            registrationEndDate: cachedLocalEvent.registrationEndDate || cachedLocalEvent.registration_end_date || null,
+            registrationEndDate: cachedLocalEvent.registrationEndDate || null,
             coverImageUrl: cachedLocalEvent.coverBlob ? createSafeObjectURL(cachedLocalEvent.coverBlob) : cachedLocalEvent.coverImageUrl,
             posterImageUrl: cachedLocalEvent.posterBlob ? createSafeObjectURL(cachedLocalEvent.posterBlob) : cachedLocalEvent.posterImageUrl,
           };

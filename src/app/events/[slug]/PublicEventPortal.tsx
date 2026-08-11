@@ -16,6 +16,8 @@ interface PublicEventPageProps {
     venue_name?: string;   
     location: string;
     date: string;
+    registrationEndDate?: string;    // 👈 Added
+    registration_end_date?: string;
     start_time?: string; // 🚀 Added start_time reference type mapping
     end_time?: string;   // 🚀 Added end_time reference type mapping
     type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference';

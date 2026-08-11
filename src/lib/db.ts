@@ -50,6 +50,7 @@ export interface Events {
   date?: string;
   startTime?: string; // 🚀 ADDED: Event Temporal Window bounds
   endTime?: string;   // 🚀 ADDED: Event Temporal Window bounds
+  registrationEndDate?: string; 
   location?: string;
   tagline?: string;
   description?: string;
