@@ -15,15 +15,16 @@ export async function GET() {
   try {
     client = await pool.connect();
     
-    // 🚀 Select ALL operational parameters including multi-competition fields
+    // 🚀 Select ALL operational parameters including organizer relational fields & multi-competition parameters
     const query = `
       SELECT 
         e.id, e.name, e.type, e.protocol, e.status, e.date, e.slug, 
         e.location, e.tagline, e.description, e.venue_name, e.visibility, 
         e.start_time, e.end_time, e.food_config, e.pricing_config, 
-        e.cover_image, e.poster_image,
+        e.cover_image, e.poster_image, e.organizer_id,
         e.is_multi_competition, e.competitions, -- 🟢 Multi-Competition Fields
-        u.name AS organizer_name -- Dynamic lookup from users table
+        u.name AS organizer_name, -- Dynamic name lookup from users table
+        u.identifier AS organizer_email -- Dynamic email/identifier lookup from users table
       FROM events e
       LEFT JOIN users u ON e.organizer_id = u.id -- Relational validation bridge
       WHERE e.visibility->>'rsvp' = 'true'
@@ -45,6 +46,9 @@ export async function GET() {
           : event.competitions;
       }
 
+      // Resolve Organizer Display Name with progressive fallbacks
+      const resolvedOrganizerName = event.organizer_name || event.organizer_email || 'Let\'s Inspire Bihar Core Member';
+
       return {
         id: event.id,
         name: event.name,
@@ -61,7 +65,12 @@ export async function GET() {
         tagline: event.tagline,
         description: event.description,
         venue_name: event.venue_name,
-        organizedBy: event.organizer_name || 'Let\'s Inspire Bihar Core Member',
+        
+        // 🟢 ORGANIZER DETAILS FROM POSTGRESQL (users table JOIN)
+        organizerId: event.organizer_id ? Number(event.organizer_id) : null,
+        organizerName: event.organizer_name || null,
+        organizerEmail: event.organizer_email || null,
+        organizedBy: resolvedOrganizerName,
 
         // 🟢 Multi-Competition Payload Mapping
         isMultiCompetition: Boolean(event.is_multi_competition),

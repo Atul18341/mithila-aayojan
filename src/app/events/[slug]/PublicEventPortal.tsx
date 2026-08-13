@@ -189,7 +189,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             {/* BOTTOM LEFT ORGANIZER STAMP */}
             <div className={`p-6 border rounded-3xl flex items-center justify-between gap-4 ${isDark ? 'bg-[#070f2e]/40 border-white/5' : 'bg-white border-slate-200'}`}>
               <div>
-                <p className={`text-[9px] uppercase font-black tracking-[0.15em] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Organized & Programmed By</p>
+                <p className={`text-[9px] uppercase font-black tracking-[0.15em] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Organized & Hosted By</p>
                 <p className={`text-sm font-bold tracking-wide mt-1 ${isDark ? 'text-white' : 'text-slate-900'}`}>{organizerText}</p>
               </div>
               <div className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-xl text-[10px] font-bold ${isDark ? 'bg-white/5 border-white/10 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>

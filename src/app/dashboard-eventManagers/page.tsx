@@ -3,11 +3,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   LayoutDashboard, Users, Box, QrCode, Loader,
   Settings, Bell, Clock, Calendar, Sparkles, Plus,
   Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
-  Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket
+  Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket,
+  User, Crown, ChevronRight
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
@@ -33,6 +36,7 @@ const GUEST_COLOR_MAP = {
 };
 
 export default function ManagerDashboard() {
+  const router = useRouter();
   const [isDark, setIsDark] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -41,15 +45,27 @@ export default function ManagerDashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [isManagingVolunteers, setIsManagingVolunteers] = useState(false);
-  const [currentManagerEmail, setCurrentManagerEmail] = useState<string | null>(null);
+  
+  // 🟢 Manager Profile Session State
+  const [managerSession, setManagerSession] = useState<{
+    id?: number;
+    name: string;
+    email: string;
+    role: string;
+  }>({ name: 'Manager', email: '', role: 'manager' });
 
   useEffect(() => {
     async function resolveActiveSession() {
       try {
         if (!db.isOpen()) await db.open();
         const loggedInUser = await db.users.toCollection().first();
-        if (loggedInUser && loggedInUser.identifier) {
-          setCurrentManagerEmail(loggedInUser.identifier);
+        if (loggedInUser) {
+          setManagerSession({
+            id: loggedInUser.id,
+            name: loggedInUser.name || 'Core Manager',
+            email: loggedInUser.identifier || '',
+            role: loggedInUser.role || 'manager'
+          });
         }
       } catch (err) {
         console.error("❌ Failed to parse offline session identity indexes:", err);
@@ -57,6 +73,8 @@ export default function ManagerDashboard() {
     }
     resolveActiveSession();
   }, []);
+
+  const currentManagerEmail = managerSession.email || null;
 
   const sessionData = useLiveQuery(async () => {
     if (!currentManagerEmail) return [];
@@ -216,6 +234,35 @@ export default function ManagerDashboard() {
               <X size={20} />
             </button>
           </div>
+
+          {/* 🟢 PROFILE PROFILE BOX BANNER IN NAVBAR/SIDEBAR */}
+          <Link
+            href="/dashobard-eventManagers/profile"
+            onClick={() => setIsSidebarOpen(false)}
+            className={`p-3 rounded-2xl border transition-all flex items-center justify-between group ${
+              isDark 
+                ? 'bg-white/5 border-white/10 hover:border-blue-500/50 hover:bg-blue-500/10' 
+                : 'bg-slate-50 border-slate-200 hover:border-blue-400 hover:bg-blue-50/50'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-md shadow-blue-600/20">
+                {managerSession.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 text-left">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-bold truncate text-slate-900 dark:text-white group-hover:text-blue-500 transition-colors">
+                    {managerSession.name}
+                  </span>
+                  <Crown size={12} className="text-amber-500 shrink-0" />
+                </div>
+                <p className="text-[10px] text-slate-400 truncate">
+                  {managerSession.email || 'Manager Workspace'}
+                </p>
+              </div>
+            </div>
+            <ChevronRight size={14} className="text-slate-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+          </Link>
           
           {/* PRIMARY NAVIGATION */}
           <nav className="space-y-1">
@@ -224,12 +271,15 @@ export default function ManagerDashboard() {
               { icon: Users, label: 'Guest List' },
               { icon: UserCheck, label: 'Volunteers', active: isManagingVolunteers },
               { icon: QrCode, label: 'Check-in Desk' },
-              { icon: Settings, label: 'Event Edit/Settings', active: isEditing && !isCreatingNew }
+              { icon: Settings, label: 'Event Edit/Settings', active: isEditing && !isCreatingNew },
+              { icon: User, label: 'Manager Profile' } // 🟢 Direct Profile Route Button
             ].map((item) => (
               <button 
                 key={item.label} 
                 onClick={() => { 
-                  if (item.label === 'Volunteers') {
+                  if (item.label === 'Manager Profile') {
+                    router.push('/dashboard-eventManagers/profile');
+                  } else if (item.label === 'Volunteers') {
                     setIsManagingVolunteers(true);
                     setIsEditing(false);
                     setIsCreatingNew(false);
@@ -417,6 +467,15 @@ export default function ManagerDashboard() {
                     <Moon size={18} className="text-amber-500 fill-amber-500/20" />
                   </div>
                 </button>
+
+                {/* 🟢 TOP DESKTOP MANAGER PROFILE QUICK BUTTON */}
+                <Link
+                  href="/dashboard-eventManagers/profile"
+                  className={`w-10 h-10 rounded-xl border flex items-center justify-center font-black text-xs transition-all ${theme.inputBg} hover:border-blue-500 text-blue-500`}
+                  title="Open Manager Profile"
+                >
+                  {managerSession.name.charAt(0).toUpperCase()}
+                </Link>
 
                 <div className="relative">
                   <button 

@@ -7,7 +7,7 @@ import {
   Calendar, Info, Shield, Layout, MapPin, Plus, 
   Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
   Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
-  Utensils, IndianRupee, Trophy, Trash2
+  Utensils, IndianRupee, Trophy, Trash2, UserCheck
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
 
@@ -40,11 +40,14 @@ export interface EventData {
   registrationEndDate?: string;
   protocol: string;
   isMultiCompetition?: boolean;
-  competitions?: SubCompetition[]; // 🟢 Store array of sub-competitions
+  competitions?: SubCompetition[];
   tagline?: string;
   description?: string;
   venueName?: string;
   location?: string;
+  organizerId?: number; // 🟢 Primary Key of active organizer user
+  organizerName?: string; // 🟢 Display name of organizer
+  organizerEmail?: string; // 🟢 Communication identifier
   status?: 'draft' | 'published' | 'unpublished';
   slug?: string;
   hypeThreshold?: number;
@@ -158,7 +161,13 @@ export default function EventDetailEditor({
   const [coverPreview, setCoverPreview] = useState<string>('');
   const [posterPreview, setPosterPreview] = useState<string>('');
 
-  // 🟢 Form state for adding new competitions dynamically
+  // 🟢 Active User Session Details State
+  const [organizerInfo, setOrganizerInfo] = useState<{
+    id?: number;
+    name: string;
+    email: string;
+  }>({ name: 'System Administrator', email: '' });
+
   const [newComp, setNewComp] = useState({ title: '', code: '', category: '' });
 
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -180,7 +189,7 @@ export default function EventDetailEditor({
     endTime: '',
     registrationEndDate: '',
     isMultiCompetition: false,
-    competitions: [] as SubCompetition[], // 🟢 Dynamic Competitions List State
+    competitions: [] as SubCompetition[],
     hypeThreshold: 0,
     type: 'conference', 
     protocol: 'ticketed' as 'ticketed' | 'open-registration' | 'invite-only',
@@ -200,6 +209,27 @@ export default function EventDetailEditor({
       categoryFees: initialCategoryFees
     }
   });
+
+  // 🟢 FETCH ACTIVE LOGGED-IN ORGANIZER SESSION FROM INDEXEDDB
+  useEffect(() => {
+    async function loadActiveSession() {
+      try {
+        if (db && db.users) {
+          const sessionUser = await db.users.toCollection().first();
+          if (sessionUser) {
+            setOrganizerInfo({
+              id: sessionUser.id,
+              name: sessionUser.name || 'Core Member',
+              email: sessionUser.identifier || ''
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch active organizer session:", err);
+      }
+    }
+    loadActiveSession();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -221,7 +251,7 @@ export default function EventDetailEditor({
         endTime: event.endTime || '',
         registrationEndDate: event.registrationEndDate || '',
         isMultiCompetition: event.isMultiCompetition ?? false,
-        competitions: event.competitions || [], // 🟢 Load Competitions List
+        competitions: event.competitions || [],
         hypeThreshold: event.hypeThreshold || 0,
         type: event.type || 'conference',
         protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
@@ -241,6 +271,15 @@ export default function EventDetailEditor({
           categoryFees: { ...initialCategoryFees, ...(event.pricingConfig?.categoryFees || {}) }
         }
       });
+
+      if (event.organizerName || event.organizerEmail) {
+        setOrganizerInfo({
+          id: event.organizerId,
+          name: event.organizerName || 'Core Member',
+          email: event.organizerEmail || ''
+        });
+      }
+
       setCurrentStatus(event.status || 'draft');
       setIsCreateMode(false);
       setSaveStatus('idle');
@@ -283,7 +322,6 @@ export default function EventDetailEditor({
     setPosterPreview('');
   };
 
-  // 🟢 Competition Handlers
   const handleAddCompetition = () => {
     if (!newComp.title.trim()) return;
     const created: SubCompetition = {
@@ -394,7 +432,13 @@ export default function EventDetailEditor({
       endTime: details.endTime,
       registrationEndDate: details.registrationEndDate,
       isMultiCompetition: details.isMultiCompetition,
-      competitions: details.isMultiCompetition ? details.competitions : [], // 🟢 Persist list only if enabled
+      competitions: details.isMultiCompetition ? details.competitions : [],
+      
+      // 🟢 AUTO-ATTACH ORGANIZER METADATA FROM ACTIVE SESSION
+      organizerId: organizerInfo.id || event?.organizerId || null,
+      organizerName: organizerInfo.name,
+      organizerEmail: organizerInfo.email,
+
       type: details.type,
       protocol: details.protocol, 
       status: forcedStatus || currentStatus, 
@@ -502,6 +546,18 @@ export default function EventDetailEditor({
                 <span className={`text-2xl font-black text-${accentColor}-500`}>{details.hypeThreshold}+</span>
               </div>
               <input type="range" min="0" max="500" step="10" value={details.hypeThreshold} onChange={handleSliderChange} className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-${accentColor}-500 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+            </div>
+
+            {/* 🟢 READ-ONLY ORGANIZER IDENTIFIER BADGE */}
+            <div className={`p-4 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+              <div className="flex items-center gap-3">
+                <UserCheck size={18} className="text-blue-500" />
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Event Organizer (Authenticated)</span>
+                  <p className="text-xs font-bold leading-tight">{organizerInfo.name} {organizerInfo.email ? `(${organizerInfo.email})` : ''}</p>
+                </div>
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-blue-500/20 text-blue-400">Session Verified</span>
             </div>
 
             <div>
@@ -647,14 +703,12 @@ export default function EventDetailEditor({
                   </button>
                 </div>
 
-                {/* 🟢 COMPETITIONS LISTING & INLINE ADD FORM */}
                 {details.isMultiCompetition && (
                   <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
                     <div className="flex items-center justify-between">
                       <label className={styles.label}>Manage Sub-Competitions ({details.competitions.length})</label>
                     </div>
 
-                    {/* Quick Add Competition Input Row */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                       <input
                         type="text"
@@ -688,7 +742,6 @@ export default function EventDetailEditor({
                       </button>
                     </div>
 
-                    {/* Registered Competitions Cards */}
                     {details.competitions.length > 0 ? (
                       <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
                         {details.competitions.map((comp) => (

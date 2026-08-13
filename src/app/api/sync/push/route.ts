@@ -8,7 +8,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: true },
 });
 
-// Helper utility to convert base64 image strings to standard binary Buffers for R2 transfer
 function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: string } | null {
   if (!base64Data) return null;
   const matches = base64Data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -40,7 +39,6 @@ export async function POST(request: Request) {
       userId 
     } = body;
 
-    // Combine both registration array aliases
     const allRegistrations = [...eventRegistrations, ...registrations];
     const activeUserId = userId ? Number(userId) : null;
 
@@ -66,11 +64,43 @@ export async function POST(request: Request) {
         action,
         recordId,
         clientTimestamp || Date.now()
-      ]).catch(() => {}); // Non-fatal history log failover
+      ]).catch(() => {});
     };
 
     // ==========================================
-    // 1. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2
+    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST
+    // ==========================================
+    for (const usr of users) {
+      const rawIdentifier = usr.email || usr.identifier;
+      if (!rawIdentifier) continue;  
+      
+      const userIdentifier = rawIdentifier.trim().toLowerCase();
+      const userUpsertQuery = `
+        INSERT INTO users (identifier, name, password_hash, role, updated_at)
+        VALUES ($1, $2, $3, $4, timezone('utc', now()))
+        ON CONFLICT (identifier) 
+        DO UPDATE SET 
+          name = COALESCE(EXCLUDED.name, users.name), 
+          password_hash = COALESCE(EXCLUDED.password_hash, users.password_hash),
+          role = COALESCE(EXCLUDED.role, users.role), 
+          updated_at = timezone('utc', now())
+        RETURNING id;
+      `; 
+      
+      const fallbackHash = usr.passwordHash || usr.passkey || '$2b$10$UnassignedOfflinePlaceholderHashString';  
+      const result = await client.query(userUpsertQuery, [
+        userIdentifier, 
+        usr.name || null, 
+        fallbackHash, 
+        usr.role || 'volunteer'
+      ]); 
+
+      await logSyncAction('users', 'UPSERT', result.rows[0].id, usr.clientTimestamp || Date.now());
+      syncedUsersCount++;  
+    }
+
+    // ==========================================
+    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2
     // ==========================================
     const realEventIdMap: Record<string | number, number> = {};
     const bucketName = 'mithila-aayojan';
@@ -80,53 +110,81 @@ export async function POST(request: Request) {
         ? ev.name.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '')
         : `event-${Date.now()}`);
 
-      // 🟢 MERGED: Includes is_multi_competition & competitions in column list & DO UPDATE SET clause
+      let verifiedOrganizerId: number | null = null;
+
+      if (ev.organizerEmail) {
+        const userLookup = await client.query(
+          'SELECT id FROM users WHERE LOWER(identifier) = LOWER($1)',
+          [ev.organizerEmail.trim()]
+        );
+        if (userLookup.rows.length > 0) {
+          verifiedOrganizerId = userLookup.rows[0].id;
+        }
+      }
+
+      if (!verifiedOrganizerId && ev.organizerId) {
+        const idCheck = await client.query('SELECT id FROM users WHERE id = $1', [Number(ev.organizerId)]);
+        if (idCheck.rows.length > 0) {
+          verifiedOrganizerId = Number(ev.organizerId);
+        }
+      }
+
+      if (!verifiedOrganizerId && activeUserId) {
+        const activeCheck = await client.query('SELECT id FROM users WHERE id = $1', [activeUserId]);
+        if (activeCheck.rows.length > 0) {
+          verifiedOrganizerId = activeUserId;
+        }
+      }
+
       const eventUpsertQuery = `
         INSERT INTO events (
           name, type, protocol, status, date, start_time, end_time, registration_end_date,
           location, tagline, description, venue_name, visibility, 
-          food_config, pricing_config, is_multi_competition, competitions, created_at, updated_at, slug
+          food_config, pricing_config, is_multi_competition, competitions, organizer_id,
+          created_at, updated_at, slug
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
           $9, $10, $11, $12, $13::jsonb, 
-          $14::jsonb, $15::jsonb, $16, $17::jsonb, timezone('utc', TO_TIMESTAMP($18 / 1000.0)), timezone('utc', now()), $19
+          $14::jsonb, $15::jsonb, $16, $17::jsonb, $18,
+          timezone('utc', TO_TIMESTAMP($19 / 1000.0)), timezone('utc', now()), $20
         )
         ON CONFLICT (slug) 
         DO UPDATE SET 
-          name = EXCLUDED.name, 
-          type = EXCLUDED.type,
-          protocol = EXCLUDED.protocol,
-          status = EXCLUDED.status,
-          date = EXCLUDED.date,
-          start_time = EXCLUDED.start_time,
-          end_time = EXCLUDED.end_time,
-          registration_end_date = EXCLUDED.registration_end_date,
-          location = EXCLUDED.location,
+          name = COALESCE(EXCLUDED.name, events.name), 
+          type = COALESCE(EXCLUDED.type, events.type),
+          protocol = COALESCE(EXCLUDED.protocol, events.protocol),
+          status = COALESCE(EXCLUDED.status, events.status),
+          date = COALESCE(EXCLUDED.date, events.date),
+          start_time = COALESCE(EXCLUDED.start_time, events.start_time),
+          end_time = COALESCE(EXCLUDED.end_time, events.end_time),
+          registration_end_date = COALESCE(EXCLUDED.registration_end_date, events.registration_end_date),
+          location = COALESCE(EXCLUDED.location, events.location),
           tagline = COALESCE(EXCLUDED.tagline, events.tagline),       
           description = COALESCE(EXCLUDED.description, events.description), 
-          venue_name = EXCLUDED.venue_name,
-          visibility = EXCLUDED.visibility,
-          food_config = EXCLUDED.food_config,
-          pricing_config = EXCLUDED.pricing_config,
-          is_multi_competition = EXCLUDED.is_multi_competition,
-          competitions = EXCLUDED.competitions,
+          venue_name = COALESCE(EXCLUDED.venue_name, events.venue_name),
+          visibility = COALESCE(EXCLUDED.visibility, events.visibility),
+          food_config = COALESCE(EXCLUDED.food_config, events.food_config),
+          pricing_config = COALESCE(EXCLUDED.pricing_config, events.pricing_config),
+          is_multi_competition = COALESCE(EXCLUDED.is_multi_competition, events.is_multi_competition),
+          competitions = COALESCE(EXCLUDED.competitions, events.competitions),
+          organizer_id = COALESCE(EXCLUDED.organizer_id, events.organizer_id),
           updated_at = timezone('utc', now())
         RETURNING id;
       `; 
 
-      const visibilityData = ev.visibility ? JSON.stringify(ev.visibility) : '{"map": true, "rsvp": true, "gallery": true, "schedule": true}';
-      const foodConfigData = ev.foodConfig ? JSON.stringify(ev.foodConfig) : '{"enabled": false, "strategy": "complimentary", "vendorDetails": "", "availableForAll": "yes", "allowedCategories": []}';
-      const pricingConfigData = ev.pricingConfig ? JSON.stringify(ev.pricingConfig) : '{"isRequired": false, "baseFee": 0, "gstApplicable": false, "applicableForAll": "yes", "categoryFees": {}}';
-      const isMultiCompetition = Boolean(ev.isMultiCompetition);
-      const competitionsData = Array.isArray(ev.competitions) ? JSON.stringify(ev.competitions) : '[]';
+      const visibilityData = ev.visibility ? JSON.stringify(ev.visibility) : null;
+      const foodConfigData = ev.foodConfig ? JSON.stringify(ev.foodConfig) : null;
+      const pricingConfigData = ev.pricingConfig ? JSON.stringify(ev.pricingConfig) : null;
+      const isMultiCompetition = ev.isMultiCompetition !== undefined ? Boolean(ev.isMultiCompetition) : null;
+      const competitionsData = Array.isArray(ev.competitions) ? JSON.stringify(ev.competitions) : null;
 
       const result = await client.query(eventUpsertQuery, [
-        ev.name, 
-        ev.type, 
-        ev.protocol, 
-        ev.status, 
-        ev.date, 
+        ev.name || null, 
+        ev.type || null, 
+        ev.protocol || null, 
+        ev.status || 'draft', 
+        ev.date || null, 
         ev.startTime || null, 
         ev.endTime || null, 
         ev.registrationEndDate || ev.registration_end_date || null,
@@ -137,8 +195,9 @@ export async function POST(request: Request) {
         visibilityData,
         foodConfigData, 
         pricingConfigData, 
-        isMultiCompetition, // 🟢 $16: Boolean multi-competition toggle
-        competitionsData,   // 🟢 $17: JSONB string for sub-competitions array
+        isMultiCompetition,
+        competitionsData,
+        verifiedOrganizerId,
         ev.createdAt || Date.now(), 
         generatedSlug
       ]); 
@@ -201,35 +260,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 2. SYNCHRONIZE USERS & ACCESS RIGHTS
-    // ==========================================
-    for (const usr of users) {
-      const rawIdentifier = usr.email || usr.identifier;
-      if (!rawIdentifier) continue;  
-      
-      const userIdentifier = rawIdentifier.trim().toLowerCase();
-      const userUpsertQuery = `
-        INSERT INTO users (identifier, name, password_hash, role, updated_at)
-        VALUES ($1, $2, $3, $4, timezone('utc', now()))
-        ON CONFLICT (identifier) 
-        DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, updated_at = timezone('utc', now())
-        RETURNING id;
-      `; 
-      
-      const fallbackHash = usr.passwordHash || usr.passkey || '$2b$10$UnassignedOfflinePlaceholderHashString';  
-      const result = await client.query(userUpsertQuery, [
-        userIdentifier, 
-        usr.name || 'Unnamed Offline User', 
-        fallbackHash, 
-        usr.role || 'volunteer'
-      ]); 
-
-      await logSyncAction('users', 'UPSERT', result.rows[0].id, usr.clientTimestamp || Date.now());
-      syncedUsersCount++;  
-    }
-
-    // ==========================================
-    // 3. SYNCHRONIZE MANAGER / VOLUNTEER ASSIGNMENT LINKS & DESK SCOPES
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS
     // ==========================================
     for (const link of managerEvents) {
       let rawTargetEventId = link.eventId;
@@ -250,10 +281,7 @@ export async function POST(request: Request) {
         [managerIdentifier]
       );
 
-      if (userCheck.rows.length === 0) {
-        console.warn(`⚠️ Skipping assignment link: User '${managerIdentifier}' not found in PostgreSQL.`);
-        continue;
-      }
+      if (userCheck.rows.length === 0) continue;
 
       const verifiedUserIdentifier = userCheck.rows[0].identifier;
 
@@ -262,10 +290,7 @@ export async function POST(request: Request) {
         [Number(targetEventId)]
       );
 
-      if (eventCheck.rows.length === 0) {
-        console.warn(`⚠️ Skipping assignment: Event ID ${targetEventId} not found in PostgreSQL.`);
-        continue;
-      }
+      if (eventCheck.rows.length === 0) continue;
 
       const assignedDesk = link.assignedDesk || link.assigned_desk || 'CHECK_IN';
 
@@ -274,7 +299,7 @@ export async function POST(request: Request) {
         VALUES ($1, $2, $3, timezone('utc', now()))
         ON CONFLICT (manager_identifier, event_id) 
         DO UPDATE SET 
-          assigned_desk = EXCLUDED.assigned_desk,
+          assigned_desk = COALESCE(EXCLUDED.assigned_desk, manager_events.assigned_desk),
           manager_identifier = EXCLUDED.manager_identifier
         RETURNING manager_identifier, event_id;
       `; 
@@ -306,11 +331,9 @@ export async function POST(request: Request) {
 
       const guestType = gst.category || gst.type || 'general-public';
 
-      // Resolve Check-In State & Timestamps
       const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? 1 : 0;
       const rawCheckInTime = gst.checkInTime ? BigInt(gst.checkInTime) : null;
 
-      // Resolve Food Claim State & Timestamps
       const hasFoodAccess = (gst.hasFoodAccess === true || gst.isFoodAccess === true || gst.foodIncluded === true) ? 1 : 0;
       const hasFoodClaimed = (gst.hasFoodClaimed === true || gst.isFoodClaimed === true || gst.foodClaimed === true) ? 1 : 0;
       const rawFoodClaimedTime = gst.foodClaimedTime || gst.foodClaimedAt ? BigInt(gst.foodClaimedTime || gst.foodClaimedAt) : null;
@@ -323,14 +346,14 @@ export async function POST(request: Request) {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('utc', now()))
         ON CONFLICT (qr_token) 
         DO UPDATE SET 
-          name = EXCLUDED.name, 
-          type = EXCLUDED.type, 
+          name = COALESCE(EXCLUDED.name, guests.name), 
+          type = COALESCE(EXCLUDED.type, guests.type), 
           email = COALESCE(EXCLUDED.email, guests.email), 
           phone = COALESCE(EXCLUDED.phone, guests.phone), 
-          is_check_in = EXCLUDED.is_check_in, 
-          amount_paid = EXCLUDED.amount_paid, 
-          has_food_access = EXCLUDED.has_food_access, 
-          has_food_claimed = EXCLUDED.has_food_claimed, 
+          is_check_in = GREATEST(EXCLUDED.is_check_in, guests.is_check_in), 
+          amount_paid = COALESCE(EXCLUDED.amount_paid, guests.amount_paid), 
+          has_food_access = COALESCE(EXCLUDED.has_food_access, guests.has_food_access), 
+          has_food_claimed = GREATEST(EXCLUDED.has_food_claimed, guests.has_food_claimed), 
           check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), 
           food_claimed_time = COALESCE(guests.food_claimed_time, EXCLUDED.food_claimed_time), 
           server_updated_at = timezone('utc', now())
@@ -339,7 +362,7 @@ export async function POST(request: Request) {
 
       const result = await client.query(guestUpsertQuery, [
         Number(targetEventId), 
-        gst.name, 
+        gst.name || null, 
         guestType, 
         gst.qrToken, 
         gst.email || null, 
@@ -375,7 +398,6 @@ export async function POST(request: Request) {
       const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime || reg.isCheckIn === 1);
       const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.isFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
 
-      // 🟢 MERGED: Include competition_id and competition_title in the registrations upsert
       const regUpsertQuery = `
         INSERT INTO event_registrations (
           event_id, registration_id, attendee_name, email, phone, ticket_type, 
@@ -389,30 +411,30 @@ export async function POST(request: Request) {
         )
         ON CONFLICT (qr_token)
         DO UPDATE SET
-          attendee_name = EXCLUDED.attendee_name,
+          attendee_name = COALESCE(EXCLUDED.attendee_name, event_registrations.attendee_name),
           email = COALESCE(EXCLUDED.email, event_registrations.email),
           phone = COALESCE(EXCLUDED.phone, event_registrations.phone),
-          ticket_type = EXCLUDED.ticket_type,
+          ticket_type = COALESCE(EXCLUDED.ticket_type, event_registrations.ticket_type),
           competition_id = COALESCE(EXCLUDED.competition_id, event_registrations.competition_id),
           competition_title = COALESCE(EXCLUDED.competition_title, event_registrations.competition_title),
-          payment_status = EXCLUDED.payment_status,
-          amount_paid = EXCLUDED.amount_paid,
-          is_checked_in = EXCLUDED.is_checked_in,
+          payment_status = COALESCE(EXCLUDED.payment_status, event_registrations.payment_status),
+          amount_paid = COALESCE(EXCLUDED.amount_paid, event_registrations.amount_paid),
+          is_checked_in = GREATEST(EXCLUDED.is_checked_in, event_registrations.is_checked_in),
           check_in_time = COALESCE(event_registrations.check_in_time, EXCLUDED.check_in_time),
-          food_included = EXCLUDED.food_included,
-          food_claimed = EXCLUDED.food_claimed,
+          food_included = COALESCE(EXCLUDED.food_included, event_registrations.food_included),
+          food_claimed = GREATEST(EXCLUDED.food_claimed, event_registrations.food_claimed),
           food_claimed_at = COALESCE(event_registrations.food_claimed_at, EXCLUDED.food_claimed_at);
       `;
 
       await client.query(regUpsertQuery, [
         Number(targetEventId),
         reg.registrationId || `REG-${Date.now()}`,
-        reg.attendeeName || reg.name || 'Attendee',
+        reg.attendeeName || reg.name || null,
         reg.email || null,
         reg.phone || null,
         reg.ticketType || reg.category || 'GENERAL',
-        reg.competitionId || null,     // 🟢 $7: Sub-competition ID
-        reg.competitionTitle || null,  // 🟢 $8: Sub-competition Title
+        reg.competitionId || null,
+        reg.competitionTitle || null,
         qrToken,
         reg.paymentStatus || 'PAID',
         reg.amountPaid || 0.00,
@@ -423,18 +445,17 @@ export async function POST(request: Request) {
         reg.foodClaimedAt ? new Date(reg.foodClaimedAt) : (reg.foodClaimedTime ? new Date(reg.foodClaimedTime) : null),
         reg.registeredAt || reg.createdAt || Date.now()
       ]).catch(async () => {
-        // Fallback for legacy 'registrations' table name if 'event_registrations' is missing
         const fallbackQuery = `
           INSERT INTO registrations (event_id, ticket_id, attendee_name, email, competition_id, competition_title, has_checked_in, food_included, food_claimed)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           ON CONFLICT (ticket_id) DO UPDATE SET 
-            has_checked_in = EXCLUDED.has_checked_in, 
-            food_claimed = EXCLUDED.food_claimed,
-            competition_id = EXCLUDED.competition_id,
-            competition_title = EXCLUDED.competition_title;
+            has_checked_in = GREATEST(EXCLUDED.has_checked_in, registrations.has_checked_in), 
+            food_claimed = GREATEST(EXCLUDED.food_claimed, registrations.food_claimed),
+            competition_id = COALESCE(EXCLUDED.competition_id, registrations.competition_id),
+            competition_title = COALESCE(EXCLUDED.competition_title, registrations.competition_title);
         `;
         await client.query(fallbackQuery, [
-          Number(targetEventId), qrToken, reg.attendeeName || reg.name, reg.email || null,
+          Number(targetEventId), qrToken, reg.attendeeName || reg.name || null, reg.email || null,
           reg.competitionId || null, reg.competitionTitle || null,
           isCheckedIn, Boolean(reg.hasFoodAccess || reg.foodIncluded), isFoodClaimed
         ]).catch(() => {});

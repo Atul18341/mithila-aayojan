@@ -65,6 +65,12 @@ export interface Events {
   tagline?: string;
   description?: string;
   venueName?: string;
+
+  // 🟢 ORGANIZER USER RELATION (Session Metadata)
+  organizerId?: number | null;
+  organizerName?: string;
+  organizerEmail?: string;
+
   coverBlob: Blob | null; 
   posterBlob: Blob | null;
   coverImageUrl?: string;
@@ -99,26 +105,26 @@ export interface Guest {
   // Primary Keys & Linking
   id?: number;                          // Dexie local auto-increment primary key
   guestId: string;                      // Public unique key (e.g. 'GUEST-1753456800000')
-  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 3, 4]
-  eventId: string | number;             // Associated Event ID[cite: 3, 4]
+  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 9]
+  eventId: string | number;             // Associated Event ID[cite: 9]
   
   // Attendee Core Profile
-  name: string;                         //[cite: 3, 4]
-  email?: string;                       // Optional contact details[cite: 3, 4]
-  phone?: string;                       // Optional contact details[cite: 3, 4]
-  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 3, 4]
+  name: string;                         //[cite: 9]
+  email?: string;                       // Optional contact details[cite: 9]
+  phone?: string;                       // Optional contact details[cite: 9]
+  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 9]
   
   // Gate Security & QR Verification
   qrToken: string;                      // Encrypted or unique QR payload string
   // Check-In Operations
-  isCheckedIn: boolean;                 // Entrance status flag[cite: 3, 4]
+  isCheckedIn: boolean;                 // Entrance status flag[cite: 9]
   checkInTime?: number;                 // Numeric timestamp (Date.now())
   // Catering & Lounge Logistics
   hasFoodAccess: boolean;               // Entitlement flag for meals
   hasFoodClaimed: boolean;              // Claimed status flag
   foodClaimedTime?: number;             // Timestamp when food was claimed
   // Sync & Financial Metadata
-  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 3, 4]
+  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 9]
   syncStatus: string;                   // Sync status for offline-first operation
   registeredAt: number;                 // Registration timestamp (Date.now())
 }
@@ -176,17 +182,17 @@ export class AayojanDB extends Dexie {
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
-  eventRegistrations!: Table<EventRegistration>; // 🚀 REGISTERED NEW ENTRY TABLE EXPLICITLY
+  eventRegistrations!: Table<EventRegistration>; // 🚀 REGISTERED NEW ENTRY TABLE EXPLICITLY[cite: 9]
 
   constructor() {
     super('MithilaAayojanDB');
-    // Bumped database version state layer to clean internal store layouts
-    this.version(6).stores({
-      events: '++id, slug, type, status, isMultiCompetition, registrationEndDate, createdAt, syncStatus',
+    // Bumped database version state layer to clean internal store layouts[cite: 9]
+    this.version(7).stores({
+      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, createdAt, syncStatus',
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus',
       users: '++id, email, identifier, role, activeEventId, syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',
-      eventRegistrations: '++id, eventId, email, category, competitionId, status, syncStatus' // 🚀 Added competition lookup
+      eventRegistrations: '++id, eventId, email, category, competitionId, status, syncStatus'
     });
   }
 }

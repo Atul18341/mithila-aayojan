@@ -30,7 +30,7 @@ export default function SyncStatusBar() {
     const pendingGuests = await db.guests.where('syncStatus').equals('pending').toArray();
     const pendingUsers = await db.users.where('syncStatus').equals('pending').toArray();
     const pendingLinks = await db.managerEvents.where('syncStatus').equals('pending').toArray();
-    const pendingRegistrations = await db.eventRegistrations.where('syncStatus').equals('pending').toArray(); // 🟢 Track Pending Registrations
+    const pendingRegistrations = await db.eventRegistrations.where('syncStatus').equals('pending').toArray();
 
     const activeSession = await db.users.toCollection().first();
     
@@ -39,7 +39,7 @@ export default function SyncStatusBar() {
       guests: pendingGuests,
       users: pendingUsers,
       managerEvents: pendingLinks,
-      registrations: pendingRegistrations, // 🟢 Include pending registrations
+      registrations: pendingRegistrations,
       managerEmail: activeSession?.identifier || 'unknown_offline_worker',
       userId: activeSession?.id || null,
       totalCount: pendingEvents.length + pendingGuests.length + pendingUsers.length + pendingLinks.length + pendingRegistrations.length
@@ -56,31 +56,34 @@ export default function SyncStatusBar() {
   };
 
   const handleGlobalSync = async () => {
-    // 🚀 Enforce mutual exclusion lock structures immediately
+    // Enforce mutual exclusion lock structures immediately
     if (isSyncing || isSyncMutexLocked || telemetryData.totalCount === 0) return;
     
     setIsSyncing(true);
-    isSyncMutexLocked = true; // Engage lock
+    isSyncMutexLocked = true;
     setSyncError(null);
     setLastSyncCounts(null);
 
-    // 🟢 Initialize AbortController for 10-second request timeout limit
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
-      // 🚀 HARDENING: Strictly isolate and process ONLY pending items
       const pendingEventsOnly = telemetryData.events.filter(ev => ev.syncStatus === 'pending');
       const sanitizedEvents = [];
 
-      // 🟢 Fast-Path: Only perform heavy base64 Blob conversion IF there are actual pending events!
       if (pendingEventsOnly.length > 0) {
         for (const ev of pendingEventsOnly) {
           const eventPayload: any = {
             ...ev,
-            // 🟢 Multi-Competition Payload Mapping
-            isMultiCompetition: Boolean(ev.isMultiCompetition),
-            competitions: Array.isArray(ev.competitions) ? ev.competitions : [],
+            // Preserve Multi-Competition payload IF defined, avoiding forcing empty defaults
+            ...(ev.isMultiCompetition !== undefined ? { isMultiCompetition: Boolean(ev.isMultiCompetition) } : {}),
+            ...(Array.isArray(ev.competitions) ? { competitions: ev.competitions } : {}),
+
+            // Organizer Metadata: Only send IF value exists locally, avoiding forcing null
+            ...(ev.organizerId ? { organizerId: ev.organizerId } : (telemetryData.userId ? { organizerId: telemetryData.userId } : {})),
+            ...(ev.organizerName ? { organizerName: ev.organizerName } : {}),
+            ...(ev.organizerEmail ? { organizerEmail: ev.organizerEmail } : (telemetryData.managerEmail ? { organizerEmail: telemetryData.managerEmail } : {})),
+
             clientTimestamp: ev.createdAt || Date.now(),
             coverBlobBase64: false,
             posterBlobBase64: false
@@ -104,37 +107,39 @@ export default function SyncStatusBar() {
 
           sanitizedEvents.push(eventPayload);
         }
-      } else {
-        console.log("⚡ Fast-Path: No pending event media to encode. Syncing guest passes directly.");
       }
 
-      // 🟢 Explicitly map all check-in and food claim fields for volunteer/manager dashboard sync
+      // Explicitly map all check-in and food claim fields without wiping existing text fields
       const sanitizedGuests = telemetryData.guests
         .filter(gst => gst.syncStatus === 'pending')
         .map(gst => ({
           ...gst,
-          // Explicit Check-In fields
-          checkInTime: gst.checkInTime || null,
+          // Preserve text fields conditionally
+          name: gst.name || undefined,
+          email: gst.email || undefined,
+          phone: gst.phone || undefined,
+
+          // Check-In fields
+          checkInTime: gst.checkInTime || undefined,
           isCheckedIn: Boolean(gst.isCheckedIn || gst.checkInTime),
           isCheckIn: (gst.checkInTime || gst.isCheckedIn) ? 1 : 0,
 
-          // Explicit Food Access & Voucher Claim fields
+          // Food Access & Voucher Claim fields
           hasFoodAccess: Boolean(gst.hasFoodAccess || (gst as any).isFoodAccess || (gst as any).foodIncluded),
           hasFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
           isFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
-          foodClaimedTime: (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || null,
+          foodClaimedTime: (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || undefined,
 
-          // Timestamp for sync sequence
           clientTimestamp: gst.checkInTime || (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || Date.now()
         }));
 
-      // 🟢 Sanitize and map pending eventRegistrations including sub-competition metadata
+      // Sanitize and map pending eventRegistrations without forcing null on sub-competitions
       const sanitizedRegistrations = telemetryData.registrations
         .filter(reg => reg.syncStatus === 'pending')
         .map(reg => ({
           ...reg,
-          competitionId: reg.competitionId || null,     // 🟢 Sub-Competition ID
-          competitionTitle: reg.competitionTitle || null, // 🟢 Sub-Competition Title
+          ...(reg.competitionId ? { competitionId: reg.competitionId } : {}),
+          ...(reg.competitionTitle ? { competitionTitle: reg.competitionTitle } : {}),
           clientTimestamp: reg.registrationTimestamp || Date.now()
         }));
 
@@ -145,7 +150,6 @@ export default function SyncStatusBar() {
           clientTimestamp: Date.now()
         }));
 
-      // 🟢 Attach AbortSignal to prevent network requests from hanging forever
       const response = await fetch('/api/sync/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,7 +157,7 @@ export default function SyncStatusBar() {
         body: JSON.stringify({
           events: sanitizedEvents,
           guests: sanitizedGuests,
-          registrations: sanitizedRegistrations, // 🟢 Include pending registrations payload
+          registrations: sanitizedRegistrations,
           users: telemetryData.users.filter(usr => usr.syncStatus === 'pending'),
           managerEvents: sanitizedLinks, 
           managerEmail: telemetryData.managerEmail,
@@ -177,7 +181,6 @@ export default function SyncStatusBar() {
       const result = await response.json();
       
       if (result.success && result.counts) {
-        // UNIFIED MULTI-TABLE TRANSACTION
         await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents, db.eventRegistrations], async () => {
           for (const ev of pendingEventsOnly) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
@@ -186,7 +189,7 @@ export default function SyncStatusBar() {
             if (gst.id) await db.guests.update(gst.id, { syncStatus: 'synced' });
           }
           for (const reg of telemetryData.registrations) {
-            if (reg.id) await db.eventRegistrations.update(reg.id, { syncStatus: 'synced' }); // 🟢 Mark Registrations as Synced
+            if (reg.id) await db.eventRegistrations.update(reg.id, { syncStatus: 'synced' });
           }
           for (const usr of telemetryData.users) {
             if (usr.id) await db.users.update(usr.id, { syncStatus: 'synced' });
@@ -207,7 +210,6 @@ export default function SyncStatusBar() {
         setSyncError(err.message || "Network link issue. Tap to retry.");
       }
     } finally {
-      // 🟢 Clear timer and release locks safely in all execution paths
       clearTimeout(timeoutId);
       setIsSyncing(false);
       isSyncMutexLocked = false; 
