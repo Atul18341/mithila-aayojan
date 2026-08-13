@@ -80,17 +80,17 @@ export async function POST(request: Request) {
         ? ev.name.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '')
         : `event-${Date.now()}`);
 
-      // 🟢 MERGED: Includes registration_end_date in column list & DO UPDATE SET clause
+      // 🟢 MERGED: Includes is_multi_competition & competitions in column list & DO UPDATE SET clause
       const eventUpsertQuery = `
         INSERT INTO events (
           name, type, protocol, status, date, start_time, end_time, registration_end_date,
           location, tagline, description, venue_name, visibility, 
-          food_config, pricing_config, created_at, updated_at, slug
+          food_config, pricing_config, is_multi_competition, competitions, created_at, updated_at, slug
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
           $9, $10, $11, $12, $13::jsonb, 
-          $14::jsonb, $15::jsonb, timezone('utc', TO_TIMESTAMP($16 / 1000.0)), timezone('utc', now()), $17
+          $14::jsonb, $15::jsonb, $16, $17::jsonb, timezone('utc', TO_TIMESTAMP($18 / 1000.0)), timezone('utc', now()), $19
         )
         ON CONFLICT (slug) 
         DO UPDATE SET 
@@ -109,6 +109,8 @@ export async function POST(request: Request) {
           visibility = EXCLUDED.visibility,
           food_config = EXCLUDED.food_config,
           pricing_config = EXCLUDED.pricing_config,
+          is_multi_competition = EXCLUDED.is_multi_competition,
+          competitions = EXCLUDED.competitions,
           updated_at = timezone('utc', now())
         RETURNING id;
       `; 
@@ -116,7 +118,9 @@ export async function POST(request: Request) {
       const visibilityData = ev.visibility ? JSON.stringify(ev.visibility) : '{"map": true, "rsvp": true, "gallery": true, "schedule": true}';
       const foodConfigData = ev.foodConfig ? JSON.stringify(ev.foodConfig) : '{"enabled": false, "strategy": "complimentary", "vendorDetails": "", "availableForAll": "yes", "allowedCategories": []}';
       const pricingConfigData = ev.pricingConfig ? JSON.stringify(ev.pricingConfig) : '{"isRequired": false, "baseFee": 0, "gstApplicable": false, "applicableForAll": "yes", "categoryFees": {}}';
-      
+      const isMultiCompetition = Boolean(ev.isMultiCompetition);
+      const competitionsData = Array.isArray(ev.competitions) ? JSON.stringify(ev.competitions) : '[]';
+
       const result = await client.query(eventUpsertQuery, [
         ev.name, 
         ev.type, 
@@ -125,7 +129,7 @@ export async function POST(request: Request) {
         ev.date, 
         ev.startTime || null, 
         ev.endTime || null, 
-        ev.registrationEndDate || ev.registration_end_date || null, // 🟢 $8: Passed registration deadline cutoff
+        ev.registrationEndDate || ev.registration_end_date || null,
         ev.location || null, 
         ev.tagline || null, 
         ev.description || null, 
@@ -133,6 +137,8 @@ export async function POST(request: Request) {
         visibilityData,
         foodConfigData, 
         pricingConfigData, 
+        isMultiCompetition, // 🟢 $16: Boolean multi-competition toggle
+        competitionsData,   // 🟢 $17: JSONB string for sub-competitions array
         ev.createdAt || Date.now(), 
         generatedSlug
       ]); 
@@ -369,15 +375,17 @@ export async function POST(request: Request) {
       const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime || reg.isCheckIn === 1);
       const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.isFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
 
+      // 🟢 MERGED: Include competition_id and competition_title in the registrations upsert
       const regUpsertQuery = `
         INSERT INTO event_registrations (
           event_id, registration_id, attendee_name, email, phone, ticket_type, 
+          competition_id, competition_title,
           qr_token, payment_status, amount_paid, is_checked_in, check_in_time, 
           food_included, food_claimed, food_claimed_at, created_at
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-          $11, $12, $13, $14, timezone('utc', TO_TIMESTAMP($15 / 1000.0))
+          $11, $12, $13, $14, $15, $16, timezone('utc', TO_TIMESTAMP($17 / 1000.0))
         )
         ON CONFLICT (qr_token)
         DO UPDATE SET
@@ -385,6 +393,8 @@ export async function POST(request: Request) {
           email = COALESCE(EXCLUDED.email, event_registrations.email),
           phone = COALESCE(EXCLUDED.phone, event_registrations.phone),
           ticket_type = EXCLUDED.ticket_type,
+          competition_id = COALESCE(EXCLUDED.competition_id, event_registrations.competition_id),
+          competition_title = COALESCE(EXCLUDED.competition_title, event_registrations.competition_title),
           payment_status = EXCLUDED.payment_status,
           amount_paid = EXCLUDED.amount_paid,
           is_checked_in = EXCLUDED.is_checked_in,
@@ -401,6 +411,8 @@ export async function POST(request: Request) {
         reg.email || null,
         reg.phone || null,
         reg.ticketType || reg.category || 'GENERAL',
+        reg.competitionId || null,     // 🟢 $7: Sub-competition ID
+        reg.competitionTitle || null,  // 🟢 $8: Sub-competition Title
         qrToken,
         reg.paymentStatus || 'PAID',
         reg.amountPaid || 0.00,
@@ -413,12 +425,17 @@ export async function POST(request: Request) {
       ]).catch(async () => {
         // Fallback for legacy 'registrations' table name if 'event_registrations' is missing
         const fallbackQuery = `
-          INSERT INTO registrations (event_id, ticket_id, attendee_name, email, has_checked_in, food_included, food_claimed)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-          ON CONFLICT (ticket_id) DO UPDATE SET has_checked_in = EXCLUDED.has_checked_in, food_claimed = EXCLUDED.food_claimed;
+          INSERT INTO registrations (event_id, ticket_id, attendee_name, email, competition_id, competition_title, has_checked_in, food_included, food_claimed)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (ticket_id) DO UPDATE SET 
+            has_checked_in = EXCLUDED.has_checked_in, 
+            food_claimed = EXCLUDED.food_claimed,
+            competition_id = EXCLUDED.competition_id,
+            competition_title = EXCLUDED.competition_title;
         `;
         await client.query(fallbackQuery, [
           Number(targetEventId), qrToken, reg.attendeeName || reg.name, reg.email || null,
+          reg.competitionId || null, reg.competitionTitle || null,
           isCheckedIn, Boolean(reg.hasFoodAccess || reg.foodIncluded), isFoodClaimed
         ]).catch(() => {});
       });

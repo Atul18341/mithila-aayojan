@@ -1,4 +1,3 @@
-// src/components/SyncStatusBar.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -31,6 +30,7 @@ export default function SyncStatusBar() {
     const pendingGuests = await db.guests.where('syncStatus').equals('pending').toArray();
     const pendingUsers = await db.users.where('syncStatus').equals('pending').toArray();
     const pendingLinks = await db.managerEvents.where('syncStatus').equals('pending').toArray();
+    const pendingRegistrations = await db.eventRegistrations.where('syncStatus').equals('pending').toArray(); // 🟢 Track Pending Registrations
 
     const activeSession = await db.users.toCollection().first();
     
@@ -39,15 +39,17 @@ export default function SyncStatusBar() {
       guests: pendingGuests,
       users: pendingUsers,
       managerEvents: pendingLinks,
+      registrations: pendingRegistrations, // 🟢 Include pending registrations
       managerEmail: activeSession?.identifier || 'unknown_offline_worker',
       userId: activeSession?.id || null,
-      totalCount: pendingEvents.length + pendingGuests.length + pendingUsers.length + pendingLinks.length
+      totalCount: pendingEvents.length + pendingGuests.length + pendingUsers.length + pendingLinks.length + pendingRegistrations.length
     };
   }) || { 
     events: [], 
     guests: [], 
     users: [], 
     managerEvents: [], 
+    registrations: [], 
     managerEmail: 'unknown_offline_worker', 
     userId: null, 
     totalCount: 0 
@@ -76,6 +78,9 @@ export default function SyncStatusBar() {
         for (const ev of pendingEventsOnly) {
           const eventPayload: any = {
             ...ev,
+            // 🟢 Multi-Competition Payload Mapping
+            isMultiCompetition: Boolean(ev.isMultiCompetition),
+            competitions: Array.isArray(ev.competitions) ? ev.competitions : [],
             clientTimestamp: ev.createdAt || Date.now(),
             coverBlobBase64: false,
             posterBlobBase64: false
@@ -123,6 +128,16 @@ export default function SyncStatusBar() {
           clientTimestamp: gst.checkInTime || (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || Date.now()
         }));
 
+      // 🟢 Sanitize and map pending eventRegistrations including sub-competition metadata
+      const sanitizedRegistrations = telemetryData.registrations
+        .filter(reg => reg.syncStatus === 'pending')
+        .map(reg => ({
+          ...reg,
+          competitionId: reg.competitionId || null,     // 🟢 Sub-Competition ID
+          competitionTitle: reg.competitionTitle || null, // 🟢 Sub-Competition Title
+          clientTimestamp: reg.registrationTimestamp || Date.now()
+        }));
+
       const sanitizedLinks = telemetryData.managerEvents
         .filter(link => link.syncStatus === 'pending')
         .map(link => ({
@@ -138,6 +153,7 @@ export default function SyncStatusBar() {
         body: JSON.stringify({
           events: sanitizedEvents,
           guests: sanitizedGuests,
+          registrations: sanitizedRegistrations, // 🟢 Include pending registrations payload
           users: telemetryData.users.filter(usr => usr.syncStatus === 'pending'),
           managerEvents: sanitizedLinks, 
           managerEmail: telemetryData.managerEmail,
@@ -162,12 +178,15 @@ export default function SyncStatusBar() {
       
       if (result.success && result.counts) {
         // UNIFIED MULTI-TABLE TRANSACTION
-        await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents], async () => {
+        await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents, db.eventRegistrations], async () => {
           for (const ev of pendingEventsOnly) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
           }
           for (const gst of telemetryData.guests) {
             if (gst.id) await db.guests.update(gst.id, { syncStatus: 'synced' });
+          }
+          for (const reg of telemetryData.registrations) {
+            if (reg.id) await db.eventRegistrations.update(reg.id, { syncStatus: 'synced' }); // 🟢 Mark Registrations as Synced
           }
           for (const usr of telemetryData.users) {
             if (usr.id) await db.users.update(usr.id, { syncStatus: 'synced' });

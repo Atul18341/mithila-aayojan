@@ -7,7 +7,7 @@ import {
   Calendar, Info, Shield, Layout, MapPin, Plus, 
   Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
   Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
-  Utensils, IndianRupee
+  Utensils, IndianRupee, Trophy, Trash2
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
 
@@ -23,6 +23,13 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
+export interface SubCompetition {
+  id: string;
+  title: string;
+  code: string;
+  category?: string;
+}
+
 export interface EventData {
   id?: number;
   name: string;
@@ -30,8 +37,10 @@ export interface EventData {
   date?: string;
   startTime?: string;
   endTime?: string;
-  registrationEndDate?: string; // 🟢 Registration Cutoff Date
+  registrationEndDate?: string;
   protocol: string;
+  isMultiCompetition?: boolean;
+  competitions?: SubCompetition[]; // 🟢 Store array of sub-competitions
   tagline?: string;
   description?: string;
   venueName?: string;
@@ -149,6 +158,9 @@ export default function EventDetailEditor({
   const [coverPreview, setCoverPreview] = useState<string>('');
   const [posterPreview, setPosterPreview] = useState<string>('');
 
+  // 🟢 Form state for adding new competitions dynamically
+  const [newComp, setNewComp] = useState({ title: '', code: '', category: '' });
+
   const coverInputRef = useRef<HTMLInputElement>(null);
   const posterInputRef = useRef<HTMLInputElement>(null);
 
@@ -166,7 +178,9 @@ export default function EventDetailEditor({
     primaryDate: '',
     startTime: '',
     endTime: '',
-    registrationEndDate: '', // 🟢 Registration End Date Initial State
+    registrationEndDate: '',
+    isMultiCompetition: false,
+    competitions: [] as SubCompetition[], // 🟢 Dynamic Competitions List State
     hypeThreshold: 0,
     type: 'conference', 
     protocol: 'ticketed' as 'ticketed' | 'open-registration' | 'invite-only',
@@ -205,7 +219,9 @@ export default function EventDetailEditor({
         primaryDate: event.date || '',
         startTime: event.startTime || '',
         endTime: event.endTime || '',
-        registrationEndDate: event.registrationEndDate || '', // 🟢 Bind Registration End Date
+        registrationEndDate: event.registrationEndDate || '',
+        isMultiCompetition: event.isMultiCompetition ?? false,
+        competitions: event.competitions || [], // 🟢 Load Competitions List
         hypeThreshold: event.hypeThreshold || 0,
         type: event.type || 'conference',
         protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
@@ -251,11 +267,12 @@ export default function EventDetailEditor({
 
   const handleResetToCreation = () => {
     setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
+      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', isMultiCompetition: false, competitions: [], hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
       visibility: { map: true, rsvp: true, schedule: true, gallery: false },
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
     });
+    setNewComp({ title: '', code: '', category: '' });
     setCurrentStatus('draft');
     setIsCreateMode(true);
     setActiveModule('basics');
@@ -264,6 +281,32 @@ export default function EventDetailEditor({
     setPosterBlob(null);
     setCoverPreview('');
     setPosterPreview('');
+  };
+
+  // 🟢 Competition Handlers
+  const handleAddCompetition = () => {
+    if (!newComp.title.trim()) return;
+    const created: SubCompetition = {
+      id: Date.now().toString(),
+      title: newComp.title.trim(),
+      code: newComp.code.trim().toUpperCase() || `COMP-${details.competitions.length + 1}`,
+      category: newComp.category.trim() || 'General'
+    };
+
+    setDetails(prev => ({
+      ...prev,
+      competitions: [...prev.competitions, created]
+    }));
+    setNewComp({ title: '', code: '', category: '' });
+    if (saveStatus === 'success') setSaveStatus('idle');
+  };
+
+  const handleRemoveCompetition = (id: string) => {
+    setDetails(prev => ({
+      ...prev,
+      competitions: prev.competitions.filter(item => item.id !== id)
+    }));
+    if (saveStatus === 'success') setSaveStatus('idle');
   };
 
   const handleTypeChange = (selectedType: string) => {
@@ -349,7 +392,9 @@ export default function EventDetailEditor({
       date: details.primaryDate,
       startTime: details.startTime,
       endTime: details.endTime,
-      registrationEndDate: details.registrationEndDate, // 🟢 Compile Registration Cutoff Date
+      registrationEndDate: details.registrationEndDate,
+      isMultiCompetition: details.isMultiCompetition,
+      competitions: details.isMultiCompetition ? details.competitions : [], // 🟢 Persist list only if enabled
       type: details.type,
       protocol: details.protocol, 
       status: forcedStatus || currentStatus, 
@@ -575,6 +620,109 @@ export default function EventDetailEditor({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* 🏆 MULTI-COMPETITION EVENT TOGGLE & MANAGEMENT PANEL */}
+            <div>
+              <div className={styles.sectionHeader}>Multi-Competition Event Control</div>
+              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Trophy size={18} className={details.isMultiCompetition ? `text-${accentColor}-500` : 'text-slate-400'} />
+                    <div>
+                      <span className="text-xs font-bold block">Multi-Competition Event</span>
+                      <span className="text-[10px] text-slate-500">Enable this if this event hosts multiple sub-competitions, categories, or brackets</span>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setDetails(prev => ({ ...prev, isMultiCompetition: !prev.isMultiCompetition }));
+                      if (saveStatus === 'success') setSaveStatus('idle');
+                    }} 
+                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiCompetition ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiCompetition ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                {/* 🟢 COMPETITIONS LISTING & INLINE ADD FORM */}
+                {details.isMultiCompetition && (
+                  <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between">
+                      <label className={styles.label}>Manage Sub-Competitions ({details.competitions.length})</label>
+                    </div>
+
+                    {/* Quick Add Competition Input Row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Competition Title (e.g. Hackathon)"
+                        value={newComp.title}
+                        onChange={(e) => setNewComp(prev => ({ ...prev, title: e.target.value }))}
+                        className={`sm:col-span-5 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Code (e.g. HACK-01)"
+                        value={newComp.code}
+                        onChange={(e) => setNewComp(prev => ({ ...prev, code: e.target.value }))}
+                        className={`sm:col-span-3 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Category"
+                        value={newComp.category}
+                        onChange={(e) => setNewComp(prev => ({ ...prev, category: e.target.value }))}
+                        className={`sm:col-span-2 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCompetition}
+                        disabled={!newComp.title.trim()}
+                        className={`sm:col-span-2 flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all`}
+                      >
+                        <Plus size={14} />
+                        <span>Add</span>
+                      </button>
+                    </div>
+
+                    {/* Registered Competitions Cards */}
+                    {details.competitions.length > 0 ? (
+                      <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+                        {details.competitions.map((comp) => (
+                          <div 
+                            key={comp.id} 
+                            className={`flex items-center justify-between p-3 rounded-2xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                {comp.code}
+                              </span>
+                              <div>
+                                <h5 className="text-xs font-bold leading-tight">{comp.title}</h5>
+                                <span className="text-[9px] text-slate-500">{comp.category}</span>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCompetition(comp.id)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-4 text-center border border-dashed rounded-2xl border-slate-200 dark:border-white/10">
+                        <p className="text-xs text-slate-400">No sub-competitions added yet. Use the fields above to add one.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

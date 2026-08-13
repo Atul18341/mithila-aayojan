@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
   Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
-  Lock, CalendarX, Ticket 
+  Lock, CalendarX, Ticket, Trophy 
 } from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
@@ -22,7 +22,15 @@ export type AttendeeCategory =
   | 'trainee' 
   | 'exhibitor' 
   | 'general-public' 
+  | 'event-participant'
   | 'ops-team';
+
+export interface SubCompetition {
+  id: string;
+  title: string;
+  code: string;
+  category?: string;
+}
 
 const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'patron', label: 'Chief Patrons & Core Members' },
@@ -35,6 +43,7 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'trainee', label: 'Trainees & Scholars' },
   { id: 'exhibitor', label: 'Exhibitors & Vendors' },
   { id: 'general-public', label: 'General Visitors & Public' },
+  { id: 'event-participant', label: 'Event Participant' },
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
@@ -46,7 +55,8 @@ const PUBLIC_EXCLUSIVE_CATEGORIES: AttendeeCategory[] = [
   'delegate',
   'trainee',
   'exhibitor',
-  'general-public'
+  'general-public',
+  'event-participant'
 ];
 
 interface EventData {
@@ -56,6 +66,8 @@ interface EventData {
   type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference';
   registrationEndDate?: string;
   registration_end_date?: string;
+  isMultiCompetition?: boolean; // 🟢 Read multi-competition flag
+  competitions?: SubCompetition[];
   pricingConfig?: {
     isRequired: boolean;
     baseFee: number;
@@ -87,8 +99,18 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     email: '',
     phone: '',
     category: '' as AttendeeCategory | '',
+    competitionId: '', // 🟢 Selected sub-competition ID
     customAnswers: {} as Record<string, string>
   });
+
+  // 🟢 LIVE DB-FETCHED COMPETITIONS STATE
+  const [competitionsList, setCompetitionsList] = useState<SubCompetition[]>(
+    event.competitions || []
+  );
+  const [isMultiCompActive, setIsMultiCompActive] = useState<boolean>(
+    event.isMultiCompetition ?? false
+  );
+  const [isLoadingCompetitions, setIsLoadingCompetitions] = useState<boolean>(false);
 
   const [pricing, setPricing] = useState({
     basePrice: 0,
@@ -107,6 +129,44 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       isRegistrationClosed = true;
     }
   }
+
+  // 🟢 FETCH LATEST COMPETITIONS DIRECTLY FROM DEXIE DB
+  useEffect(() => {
+    async function loadCompetitionsFromDb() {
+      if (!db || !db.events) return;
+
+      setIsLoadingCompetitions(true);
+      try {
+        let fetchedEvent = null;
+
+        if (event.id) {
+          const numericId = typeof event.id === 'string' ? parseInt(event.id, 10) : event.id;
+          if (!isNaN(numericId)) {
+            fetchedEvent = await db.events.get(numericId);
+          }
+        }
+
+        if (!fetchedEvent && event.slug) {
+          fetchedEvent = await db.events.where('slug').equals(event.slug).first();
+        }
+
+        if (fetchedEvent) {
+          if (fetchedEvent.isMultiCompetition !== undefined) {
+            setIsMultiCompActive(fetchedEvent.isMultiCompetition);
+          }
+          if (Array.isArray(fetchedEvent.competitions)) {
+            setCompetitionsList(fetchedEvent.competitions);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load competitions from Dexie DB:", err);
+      } finally {
+        setIsLoadingCompetitions(false);
+      }
+    }
+
+    loadCompetitionsFromDb();
+  }, [event.id, event.slug]);
 
   // Calculate fees dynamically whenever category selection changes
   useEffect(() => {
@@ -219,6 +279,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     const qrToken = generateQrToken(event, formData.phone);
     const isOnline = typeof window !== 'undefined' && navigator.onLine;
 
+    // Resolve selected competition object
+    const selectedComp = competitionsList.find(c => c.id === formData.competitionId);
+
     const registrationPayload = {
       registrationId: registrationId,
       eventId: eventIdParam,
@@ -226,6 +289,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       email: formData.email,
       phone: formData.phone,
       category: formData.category as AttendeeCategory,
+      competitionId: formData.competitionId || null, // 🟢 Save competition ID
+      competitionTitle: selectedComp ? selectedComp.title : null, // 🟢 Save competition title
       customAnswers: formData.customAnswers,
       
       basePrice: pricing.basePrice,
@@ -520,6 +585,38 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             </select>
           </div>
         </div>
+
+        {/* 🟢 MULTI-COMPETITION SELECTION FIELD */}
+        {isMultiCompActive && formData.category === 'event-participant' && (
+          <div className="space-y-1 animate-in fade-in duration-200">
+            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+              Select Competition / Track <span className="text-red-400 font-bold">*</span>
+            </label>
+            <div className="relative group">
+              <Trophy size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+              <select
+                required
+                value={formData.competitionId}
+                onChange={e => setFormData({...formData, competitionId: e.target.value})}
+                disabled={isLoadingCompetitions}
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer disabled:opacity-50"
+              >
+                <option value="" className="text-slate-400">
+                  {isLoadingCompetitions 
+                    ? "Loading competitions..." 
+                    : competitionsList.length === 0 
+                      ? "No sub-competitions available" 
+                      : "Select sub-competition to enter..."}
+                </option>
+                {competitionsList.map(comp => (
+                  <option key={comp.id} value={comp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                    [{comp.code}] {comp.title} {comp.category ? `(${comp.category})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* DYNAMIC METRIC FIELDS */}

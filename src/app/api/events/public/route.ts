@@ -15,16 +15,17 @@ export async function GET() {
   try {
     client = await pool.connect();
     
-    // 🚀 Select ALL operational parameters from the updated events layout
+    // 🚀 Select ALL operational parameters including multi-competition fields
     const query = `
       SELECT 
         e.id, e.name, e.type, e.protocol, e.status, e.date, e.slug, 
         e.location, e.tagline, e.description, e.venue_name, e.visibility, 
         e.start_time, e.end_time, e.food_config, e.pricing_config, 
         e.cover_image, e.poster_image,
-        u.name AS organizer_name -- Dynamic lookup from users table[cite: 3]
+        e.is_multi_competition, e.competitions, -- 🟢 Multi-Competition Fields
+        u.name AS organizer_name -- Dynamic lookup from users table
       FROM events e
-      LEFT JOIN users u ON e.organizer_id = u.id -- Relational validation bridge[cite: 3]
+      LEFT JOIN users u ON e.organizer_id = u.id -- Relational validation bridge
       WHERE e.visibility->>'rsvp' = 'true'
       ORDER BY e.date DESC;
     `;
@@ -35,6 +36,15 @@ export async function GET() {
     const formattedEvents = result.rows.map(event => {
       // Stripping trailing slashes safely to prevent invalid double-slash URL errors
       const cleanedBaseUrl = R2_PUBLIC_BASE_URL.replace(/\/$/, '');
+      
+      // Parse competitions safely if stored as string JSON or JSONB array
+      let parsedCompetitions = [];
+      if (event.competitions) {
+        parsedCompetitions = typeof event.competitions === 'string' 
+          ? JSON.parse(event.competitions) 
+          : event.competitions;
+      }
+
       return {
         id: event.id,
         name: event.name,
@@ -52,6 +62,11 @@ export async function GET() {
         description: event.description,
         venue_name: event.venue_name,
         organizedBy: event.organizer_name || 'Let\'s Inspire Bihar Core Member',
+
+        // 🟢 Multi-Competition Payload Mapping
+        isMultiCompetition: Boolean(event.is_multi_competition),
+        competitions: Array.isArray(parsedCompetitions) ? parsedCompetitions : [],
+
         // Explicitly ensuring JSONB fields are object structures, not raw string vectors
         visibility: typeof event.visibility === 'string' ? JSON.parse(event.visibility) : event.visibility,
         foodConfig: typeof event.food_config === 'string' ? JSON.parse(event.food_config) : event.food_config,
@@ -69,8 +84,8 @@ export async function GET() {
           ? `${cleanedBaseUrl}/event-banner/${event.poster_image}` 
           : null
       };
-      
     });
+
     return NextResponse.json({ 
       success: true, 
       events: formattedEvents 
