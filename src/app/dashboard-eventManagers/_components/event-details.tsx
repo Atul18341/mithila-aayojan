@@ -45,7 +45,7 @@ export interface EventData {
   description?: string;
   venueName?: string;
   location?: string;
-  organizerId?: number |'null'; // 🟢 Primary Key of active organizer user
+  organizerId?: number ; // 🟢 Primary Key of active organizer user
   organizerName?: string; // 🟢 Display name of organizer
   organizerEmail?: string; // 🟢 Communication identifier
   status?: 'draft' | 'published' | 'unpublished';
