@@ -520,7 +520,7 @@ export default function ManagerDashboard() {
         ) : showEditorScreen ? (
           <div className="flex-1 overflow-hidden min-h-0 w-full flex flex-col pt-0">
             <EventDetailEditor 
-              event={isCreatingNew ? null : (activeEvent ?? null)}
+              event={isCreatingNew ? null : (activeEvent as any)}
               isDark={isDark} 
               onClose={() => {
                 setIsEditing(false);
