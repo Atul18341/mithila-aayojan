@@ -552,7 +552,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       <div className="space-y-3">
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Identity Profile Name
+            Name
           </label>
           <div className="relative group">
             <User size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -569,7 +569,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Secure Communications Routing
+            Email Id
           </label>
           <div className="relative group">
             <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -586,7 +586,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Mobile Access Node (WhatsApp)
+           Mobile No./WhatsApp No.
           </label>
           <div className="relative group">
             <Phone size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -604,7 +604,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         {/* ATTENDEE CATEGORY SELECTION DROPDOWN */}
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Attendee Clearance Category
+            Select Category
           </label>
           <div className="relative group">
             <Users size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -700,7 +700,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       {event.pricingConfig?.isRequired && (
         <div className="pt-3 border-t border-dashed border-slate-200 dark:border-white/10 space-y-2 animate-in fade-in duration-300">
           <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Commercial Summary
+            Ticket Summary
           </span>
           <div className="p-3.5 rounded-xl border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs space-y-1 text-slate-600 dark:text-slate-400 font-semibold">
             {event.pricingConfig.applicableForAll === 'no' && !formData.category ? (
@@ -708,7 +708,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             ) : (
               <>
                 <div className="flex justify-between items-center">
-                  <span>Base Booking Token:</span>
+                  <span>Base Booking Price:</span>
                   <span className="font-bold text-slate-800 dark:text-white">₹{pricing.basePrice}</span>
                 </div>
                 {event.pricingConfig.gstApplicable && (

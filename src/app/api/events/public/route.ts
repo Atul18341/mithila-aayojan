@@ -15,39 +15,59 @@ export async function GET() {
   try {
     client = await pool.connect();
     
-    // 🚀 Select ALL operational parameters including organizer relational fields & multi-competition parameters
+    // 🚀 Query selecting all operational parameters + registration count
     const query = `
       SELECT 
         e.id, e.name, e.type, e.protocol, e.status, e.date, e.slug, 
         e.location, e.tagline, e.description, e.venue_name, e.visibility, 
         e.start_time, e.end_time, e.food_config, e.pricing_config, 
         e.cover_image, e.poster_image, e.organizer_id,
-        e.is_multi_competition, e.competitions, -- 🟢 Multi-Competition Fields
-        u.name AS organizer_name, -- Dynamic name lookup from users table
-        u.identifier AS organizer_email -- Dynamic email/identifier lookup from users table
+        e.is_multi_competition, e.competitions,
+        u.name AS organizer_name,
+        u.identifier AS organizer_email,
+        COALESCE(r.reg_count, 0) AS registration_count
       FROM events e
-      LEFT JOIN users u ON e.organizer_id = u.id -- Relational validation bridge
+      LEFT JOIN users u ON e.organizer_id = u.id
+      LEFT JOIN (
+        SELECT event_id, COUNT(*) AS reg_count
+        FROM event_registrations
+        GROUP BY event_id
+      ) r ON e.id = r.event_id
       WHERE e.visibility->>'rsvp' = 'true'
       ORDER BY e.date DESC;
     `;
     
     const result = await client.query(query);
     
-    // 🚀 Format every structural field, handling JSONB conversions and cleaning R2 URL paths
+    // 🚀 Format response payload
     const formattedEvents = result.rows.map(event => {
-      // Stripping trailing slashes safely to prevent invalid double-slash URL errors
       const cleanedBaseUrl = R2_PUBLIC_BASE_URL.replace(/\/$/, '');
       
-      // Parse competitions safely if stored as string JSON or JSONB array
       let parsedCompetitions = [];
       if (event.competitions) {
-        parsedCompetitions = typeof event.competitions === 'string' 
-          ? JSON.parse(event.competitions) 
-          : event.competitions;
+        try {
+          parsedCompetitions = typeof event.competitions === 'string' 
+            ? JSON.parse(event.competitions) 
+            : event.competitions;
+        } catch {
+          parsedCompetitions = [];
+        }
       }
 
-      // Resolve Organizer Display Name with progressive fallbacks
-      const resolvedOrganizerName = event.organizer_name || event.organizer_email || 'Let\'s Inspire Bihar Core Member';
+      const resolvedOrganizerName = event.organizer_name || event.organizer_email || "Let's Inspire Bihar Core Member";
+
+      // Helper to parse potential stringified JSONB fields safely
+      const parseJsonField = (field: any) => {
+        if (!field) return null;
+        if (typeof field === 'string') {
+          try {
+            return JSON.parse(field);
+          } catch {
+            return field;
+          }
+        }
+        return field;
+      };
 
       return {
         id: event.id,
@@ -66,26 +86,27 @@ export async function GET() {
         description: event.description,
         venue_name: event.venue_name,
         
-        // 🟢 ORGANIZER DETAILS FROM POSTGRESQL (users table JOIN)
+        // 🟢 REGISTRATION COUNT
+        registrationCount: parseInt(event.registration_count || '0', 10),
+
+        // 🟢 ORGANIZER DETAILS
         organizerId: event.organizer_id ? Number(event.organizer_id) : null,
         organizerName: event.organizer_name || null,
         organizerEmail: event.organizer_email || null,
         organizedBy: resolvedOrganizerName,
 
-        // 🟢 Multi-Competition Payload Mapping
+        // 🟢 MULTI-COMPETITION
         isMultiCompetition: Boolean(event.is_multi_competition),
         competitions: Array.isArray(parsedCompetitions) ? parsedCompetitions : [],
 
-        // Explicitly ensuring JSONB fields are object structures, not raw string vectors
-        visibility: typeof event.visibility === 'string' ? JSON.parse(event.visibility) : event.visibility,
-        foodConfig: typeof event.food_config === 'string' ? JSON.parse(event.food_config) : event.food_config,
-        pricingConfig: typeof event.pricing_config === 'string' ? JSON.parse(event.pricing_config) : event.pricing_config,
+        // 🟢 JSONB OBJECT PARSING
+        visibility: parseJsonField(event.visibility),
+        foodConfig: parseJsonField(event.food_config),
+        pricingConfig: parseJsonField(event.pricing_config),
         
-        // Standardizing database TIME formats
         start_time: event.start_time,
         end_time: event.end_time,
 
-        // Appending public keys cleanly into final asset references
         coverImageUrl: event.cover_image 
           ? `${cleanedBaseUrl}/event-cover-image/${event.cover_image}` 
           : null,
@@ -101,12 +122,14 @@ export async function GET() {
     });
 
   } catch (error: any) {
-    console.error('❌ Public event fetch failure:', error.message);
+    console.error('❌ Public event fetch failure:', error?.message || error);
     return NextResponse.json(
-      { error: 'Public matrix hydration error', details: error.message }, 
+      { error: 'Public matrix hydration error', details: error?.message || String(error) }, 
       { status: 500 }
     );
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
