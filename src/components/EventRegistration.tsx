@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
   Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
-  Lock, CalendarX, Ticket, Trophy 
+  Lock, CalendarX, Ticket, Trophy, AlertCircle 
 } from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
@@ -94,6 +94,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<{ message: string; queryParam: string } | null>(null);
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -246,31 +248,39 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       return;
     }
 
-    try {
-      const response = await fetch('/api/registrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          registration: registrationPayload,
-          guest: guestPayload,
-          paymentDetails: paymentResponse ? {
-            razorpay_order_id: paymentResponse.razorpay_order_id,
-            razorpay_payment_id: paymentResponse.razorpay_payment_id,
-            razorpay_signature: paymentResponse.razorpay_signature,
-          } : null
-        }),
-      });
+    const response = await fetch('/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        registration: registrationPayload,
+        guest: guestPayload,
+        paymentDetails: paymentResponse ? {
+          razorpay_order_id: paymentResponse.razorpay_order_id,
+          razorpay_payment_id: paymentResponse.razorpay_payment_id,
+          razorpay_signature: paymentResponse.razorpay_signature,
+        } : null
+      }),
+    });
 
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Server registration record failed.');
-      }
+    const data = await response.json();
 
-      console.log("☁️ Successfully recorded registration on PostgreSQL server.");
-      return data;
-    } catch (err: any) {
-      console.error("❌ Cloud endpoint registration error:", err.message);
+    // 🟢 Handle 409 Conflict / Duplicate Entries explicitly
+    if (response.status === 409 || data.isDuplicate) {
+      const queryParam = registrationPayload.phone || registrationPayload.email;
+      const errorObj = {
+        message: data.error || 'An account with this email or phone is already registered for this event.',
+        queryParam: encodeURIComponent(queryParam)
+      };
+      setDuplicateError(errorObj);
+      throw new Error(data.error || 'DUPLICATE_REGISTRATION');
     }
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'Server registration record failed.');
+    }
+
+    console.log("☁️ Successfully recorded registration on PostgreSQL server.");
+    return data;
   };
 
   const saveRegistrationRecord = async (paymentDetails?: { paymentId?: string; orderId?: string; signature?: string }) => {
@@ -325,6 +335,16 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       registeredAt: Date.now()
     };
 
+    // First, sync with online server (will throw error if duplicate)
+    if (isOnline) {
+      await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
+        razorpay_order_id: paymentDetails.orderId,
+        razorpay_payment_id: paymentDetails.paymentId,
+        razorpay_signature: paymentDetails.signature
+      } : undefined);
+    }
+
+    // Write to Dexie DB after server approval
     if (typeof window !== 'undefined' && db) {
       try {
         await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
@@ -337,19 +357,12 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       }
     }
 
-    if (isOnline) {
-      await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
-        razorpay_order_id: paymentDetails.orderId,
-        razorpay_payment_id: paymentDetails.paymentId,
-        razorpay_signature: paymentDetails.signature
-      } : undefined);
-    }
-
     return eventIdParam;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setDuplicateError(null);
 
     // Block submission if cutoff has elapsed
     if (isRegistrationClosed) {
@@ -411,10 +424,12 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
               setIsSubmitting(false);
               setFormSubmitted(true);
               router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
-            } catch (dbErr) {
+            } catch (dbErr: any) {
               console.error("Database write failed after payment:", dbErr);
               setIsSubmitting(false);
-              router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
+              if (dbErr.message !== 'DUPLICATE_REGISTRATION') {
+                router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
+              }
             }
           },
           prefill: {
@@ -437,7 +452,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
       } catch (err: any) {
         console.error("Payment setup failure:", err);
-        alert(err.message || "Failed to initialize checkout gateway.");
+        if (err.message !== 'DUPLICATE_REGISTRATION') {
+          alert(err.message || "Failed to initialize checkout gateway.");
+        }
         setIsSubmitting(false);
       }
     } else {
@@ -446,10 +463,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         setIsSubmitting(false);
         setFormSubmitted(true);
         router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
-      } catch (dbErr) {
+      } catch (dbErr: any) {
         console.error("Database write failure on free tier:", dbErr);
         setIsSubmitting(false);
-        router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
       }
     }
   };
@@ -507,6 +523,31 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 w-full">
+      
+      {/* 🔴 DUPLICATE REGISTRATION WARNING BOX */}
+      {duplicateError && (
+        <div className="p-4 bg-red-500/10 dark:bg-red-500/20 border border-red-500/30 rounded-2xl space-y-3 animate-in fade-in duration-300">
+          <div className="flex items-start gap-3 text-red-600 dark:text-red-400">
+            <AlertCircle size={20} className="shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="text-xs font-black uppercase tracking-wider">Already Registered!</h4>
+              <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+                {duplicateError.message}
+              </p>
+            </div>
+          </div>
+          <div className="pt-2 border-t border-red-500/20 flex justify-end">
+            <Link
+              href={`/find-ticket?query=${duplicateError.queryParam}`}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-red-600/20"
+            >
+              <Ticket size={14} />
+              <span>Retrieve My Ticket Pass</span>
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* CORE FIELDS */}
       <div className="space-y-3">
         <div className="space-y-1">

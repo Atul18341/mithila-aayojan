@@ -192,7 +192,7 @@ export class AayojanDB extends Dexie {
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus',
       users: '++id, email, identifier, role, activeEventId, syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',
-      eventRegistrations: '++id, eventId, email, category, competitionId, status, syncStatus'
+      eventRegistrations: '++id, eventId, email, category, qrToken, competitionId, status, syncStatus'
     });
   }
 }

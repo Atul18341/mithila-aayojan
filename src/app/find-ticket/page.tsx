@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import TicketQR from '@/components/TicketQR';
 import { toPng } from 'html-to-image';
 import { Loader2, Search, ArrowLeft, Ticket, AlertCircle, Sun, Moon } from 'lucide-react';
@@ -13,6 +14,7 @@ interface MatchedAttendee {
   qrToken: string;
   name: string;
   category: string;
+  competitionTitle?: string; // 🟢 Sub-Competition Title field
   eventId: number;
   eventName: string;
   eventDetails?: {
@@ -25,6 +27,7 @@ interface MatchedAttendee {
 
 export default function FindTicketPage() {
   const ticketRef = useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
 
   // Theme Context integration with fallback state
   let themeContext: { isDark: boolean; toggleTheme: () => void } | null = null;
@@ -46,9 +49,9 @@ export default function FindTicketPage() {
   const [matchedAttendee, setMatchedAttendee] = useState<MatchedAttendee | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanQuery = query.trim();
+  // 🟢 Core Search Engine Extracted to Handle Both Manual Form Submission & Direct Query Params
+  const executeSearch = useCallback(async (searchQuery: string) => {
+    const cleanQuery = searchQuery.trim();
     if (!cleanQuery) return;
 
     setLoading(true);
@@ -108,15 +111,56 @@ export default function FindTicketPage() {
         return;
       }
 
+      const activeEventId = Number(guestRecord.eventId);
+
       // 🟢 3. Fetch event banner/details from db.events
       let localEvent: any = null;
-      if (guestRecord.eventId) {
+      if (activeEventId) {
         localEvent = await db.events
           .where('id')
-          .equals(Number(guestRecord.eventId))
+          .equals(activeEventId)
           .or('slug')
           .equals(guestRecord.eventId)
           .first();
+      }
+
+      // 🟢 4. Fetch competition registration ONLY if pass is of an event participant
+      let localRegistration: any = null;
+      const categoryUpper = String(guestRecord.category || guestRecord.type || '').trim().toUpperCase();
+      const isParticipant = 
+        categoryUpper.includes('PARTICIPANT') || 
+        categoryUpper.includes('COMPETITOR') ||
+        categoryUpper === 'EVENT-PARTICIPANT';
+
+      if (isParticipant && db.eventRegistrations && activeEventId) {
+        const guestQr = guestRecord.qrToken || guestRecord.qr_token || guestRecord.guestId;
+        const guestPhone = guestRecord.phone ? String(guestRecord.phone).replace(/\D/g, '') : '';
+        const guestEmail = guestRecord.email ? String(guestRecord.email).toLowerCase() : '';
+
+        // Multi-field identifier matching combined with eventId filter
+        localRegistration = await db.eventRegistrations
+          .filter((reg: any) => {
+            const matchesEvent = Number(reg.eventId) === activeEventId;
+            if (!matchesEvent) return false;
+
+            const regQr = reg.qrToken || reg.qr_token || reg.guestId;
+            const regPhone = reg.phone ? String(reg.phone).replace(/\D/g, '') : '';
+            const regEmail = reg.email ? String(reg.email).toLowerCase() : '';
+
+            const matchesQr = Boolean(guestQr && regQr && guestQr === regQr);
+            const matchesPhone = Boolean(guestPhone && regPhone && (guestPhone === regPhone || regPhone.includes(guestPhone) || guestPhone.includes(regPhone)));
+            const matchesEmail = Boolean(guestEmail && regEmail && guestEmail === regEmail);
+
+            return matchesQr || matchesPhone || matchesEmail;
+          })
+          .first();
+
+        // Fallback: If no exact user identifier match was found, fetch by eventId alone
+        if (!localRegistration) {
+          localRegistration = await db.eventRegistrations
+            .filter((reg: any) => Number(reg.eventId) === activeEventId)
+            .first();
+        }
       }
 
       const coverImage = 
@@ -138,12 +182,25 @@ export default function FindTicketPage() {
         guestRecord.guestId || 
         `PASS-${guestRecord.id}`;
 
+      // 🏆 Extract competition title conditionally if participant registration exists
+      const resolvedCompetitionTitle = localRegistration ? (
+        localRegistration?.competitionTitle || 
+        localRegistration?.competition_title || 
+        localRegistration?.competitionName ||
+        localRegistration?.competition ||
+        guestRecord.competitionTitle || 
+        guestRecord.competition_title || 
+        guestRecord.competitionName ||
+        undefined
+      ) : undefined;
+
       setMatchedAttendee({
         id: String(guestRecord.id || guestRecord.guestId || `GUEST-${Date.now()}`),
         qrToken: resolvedQrToken,
         name: guestRecord.name,
         category: guestRecord.category || guestRecord.type || 'General',
-        eventId: Number(guestRecord.eventId),
+        competitionTitle: resolvedCompetitionTitle,
+        eventId: activeEventId,
         eventName: resolvedEventName,
         eventDetails: {
           eventName: resolvedEventName,
@@ -159,6 +216,26 @@ export default function FindTicketPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // 🟢 Extract search terms from URL search parameters on load
+  useEffect(() => {
+    const qrTokenParam = searchParams.get('qrToken') || searchParams.get('qr_token') || searchParams.get('qr');
+    const emailParam = searchParams.get('email');
+    const phoneParam = searchParams.get('phone');
+    const queryParam = searchParams.get('q') || searchParams.get('query');
+
+    const initialQuery = qrTokenParam || emailParam || phoneParam || queryParam || '';
+
+    if (initialQuery) {
+      setQuery(initialQuery);
+      executeSearch(initialQuery);
+    }
+  }, [searchParams, executeSearch]);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    executeSearch(query);
   };
 
   const handleDownload = async () => {
@@ -265,6 +342,7 @@ export default function FindTicketPage() {
               qrToken={matchedAttendee.qrToken}
               userName={matchedAttendee.name}
               userCategory={matchedAttendee.category}
+              competitionTitle={matchedAttendee.competitionTitle}
               eventId={matchedAttendee.eventId}
               eventDetails={matchedAttendee.eventDetails}
             />

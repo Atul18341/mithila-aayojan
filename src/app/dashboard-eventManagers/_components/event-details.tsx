@@ -20,6 +20,7 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'trainee', label: 'Trainees & Scholars' },
   { id: 'exhibitor', label: 'Exhibitors & Vendors' },
   { id: 'general-public', label: 'General Visitors & Public' },
+  { id: 'event-participant', label: 'Event Participant' },
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 

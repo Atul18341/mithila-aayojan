@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db } from '@/lib/db'; // Integrated Dexie IndexedDB instance
 
-const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'OPS-TEAM'];
+const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'EVENT-PARTICIPANT','OPS-TEAM'];
 
 interface EventDetails {
   eventName: string;
@@ -19,6 +19,7 @@ interface TicketQRProps {
   qrToken?: string; // 🟢 Pass explicit qrToken prop (e.g., MI26-9122)
   userName: string;
   userCategory: string;
+  competitionTitle?: string; // 🏆 Optional competition title
   eventId: number;
   eventDetails?: EventDetails;
 }
@@ -36,6 +37,7 @@ export default function TicketQR({
   qrToken,
   userName,
   userCategory,
+  competitionTitle,
   eventId,
   eventDetails: propsEventDetails,
 }: TicketQRProps) {
@@ -98,7 +100,7 @@ export default function TicketQR({
   // 🚀 HYBRID DATA FETCHING: IndexedDB (Offline) -> Online API -> Props Fallback
   useEffect(() => {
     let isMounted = true;
-
+    console.log("Competition-title:",competitionTitle)
     async function loadEventData() {
       try {
         if (!eventId) {
@@ -239,6 +241,12 @@ export default function TicketQR({
           <span className="inline-block px-3 py-0.5 mt-2 text-xs font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200 tracking-wide uppercase">
             {normalizedCategory} PASS
           </span>
+           {/* 🏆 COMPETITION TITLE DISPLAY */}
+          {competitionTitle && (
+            <p className="text-md font-bold text-indigo-600 tracking-wide mt-2">
+              🏆 {competitionTitle}
+            </p>
+          )}
         </div>
 
         {/* QR CODE CONTAINER */}
