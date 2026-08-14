@@ -1,6 +1,6 @@
 // src/app/api/events/public/route.ts
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -11,18 +11,39 @@ const pool = new Pool({
 const R2_PUBLIC_BASE_URL = process.env.NEXT_PUBLIC_R2_PUBLIC_URL || 'https://pub-f6007cb4960a4dd98733c35982b7b8cd.r2.dev';
 
 export async function GET() {
-  let client;
+  let client: PoolClient | null = null;
   try {
     client = await pool.connect();
     
-    // 🚀 Query selecting all operational parameters + registration count
+    // 🚀 Cleaned SQL query without non-existent columns
     const query = `
       SELECT 
-        e.id, e.name, e.type, e.protocol, e.status, e.date, e.slug, 
-        e.location, e.tagline, e.description, e.venue_name, e.visibility, 
-        e.start_time, e.end_time, e.food_config, e.pricing_config, 
-        e.cover_image, e.poster_image, e.organizer_id,
-        e.is_multi_competition, e.competitions,
+        e.id, 
+        e.name, 
+        e.type, 
+        e.protocol, 
+        e.status, 
+        e.date, 
+        e.slug, 
+        e.location, 
+        e.tagline, 
+        e.description, 
+        e.venue_name, 
+        e.visibility, 
+        e.start_time, 
+        e.end_time, 
+        e.registration_end_date,
+        e.food_config, 
+        e.pricing_config, 
+        e.cover_image, 
+        e.poster_image, 
+        e.organizer_id,
+        e.is_multi_competition, 
+        e.competitions,
+        e.is_count_public,
+        e.hype_threshold,
+        e.created_at,
+        e.updated_at,
         u.name AS organizer_name,
         u.identifier AS organizer_email,
         COALESCE(r.reg_count, 0) AS registration_count
@@ -32,8 +53,10 @@ export async function GET() {
         SELECT event_id, COUNT(*) AS reg_count
         FROM event_registrations
         GROUP BY event_id
-      ) r ON e.id = r.event_id
-      WHERE e.visibility->>'rsvp' = 'true'
+      ) r ON (CAST(e.id AS VARCHAR) = CAST(r.event_id AS VARCHAR) OR e.slug = CAST(r.event_id AS VARCHAR))
+      WHERE 
+        COALESCE((e.visibility->>'rsvp')::boolean, true) = true
+        AND (e.status IS NULL OR e.status != 'unpublished')
       ORDER BY e.date DESC;
     `;
     
@@ -42,45 +65,48 @@ export async function GET() {
     // 🚀 Format response payload
     const formattedEvents = result.rows.map(event => {
       const cleanedBaseUrl = R2_PUBLIC_BASE_URL.replace(/\/$/, '');
-      
-      let parsedCompetitions = [];
-      if (event.competitions) {
-        try {
-          parsedCompetitions = typeof event.competitions === 'string' 
-            ? JSON.parse(event.competitions) 
-            : event.competitions;
-        } catch {
-          parsedCompetitions = [];
-        }
-      }
 
-      const resolvedOrganizerName = event.organizer_name || event.organizer_email || "Let's Inspire Bihar Core Member";
-
-      // Helper to parse potential stringified JSONB fields safely
-      const parseJsonField = (field: any) => {
-        if (!field) return null;
+      // Helper to parse potential stringified JSON/JSONB or array fields safely
+      const parseJsonField = (field: any, fallback: any = null) => {
+        if (!field) return fallback;
         if (typeof field === 'string') {
           try {
             return JSON.parse(field);
           } catch {
-            return field;
+            return fallback;
           }
         }
         return field;
       };
 
+      // Helper to resolve cover/poster image paths safely
+      const resolveImageUrl = (imgKey: string | null | undefined, folder: 'event-cover-image' | 'event-banner') => {
+        if (!imgKey) return null;
+        if (imgKey.startsWith('http://') || imgKey.startsWith('https://') || imgKey.startsWith('data:')) {
+          return imgKey;
+        }
+        return `${cleanedBaseUrl}/${folder}/${imgKey}`;
+      };
+
+      const resolvedOrganizerName = event.organizer_name || event.organizer_email || "Event Organizing Committee";
+      const parsedCompetitions = parseJsonField(event.competitions, []);
+
       return {
         id: event.id,
         name: event.name,
         type: event.type,
-        protocol: event.protocol,
-        status: event.status,
+        protocol: event.protocol || 'open-registration',
+        status: event.status || 'published',
         date: event.date,
+        start_time: event.start_time || null,
+        end_time: event.end_time || null,
+        registrationEndDate: event.registration_end_date || null,
+        registration_end_date: event.registration_end_date || null,
         createdAt: event.created_at,
         updatedAt: event.updated_at,
         slug: event.slug,
-        isCountPublic: event.is_count_public,
-        hypeThreshold: event.hype_threshold,
+        isCountPublic: Boolean(event.is_count_public),
+        hypeThreshold: Number(event.hype_threshold || 20),
         location: event.location,
         tagline: event.tagline,
         description: event.description,
@@ -95,24 +121,18 @@ export async function GET() {
         organizerEmail: event.organizer_email || null,
         organizedBy: resolvedOrganizerName,
 
-        // 🟢 MULTI-COMPETITION
+        // 🟢 MULTI-COMPETITION ARRAY
         isMultiCompetition: Boolean(event.is_multi_competition),
         competitions: Array.isArray(parsedCompetitions) ? parsedCompetitions : [],
 
-        // 🟢 JSONB OBJECT PARSING
-        visibility: parseJsonField(event.visibility),
-        foodConfig: parseJsonField(event.food_config),
-        pricingConfig: parseJsonField(event.pricing_config),
-        
-        start_time: event.start_time,
-        end_time: event.end_time,
+        // 🟢 JSONB CONFIGURATIONS
+        visibility: parseJsonField(event.visibility, { map: true, rsvp: true, schedule: true, gallery: false }),
+        foodConfig: parseJsonField(event.food_config, {}),
+        pricingConfig: parseJsonField(event.pricing_config, {}),
 
-        coverImageUrl: event.cover_image 
-          ? `${cleanedBaseUrl}/event-cover-image/${event.cover_image}` 
-          : null,
-        posterImageUrl: event.poster_image 
-          ? `${cleanedBaseUrl}/event-banner/${event.poster_image}` 
-          : null
+        // 🟢 PROPERLY RESOLVED IMAGES
+        coverImageUrl: resolveImageUrl(event.cover_image, 'event-cover-image'),
+        posterImageUrl: resolveImageUrl(event.poster_image, 'event-banner')
       };
     });
 

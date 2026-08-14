@@ -1,3 +1,4 @@
+// src/app/ticket/page.tsx
 'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
@@ -9,10 +10,11 @@ import { db } from '@/lib/db'; // Dexie IndexedDB instance
 
 interface AttendeeData {
   id: string; 
-  qrToken: string; // 🟢 Dedicated pass QR Token property
+  qrToken: string; 
   name: string;
   category: string;
-  competitionTitle?: string; // 🟢 Added Sub-Competition Title field
+  competitionTitle?: string; // 🟢 Sub-Competition Title
+  ageGroupLabel?: string;    // 🟢 Age Group Label for Printing
   eventId: number;
   eventName: string;
   eventDetails?: {
@@ -44,7 +46,6 @@ export default function TicketPage() {
       }
 
       const activeEventId = Number(decodeURIComponent(eventIdFromQuery));
-      console.log("Active Event Query ID:", typeof activeEventId);
 
       try {
         setLoading(true);
@@ -62,7 +63,7 @@ export default function TicketPage() {
             .first();
 
           if (localGuest) {
-            // 🟢 STEP 2: Query db.events to get event details and banner image
+            // STEP 2: Query db.events to get event details and banner image
             localEvent = await db.events
               .where('id')
               .equals(activeEventId)
@@ -70,7 +71,7 @@ export default function TicketPage() {
               .equals(activeEventId)
               .first();
 
-            // 🟢 STEP 3: Query db.eventRegistrations ONLY if category is participant
+            // STEP 3: Query db.eventRegistrations for exact competition and age bracket metadata
             const categoryUpper = (localGuest.category || '').trim().toUpperCase();
             const isParticipant = 
               categoryUpper.includes('PARTICIPANT') || 
@@ -86,8 +87,6 @@ export default function TicketPage() {
         }
       
         if (localGuest && isMounted) {
-          console.log("⚡ Loaded Guest & Event Details directly from local IndexedDB");
-
           // Extract cover image string, blob URL, or fallbacks
           const coverImage = 
             localEvent?.coverImageUrl || 
@@ -102,14 +101,14 @@ export default function TicketPage() {
             localGuest?.eventName || 
             "the event";
 
-          // 🟢 Resolve exact qrToken from localGuest record
+          // Resolve exact qrToken from localGuest record
           const resolvedQrToken = 
             localGuest.qrToken || 
             localGuest.qr_token || 
             localGuest.guestId || 
             `EV26-${localGuest.phone ? localGuest.phone.slice(-4) : '0000'}`;
 
-          // 🟢 Extract Competition Name conditionally if localRegistration exists
+          // 🟢 Extract Competition Name
           const resolvedCompetitionTitle = localRegistration ? (
             localRegistration?.competitionTitle || 
             localRegistration?.competition_title || 
@@ -121,14 +120,23 @@ export default function TicketPage() {
             undefined
           ) : undefined;
 
-          console.log("Competition-title(Page):", resolvedCompetitionTitle);
+          // 🟢 Extract Age Group Label
+          const resolvedAgeGroupLabel = localRegistration ? (
+            localRegistration?.ageGroupLabel || 
+            localRegistration?.age_group_label || 
+            localRegistration?.ageGroup || 
+            localGuest.ageGroupLabel || 
+            localGuest.age_group_label || 
+            undefined
+          ) : (localGuest.ageGroupLabel || localGuest.age_group_label || undefined);
 
           setAttendee({
             id: String(localGuest.id || localGuest.guestId || `GUEST-${Date.now()}`),
             qrToken: resolvedQrToken,
             name: localGuest.name,
             category: localGuest.category || 'General',
-            competitionTitle: resolvedCompetitionTitle, // 🟢 Set Competition Name
+            competitionTitle: resolvedCompetitionTitle, 
+            ageGroupLabel: resolvedAgeGroupLabel, // 🟢 Passed to state
             eventId: activeEventId,
             eventName: resolvedEventName,
             eventDetails: {
@@ -199,8 +207,8 @@ export default function TicketPage() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
       
-      {/* 🚀 SUCCESS & THANK YOU HEADER */}
-      <div className="text-center max-w-md mb-6 my">
+      {/* SUCCESS & THANK YOU HEADER */}
+      <div className="text-center max-w-md mb-6">
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 mb-3">
           <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -215,19 +223,20 @@ export default function TicketPage() {
         </p>
       </div>
 
-      {/* TICKET PASS CONTAINER (Target for Download Screenshot) */}
+      {/* TICKET PASS CONTAINER */}
       <div ref={ticketRef} className="w-full max-w-sm">
         <TicketQR
           userId={attendee.qrToken}
           userName={attendee.name}
           userCategory={attendee.category}
-          competitionTitle={attendee.competitionTitle} // 🟢 Pass competition title to TicketQR component
+          competitionTitle={attendee.competitionTitle}
+          ageGroupLabel={attendee.ageGroupLabel} // 🟢 Injected into TicketQR
           eventId={attendee.eventId}
           eventDetails={attendee.eventDetails} 
         />
       </div>
 
-      {/* 📥 DOWNLOAD BUTTON BELOW TICKET */}
+      {/* DOWNLOAD BUTTON */}
       <div className="mt-6 w-full max-w-sm flex flex-col gap-3">
         <button
           onClick={handleDownload}

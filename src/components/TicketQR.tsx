@@ -1,10 +1,11 @@
+// src/components/TicketQR.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db } from '@/lib/db'; // Integrated Dexie IndexedDB instance
 
-const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'EVENT-PARTICIPANT','OPS-TEAM'];
+const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'EVENT-PARTICIPANT', 'OPS-TEAM'];
 
 interface EventDetails {
   eventName: string;
@@ -20,6 +21,7 @@ interface TicketQRProps {
   userName: string;
   userCategory: string;
   competitionTitle?: string; // 🏆 Optional competition title
+  ageGroupLabel?: string;    // 🟢 Optional Age Group / Category Label
   eventId: number;
   eventDetails?: EventDetails;
 }
@@ -38,6 +40,7 @@ export default function TicketQR({
   userName,
   userCategory,
   competitionTitle,
+  ageGroupLabel, // 🟢 Received prop
   eventId,
   eventDetails: propsEventDetails,
 }: TicketQRProps) {
@@ -100,7 +103,6 @@ export default function TicketQR({
   // 🚀 HYBRID DATA FETCHING: IndexedDB (Offline) -> Online API -> Props Fallback
   useEffect(() => {
     let isMounted = true;
-    console.log("Competition-title:",competitionTitle)
     async function loadEventData() {
       try {
         if (!eventId) {
@@ -120,8 +122,6 @@ export default function TicketQR({
         }
 
         if (localEvent && isMounted) {
-          console.log("⚡ Loaded Event Details from IndexedDB (Offline-Ready)");
-
           // Extract blob or image URL from local database
           const extractedCover = 
             localEvent.coverBlob || 
@@ -144,7 +144,6 @@ export default function TicketQR({
 
         // 2. If not found locally and device is online, fetch from backend server
         if (typeof window !== 'undefined' && navigator.onLine) {
-          console.log("🌐 Event not found in IndexedDB. Fetching from online server...");
           const res = await fetch(`/api/events/${encodeURIComponent(eventId)}`);
           
           if (res.ok) {
@@ -177,7 +176,6 @@ export default function TicketQR({
                 ...fetchedEvent,
                 updatedAt: Date.now()
               });
-              console.log("💾 Cached fetched event data into IndexedDB");
             }
           }
         }
@@ -197,11 +195,13 @@ export default function TicketQR({
     };
   }, [eventId]);
 
-  // 🟢 QR Payload data structure incorporating activeQrToken
+  // 🟢 QR Payload data structure incorporating activeQrToken, competition & age group
   const qrPayload = JSON.stringify({
-    qrToken: activeQrToken, // 👈 Explicit qrToken passed to QR code
+    qrToken: activeQrToken,
     eid: eventId,
     cat: normalizedCategory,
+    comp: competitionTitle || undefined,
+    ageGrp: ageGroupLabel || undefined,
     food: isFoodIncluded,
     ts: Date.now(),
   });
@@ -233,19 +233,31 @@ export default function TicketQR({
         </div>
 
         {/* ATTENDEE INFO */}
-        <div className="text-center mb-5">
+        <div className="text-center mb-5 w-full">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Pass Holder</p>
           <h3 className="text-lg font-black text-slate-800 tracking-tight leading-tight mt-0.5">
             {userName}
           </h3>
-          <span className="inline-block px-3 py-0.5 mt-2 text-xs font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200 tracking-wide uppercase">
-            {normalizedCategory} PASS
-          </span>
-           {/* 🏆 COMPETITION TITLE DISPLAY */}
+          
+          <div className="flex flex-wrap items-center justify-center gap-1.5 mt-2">
+            <span className="inline-block px-3 py-0.5 text-xs font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200 tracking-wide uppercase">
+              {normalizedCategory} PASS
+            </span>
+          </div>
+
+          {/* 🏆 COMPETITION TITLE DISPLAY */}
           {competitionTitle && (
-            <p className="text-md font-bold text-indigo-600 tracking-wide mt-2">
-              🏆 {competitionTitle}
-            </p>
+            <div className="mt-2.5 p-2 bg-indigo-50 border border-indigo-100 rounded-xl">
+              <p className="text-md font-bold text-indigo-700 tracking-wide">
+                🏆 {competitionTitle}
+              </p>
+               {/* 🟢 AGE GROUP BADGE */}
+            {ageGroupLabel && (
+              <span className="inline-block px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-300 tracking-wide">
+                🎯 {ageGroupLabel}
+              </span>
+            )}
+            </div>
           )}
         </div>
 

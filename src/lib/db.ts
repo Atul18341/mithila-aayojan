@@ -4,8 +4,8 @@ import Dexie, { Table } from 'dexie';
 // Unified Attendee Category Definitions matching form matrices
 export type AttendeeCategory = 
   | 'patron' 
-  | 'dignitary'
-  | 'vip'
+  | 'dignitary' 
+  | 'vip' 
   | 'sponsor' // 🚀 Dedicated commercial partner pass tracking
   | 'speaker' 
   | 'artisan' 
@@ -16,11 +16,23 @@ export type AttendeeCategory =
   | 'event-participant'
   | 'ops-team';
 
+// 🟢 Approach 1: Nested Age Group Definition
+export interface AgeGroup {
+  id: string;
+  label: string;
+  code: string;
+  minAge?: number;
+  maxAge?: number;
+}
+
+// 🟢 SubCompetition with nested age groups and rules
 export interface SubCompetition {
   id: string;
   title: string;
   code: string;
   category?: string;
+  rules?: string;
+  ageGroups?: AgeGroup[];
 }
 
 // Shared taxonomy filter rule
@@ -29,14 +41,14 @@ export const getApplicableCategoriesForType = (eventType: string): AttendeeCateg
     case 'conference':
     case 'summit':
       // Corporate pipelines map distinct corporate sponsors alongside invite-only VIPs
-      return ['patron', 'dignitary', 'vip', 'sponsor', 'speaker', 'delegate', 'exhibitor', 'ops-team','general-public'];
+      return ['patron', 'dignitary', 'vip', 'sponsor', 'speaker', 'delegate', 'exhibitor', 'ops-team', 'general-public'];
     case 'workshop':
     case 'training':
       // Knowledge tracks collapse commercial tiers to focus purely on trainers and scholars
       return ['speaker', 'trainee', 'ops-team'];
     case 'event': // Sanwaad / Cultural Festivals
       // Decentralized community festivals map patrons, official VIP guests, and corporate sponsors explicitly
-      return ['patron', 'dignitary', 'vip', 'sponsor', 'artisan', 'general-public', 'event-participant','ops-team'];
+      return ['patron', 'dignitary', 'vip', 'sponsor', 'artisan', 'general-public', 'event-participant', 'ops-team'];
     case 'celebration':
     case 'private-party':
       // Social events strip all corporate business layers (exhibitors, sponsors, speakers)
@@ -58,8 +70,8 @@ export interface Events {
   createdAt: number;
   syncStatus: 'synced' | 'pending';
   date?: string;
-  startTime?: string; // 🚀 ADDED: Event Temporal Window bounds
-  endTime?: string;   // 🚀 ADDED: Event Temporal Window bounds
+  startTime?: string;
+  endTime?: string;
   registrationEndDate?: string; 
   location?: string;
   tagline?: string;
@@ -76,14 +88,14 @@ export interface Events {
   coverImageUrl?: string;
   posterImageUrl?: string;
   isMultiCompetition?: boolean; // 🟢 Multi-Competition Flag
-  competitions?: SubCompetition[]; // 🟢 Multi-Competition Array Storage
+  competitions?: SubCompetition[]; // 🟢 Multi-Competition Array Storage with Age Groups & Rules
   visibility?: {
     map: boolean;
     rsvp: boolean;
     schedule: boolean;
     gallery: boolean;
   };
-  // 🚀 ADDED: Comprehensive Catering & Food Operational Parameters
+  // Comprehensive Catering & Food Operational Parameters
   foodConfig?: {
     enabled: boolean;
     strategy: 'complimentary' | 'coupon-based' | 'paid-buffet' | 'self-arranged';
@@ -91,7 +103,7 @@ export interface Events {
     availableForAll: 'yes' | 'no';
     allowedCategories: AttendeeCategory[];
   };
-  // 🚀 ADDED: Category Pricing Logic and Statutory Engines
+  // Category Pricing Logic and Statutory Engines
   pricingConfig?: {
     isRequired: boolean;
     baseFee: number;
@@ -114,6 +126,10 @@ export interface Guest {
   phone?: string;                       // Optional contact details[cite: 9]
   category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 9]
   
+  // 🟢 Competition & Age Group Meta for check-in
+  competitionTitle?: string | null;
+  ageGroupLabel?: string | null;
+
   // Gate Security & QR Verification
   qrToken: string;                      // Encrypted or unique QR payload string
   // Check-In Operations
@@ -150,7 +166,6 @@ export interface ManagerEvents {
   syncStatus: 'synced' | 'pending';
 }
 
-// 🚀 REGISTERED NEW SEPARATE INTERFACE FOR PUBLIC REGISTRATION FLOW DETAILS
 export interface EventRegistration {
   // Primary Keys & Identifiers
   id?: number;                         // Local Dexie auto-increment ID
@@ -161,8 +176,17 @@ export interface EventRegistration {
   email: string;
   phone: string;
   category: AttendeeCategory;
-  competitionId?: string | null;       // 🟢 Stores selected sub-competition ID
-  competitionTitle?: string | null;    // 🟢 Stores selected sub-competition title
+  
+  // 🟢 Selected Competition & Age Group Identification
+  competitionId?: string | null;
+  competitionTitle?: string | null;
+  ageGroupId?: string | null;
+  ageGroupLabel?: string | null;
+
+  // 🟢 Verified Age Metadata
+  isAgeVerified?: boolean;
+  verifiedAge?: number | null;
+
   customAnswers: Record<string, any>;
   // Financial Audit Breakdown
   basePrice: number;
@@ -182,17 +206,17 @@ export class AayojanDB extends Dexie {
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
-  eventRegistrations!: Table<EventRegistration>; // 🚀 REGISTERED NEW ENTRY TABLE EXPLICITLY[cite: 9]
+  eventRegistrations!: Table<EventRegistration>; //[cite: 9]
 
   constructor() {
     super('MithilaAayojanDB');
-    // Bumped database version state layer to clean internal store layouts[cite: 9]
-    this.version(7).stores({
+    // Bumped database version to 8 to update indices for age groups & competitions[cite: 9]
+    this.version(8).stores({
       events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, createdAt, syncStatus',
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus',
       users: '++id, email, identifier, role, activeEventId, syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',
-      eventRegistrations: '++id, eventId, email, category, qrToken, competitionId, status, syncStatus'
+      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus'
     });
   }
 }

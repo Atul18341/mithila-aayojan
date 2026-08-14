@@ -1,3 +1,4 @@
+// src/components/EventRegistration/UniversalRegistrationForm.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -5,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
   Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
-  Lock, CalendarX, Ticket, Trophy, AlertCircle 
+  Lock, CalendarX, Ticket, Trophy, AlertCircle, Layers
 } from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
@@ -25,11 +26,21 @@ export type AttendeeCategory =
   | 'event-participant'
   | 'ops-team';
 
+export interface AgeGroup {
+  id: string;
+  label: string;
+  code: string;
+  minAge?: number;
+  maxAge?: number;
+}
+
 export interface SubCompetition {
   id: string;
   title: string;
   code: string;
   category?: string;
+  rules?: string;
+  ageGroups?: AgeGroup[];
 }
 
 const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
@@ -66,7 +77,7 @@ interface EventData {
   type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference';
   registrationEndDate?: string;
   registration_end_date?: string;
-  isMultiCompetition?: boolean; // 🟢 Read multi-competition flag
+  isMultiCompetition?: boolean;
   competitions?: SubCompetition[];
   pricingConfig?: {
     isRequired: boolean;
@@ -102,6 +113,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     phone: '',
     category: '' as AttendeeCategory | '',
     competitionId: '', // 🟢 Selected sub-competition ID
+    ageGroupId: '',    // 🟢 Selected age group ID within track
     customAnswers: {} as Record<string, string>
   });
 
@@ -125,7 +137,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
   let isRegistrationClosed = false;
 
   if (cutoffDateStr) {
-    // Parse cutoff date set to 23:59:59 on target day
     const cutoffDate = new Date(`${cutoffDateStr}T23:59:59`);
     if (!isNaN(cutoffDate.getTime()) && Date.now() > cutoffDate.getTime()) {
       isRegistrationClosed = true;
@@ -169,6 +180,10 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
     loadCompetitionsFromDb();
   }, [event.id, event.slug]);
+
+  // Selected Competition Reference
+  const selectedCompetition = competitionsList.find(c => c.id === formData.competitionId);
+  const availableAgeGroups = selectedCompetition?.ageGroups || [];
 
   // Calculate fees dynamically whenever category selection changes
   useEffect(() => {
@@ -224,6 +239,13 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     }));
   };
 
+  const formatAgeBadgeText = (min?: number, max?: number) => {
+    if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
+    if (min !== undefined) return `≥ ${min} yrs`;
+    if (max !== undefined) return `≤ ${max} yrs`;
+    return 'Open Bracket';
+  };
+
   /**
    * Fail-safe QR Token Generator
    */
@@ -264,7 +286,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
     const data = await response.json();
 
-    // 🟢 Handle 409 Conflict / Duplicate Entries explicitly
     if (response.status === 409 || data.isDuplicate) {
       const queryParam = registrationPayload.phone || registrationPayload.email;
       const errorObj = {
@@ -289,8 +310,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     const qrToken = generateQrToken(event, formData.phone);
     const isOnline = typeof window !== 'undefined' && navigator.onLine;
 
-    // Resolve selected competition object
+    // Resolve selected competition & age group objects
     const selectedComp = competitionsList.find(c => c.id === formData.competitionId);
+    const selectedAgeGroup = selectedComp?.ageGroups?.find(g => g.id === formData.ageGroupId);
 
     const registrationPayload = {
       registrationId: registrationId,
@@ -299,8 +321,10 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       email: formData.email,
       phone: formData.phone,
       category: formData.category as AttendeeCategory,
-      competitionId: formData.competitionId || null, // 🟢 Save competition ID
-      competitionTitle: selectedComp ? selectedComp.title : null, // 🟢 Save competition title
+      competitionId: formData.competitionId || null,
+      competitionTitle: selectedComp ? selectedComp.title : null,
+      ageGroupId: formData.ageGroupId || null, // 🟢 Age Group identifier
+      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null, // 🟢 Age Group label
       customAnswers: formData.customAnswers,
       
       basePrice: pricing.basePrice,
@@ -323,6 +347,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       email: formData.email,
       phone: formData.phone,
       category: formData.category,
+      competitionTitle: selectedComp ? selectedComp.title : null,
+      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null,
       
       qrToken: qrToken,
       isCheckedIn: false,
@@ -335,7 +361,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       registeredAt: Date.now()
     };
 
-    // First, sync with online server (will throw error if duplicate)
     if (isOnline) {
       await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
         razorpay_order_id: paymentDetails.orderId,
@@ -344,7 +369,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       } : undefined);
     }
 
-    // Write to Dexie DB after server approval
     if (typeof window !== 'undefined' && db) {
       try {
         await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
@@ -364,9 +388,18 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     e.preventDefault();
     setDuplicateError(null);
 
-    // Block submission if cutoff has elapsed
     if (isRegistrationClosed) {
       alert('Registrations for this event are closed.');
+      return;
+    }
+
+    // Require Age Group selection if track contains multiple age groups
+    if (
+      formData.category === 'event-participant' && 
+      availableAgeGroups.length > 0 && 
+      !formData.ageGroupId
+    ) {
+      alert('Please select an Age Group / Category for this competition.');
       return;
     }
 
@@ -470,7 +503,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     }
   };
 
-  // 🔴 LOCKED REGISTRATION VIEW WHEN DEADLINE HAS PASSED
+  // 🔴 LOCKED REGISTRATION VIEW
   if (isRegistrationClosed) {
     return (
       <div className="w-full text-center p-6 bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 rounded-2xl space-y-4 animate-in fade-in duration-300">
@@ -491,7 +524,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           </p>
         </div>
 
-        {/* CTA TO RETRIEVE EXISTING TICKET PASS */}
         <div className="pt-2 border-t border-amber-500/10">
           <Link
             href="/find-ticket"
@@ -611,7 +643,15 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             <select
               required
               value={formData.category}
-              onChange={e => setFormData({...formData, category: e.target.value as AttendeeCategory})}
+              onChange={e => {
+                const selectedCat = e.target.value as AttendeeCategory;
+                setFormData({
+                  ...formData, 
+                  category: selectedCat,
+                  competitionId: selectedCat === 'event-participant' ? formData.competitionId : '',
+                  ageGroupId: selectedCat === 'event-participant' ? formData.ageGroupId : ''
+                });
+              }}
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer"
             >
               <option value="" className="text-slate-400">Select attendee profile type...</option>
@@ -629,33 +669,68 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
         {/* 🟢 MULTI-COMPETITION SELECTION FIELD */}
         {isMultiCompActive && formData.category === 'event-participant' && (
-          <div className="space-y-1 animate-in fade-in duration-200">
-            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-              Select Competition / Track <span className="text-red-400 font-bold">*</span>
-            </label>
-            <div className="relative group">
-              <Trophy size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
-              <select
-                required
-                value={formData.competitionId}
-                onChange={e => setFormData({...formData, competitionId: e.target.value})}
-                disabled={isLoadingCompetitions}
-                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer disabled:opacity-50"
-              >
-                <option value="" className="text-slate-400">
-                  {isLoadingCompetitions 
-                    ? "Loading competitions..." 
-                    : competitionsList.length === 0 
-                      ? "No sub-competitions available" 
-                      : "Select sub-competition to enter..."}
-                </option>
-                {competitionsList.map(comp => (
-                  <option key={comp.id} value={comp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
-                    [{comp.code}] {comp.title} {comp.category ? `(${comp.category})` : ''}
+          <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-white/5 animate-in fade-in duration-200">
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+                Select Competition / Track <span className="text-red-400 font-bold">*</span>
+              </label>
+              <div className="relative group">
+                <Trophy size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                <select
+                  required
+                  value={formData.competitionId}
+                  onChange={e => {
+                    const newCompId = e.target.value;
+                    setFormData({
+                      ...formData, 
+                      competitionId: newCompId,
+                      ageGroupId: '' // Reset age group when track changes
+                    });
+                  }}
+                  disabled={isLoadingCompetitions}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer disabled:opacity-50"
+                >
+                  <option value="" className="text-slate-400">
+                    {isLoadingCompetitions 
+                      ? "Loading competitions..." 
+                      : competitionsList.length === 0 
+                        ? "No sub-competitions available" 
+                        : "Select sub-competition to enter..."}
                   </option>
-                ))}
-              </select>
+                  {competitionsList.map(comp => (
+                    <option key={comp.id} value={comp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                      [{comp.code}] {comp.title} {comp.category ? `(${comp.category})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {/* 🟢 DYNAMIC NESTED AGE CATEGORY SELECTION FIELD */}
+            {availableAgeGroups.length > 0 && (
+              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1 flex items-center justify-between">
+                  <span>Select Age Group / Category <span className="text-red-400 font-bold">*</span></span>
+                  <span className="text-[9px] lowercase opacity-75 font-normal">({availableAgeGroups.length} brackets available)</span>
+                </label>
+                <div className="relative group">
+                  <Layers size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                  <select
+                    required
+                    value={formData.ageGroupId}
+                    onChange={e => setFormData({...formData, ageGroupId: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer"
+                  >
+                    <option value="" className="text-slate-400">Select eligible age bracket...</option>
+                    {availableAgeGroups.map(grp => (
+                      <option key={grp.id} value={grp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                        {grp.label} ({formatAgeBadgeText(grp.minAge, grp.maxAge)}) [{grp.code}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

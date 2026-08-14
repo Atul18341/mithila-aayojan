@@ -1,10 +1,11 @@
+// src/app/find-ticket/page.tsx
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import TicketQR from '@/components/TicketQR';
 import { toPng } from 'html-to-image';
-import { Loader2, Search, ArrowLeft, Ticket, AlertCircle, Sun, Moon } from 'lucide-react';
+import { Loader2, Search, ArrowLeft, Ticket, AlertCircle, Sun, Moon, CloudDownload } from 'lucide-react';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -14,7 +15,8 @@ interface MatchedAttendee {
   qrToken: string;
   name: string;
   category: string;
-  competitionTitle?: string; // 🟢 Sub-Competition Title field
+  competitionTitle?: string;
+  ageGroupLabel?: string;
   eventId: number;
   eventName: string;
   eventDetails?: {
@@ -29,13 +31,10 @@ export default function FindTicketPage() {
   const ticketRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
 
-  // Theme Context integration with fallback state
   let themeContext: { isDark: boolean; toggleTheme: () => void } | null = null;
   try {
     themeContext = useTheme();
-  } catch (e) {
-    // Graceful fallback if context provider is not wrapped higher up
-  }
+  } catch (e) {}
 
   const [localIsDark, setLocalIsDark] = useState<boolean>(true);
   const isDark = themeContext ? themeContext.isDark : localIsDark;
@@ -48,8 +47,9 @@ export default function FindTicketPage() {
   const [searched, setSearched] = useState<boolean>(false);
   const [matchedAttendee, setMatchedAttendee] = useState<MatchedAttendee | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [dataSource, setDataSource] = useState<'local' | 'cloud' | null>(null);
 
-  // 🟢 Core Search Engine Extracted to Handle Both Manual Form Submission & Direct Query Params
+  // 🟢 Hybrid Search: Dexie LocalDB -> PostgreSQL Online Endpoint -> Dexie Cache Write
   const executeSearch = useCallback(async (searchQuery: string) => {
     const cleanQuery = searchQuery.trim();
     if (!cleanQuery) return;
@@ -58,6 +58,7 @@ export default function FindTicketPage() {
     setSearched(true);
     setErrorMessage('');
     setMatchedAttendee(null);
+    setDataSource(null);
 
     try {
       if (!db.isOpen()) await db.open();
@@ -66,7 +67,7 @@ export default function FindTicketPage() {
       const lowerQuery = cleanQuery.toLowerCase();
       const sanitizedPhone = cleanQuery.replace(/\D/g, '');
 
-      // 🔍 1. Smart Multi-Field Indexed Lookup Sequence
+      // 🔍 1. IndexedDB Smart Lookup Sequence
       guestRecord = await db.guests
         .where('qrToken')
         .equals(cleanQuery)
@@ -75,10 +76,7 @@ export default function FindTicketPage() {
         .first();
 
       if (!guestRecord && cleanQuery.includes('@')) {
-        guestRecord = await db.guests
-          .where('email')
-          .equals(lowerQuery)
-          .first();
+        guestRecord = await db.guests.where('email').equals(lowerQuery).first();
       }
 
       if (!guestRecord) {
@@ -90,7 +88,7 @@ export default function FindTicketPage() {
           .first();
       }
 
-      // 🔍 2. Universal Fallback Matcher
+      // Universal IndexedDB fallback
       if (!guestRecord) {
         const allGuests = await db.guests.toArray();
         guestRecord = allGuests.find((g: any) => {
@@ -106,119 +104,123 @@ export default function FindTicketPage() {
         });
       }
 
-      if (!guestRecord) {
-        setErrorMessage(`No pass found matching "${cleanQuery}". Please check your details and try again.`);
-        return;
-      }
+      // 🔍 2. If Found in Local Dexie DB
+      if (guestRecord) {
+        const activeEventId = Number(guestRecord.eventId);
 
-      const activeEventId = Number(guestRecord.eventId);
+        let localEvent: any = null;
+        if (activeEventId) {
+          localEvent = await db.events
+            .where('id')
+            .equals(activeEventId)
+            .or('slug')
+            .equals(guestRecord.eventId)
+            .first();
+        }
 
-      // 🟢 3. Fetch event banner/details from db.events
-      let localEvent: any = null;
-      if (activeEventId) {
-        localEvent = await db.events
-          .where('id')
-          .equals(activeEventId)
-          .or('slug')
-          .equals(guestRecord.eventId)
-          .first();
-      }
-
-      // 🟢 4. Fetch competition registration ONLY if pass is of an event participant
-      let localRegistration: any = null;
-      const categoryUpper = String(guestRecord.category || guestRecord.type || '').trim().toUpperCase();
-      const isParticipant = 
-        categoryUpper.includes('PARTICIPANT') || 
-        categoryUpper.includes('COMPETITOR') ||
-        categoryUpper === 'EVENT-PARTICIPANT';
-
-      if (isParticipant && db.eventRegistrations && activeEventId) {
-        const guestQr = guestRecord.qrToken || guestRecord.qr_token || guestRecord.guestId;
-        const guestPhone = guestRecord.phone ? String(guestRecord.phone).replace(/\D/g, '') : '';
-        const guestEmail = guestRecord.email ? String(guestRecord.email).toLowerCase() : '';
-
-        // Multi-field identifier matching combined with eventId filter
-        localRegistration = await db.eventRegistrations
-          .filter((reg: any) => {
-            const matchesEvent = Number(reg.eventId) === activeEventId;
-            if (!matchesEvent) return false;
-
-            const regQr = reg.qrToken || reg.qr_token || reg.guestId;
-            const regPhone = reg.phone ? String(reg.phone).replace(/\D/g, '') : '';
-            const regEmail = reg.email ? String(reg.email).toLowerCase() : '';
-
-            const matchesQr = Boolean(guestQr && regQr && guestQr === regQr);
-            const matchesPhone = Boolean(guestPhone && regPhone && (guestPhone === regPhone || regPhone.includes(guestPhone) || guestPhone.includes(regPhone)));
-            const matchesEmail = Boolean(guestEmail && regEmail && guestEmail === regEmail);
-
-            return matchesQr || matchesPhone || matchesEmail;
-          })
-          .first();
-
-        // Fallback: If no exact user identifier match was found, fetch by eventId alone
-        if (!localRegistration) {
+        let localRegistration: any = null;
+        if (db.eventRegistrations && activeEventId) {
           localRegistration = await db.eventRegistrations
             .filter((reg: any) => Number(reg.eventId) === activeEventId)
             .first();
         }
+
+        const coverImage = localEvent?.coverImageUrl || localEvent?.coverBlob || localEvent?.image || '';
+        const resolvedEventName = localEvent?.name || localEvent?.eventName || guestRecord?.eventName || 'Event Pass';
+        const resolvedQrToken = guestRecord.qrToken || guestRecord.qr_token || guestRecord.guestId || `PASS-${guestRecord.id}`;
+        
+        const resolvedCompetitionTitle = localRegistration?.competitionTitle || guestRecord.competitionTitle || undefined;
+        const resolvedAgeGroupLabel = localRegistration?.ageGroupLabel || guestRecord.ageGroupLabel || undefined;
+
+        setMatchedAttendee({
+          id: String(guestRecord.id || guestRecord.guestId || `GUEST-${Date.now()}`),
+          qrToken: resolvedQrToken,
+          name: guestRecord.name,
+          category: guestRecord.category || guestRecord.type || 'General',
+          competitionTitle: resolvedCompetitionTitle,
+          ageGroupLabel: resolvedAgeGroupLabel,
+          eventId: activeEventId,
+          eventName: resolvedEventName,
+          eventDetails: {
+            eventName: resolvedEventName,
+            date: localEvent?.date || '',
+            venue: localEvent?.venue || localEvent?.location || '',
+            coverImageUrl: coverImage,
+          },
+        });
+        setDataSource('local');
+        setLoading(false);
+        return;
       }
 
-      const coverImage = 
-        localEvent?.coverImageUrl || 
-        localEvent?.coverBlob || 
-        localEvent?.image || 
-        localEvent?.banner || 
-        "";
+      // 🔍 3. If Not in Local Storage -> Online PostgreSQL Cloud Fallback
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        const res = await fetch(`/api/ticket/find?q=${encodeURIComponent(cleanQuery)}`);
 
-      const resolvedEventName = 
-        localEvent?.name || 
-        localEvent?.eventName || 
-        guestRecord?.eventName || 
-        "Event Pass";
+        if (res.ok) {
+          const cloudData = await res.json();
 
-      const resolvedQrToken = 
-        guestRecord.qrToken || 
-        guestRecord.qr_token || 
-        guestRecord.guestId || 
-        `PASS-${guestRecord.id}`;
+          if (cloudData.success && cloudData.data) {
+            const { registration, guest, event } = cloudData.data;
 
-      // 🏆 Extract competition title conditionally if participant registration exists
-      const resolvedCompetitionTitle = localRegistration ? (
-        localRegistration?.competitionTitle || 
-        localRegistration?.competition_title || 
-        localRegistration?.competitionName ||
-        localRegistration?.competition ||
-        guestRecord.competitionTitle || 
-        guestRecord.competition_title || 
-        guestRecord.competitionName ||
-        undefined
-      ) : undefined;
+            // Cache retrieved record into local Dexie for offline readiness
+            await db.transaction('rw', [db.guests, db.eventRegistrations, db.events], async () => {
+              if (guest) await db.guests.put(guest);
+              if (registration) await db.eventRegistrations.put(registration);
+              if (event && event.id) {
+                await db.events.put({
+                  id: Number(event.id),
+                  name: event.name,
+                  slug: event.slug,
+                  date: event.date,
+                  venueName: event.venue,
+                  coverImageUrl: event.coverImageUrl,
+                  posterImageUrl: event.posterImageUrl,
+                  syncStatus: 'synced',
+                  createdAt: Date.now(),
+                  hypeThreshold: 0,
+                  protocol: 'open-registration',
+                  status: 'published',
+                  type: 'event',
+                  coverBlob: null,
+                  posterBlob: null
+                });
+              }
+            });
 
-      setMatchedAttendee({
-        id: String(guestRecord.id || guestRecord.guestId || `GUEST-${Date.now()}`),
-        qrToken: resolvedQrToken,
-        name: guestRecord.name,
-        category: guestRecord.category || guestRecord.type || 'General',
-        competitionTitle: resolvedCompetitionTitle,
-        eventId: activeEventId,
-        eventName: resolvedEventName,
-        eventDetails: {
-          eventName: resolvedEventName,
-          date: localEvent?.date || "",
-          venue: localEvent?.venue || localEvent?.location || "",
-          coverImageUrl: coverImage,
+            setMatchedAttendee({
+              id: String(guest.guestId || `GUEST-${Date.now()}`),
+              qrToken: guest.qrToken,
+              name: guest.name,
+              category: guest.category || 'General',
+              competitionTitle: guest.competitionTitle || registration.competitionTitle || undefined,
+              ageGroupLabel: guest.ageGroupLabel || registration.ageGroupLabel || undefined,
+              eventId: Number(event.id || registration.eventId),
+              eventName: event.name || 'Event Pass',
+              eventDetails: {
+                eventName: event.name || 'Event Pass',
+                date: event.date || '',
+                venue: event.venue || '',
+                coverImageUrl: event.coverImageUrl || '',
+              },
+            });
+
+            setDataSource('cloud');
+            setLoading(false);
+            return;
+          }
         }
-      });
+      }
 
+      setErrorMessage(`No pass found matching "${cleanQuery}". Please verify your details and try again.`);
     } catch (err: any) {
-      console.error("Failed to query IndexedDB for ticket:", err);
-      setErrorMessage("An error occurred while retrieving your pass details.");
+      console.error('Search evaluation error:', err);
+      setErrorMessage('An error occurred while retrieving your pass details.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // 🟢 Extract search terms from URL search parameters on load
   useEffect(() => {
     const qrTokenParam = searchParams.get('qrToken') || searchParams.get('qr_token') || searchParams.get('qr');
     const emailParam = searchParams.get('email');
@@ -252,7 +254,6 @@ export default function FindTicketPage() {
     }
   };
 
-  // Dynamic theme mapping
   const theme = {
     bg: isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900',
     card: isDark ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200 shadow-xl',
@@ -275,11 +276,11 @@ export default function FindTicketPage() {
             Find Your Event Pass
           </h1>
           <p className={`text-xs ${theme.subText} mt-1`}>
-            Search registered passes saved in local device storage.
+            Locates your pass offline from device memory or online from cloud storage[cite: 16].
           </p>
         </div>
 
-        {/* SINGLE UNIFIED SEARCH INPUT FORM */}
+        {/* UNIFIED SEARCH FORM */}
         <form onSubmit={handleSearch} className="space-y-4">
           <div className="space-y-1.5">
             <label className={`text-[10px] font-black uppercase tracking-widest ${theme.subText} ml-1`}>
@@ -328,10 +329,14 @@ export default function FindTicketPage() {
       {/* MATCHED PASS RESULTS & TICKET QR */}
       {matchedAttendee && (
         <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95 duration-300">
-          
-          <div className="text-center mb-4">
-            <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
-              ✓ Registration Match Found
+          <div className="text-center mb-4 flex items-center gap-2">
+            <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full flex items-center gap-1.5">
+              <span>✓ Registration Match Found</span>
+              {dataSource === 'cloud' && (
+                <span className="text-[10px] font-medium opacity-80 flex items-center gap-0.5 text-blue-400">
+                  <CloudDownload size={11} /> (Synced)
+                </span>
+              )}
             </span>
           </div>
 
@@ -343,6 +348,7 @@ export default function FindTicketPage() {
               userName={matchedAttendee.name}
               userCategory={matchedAttendee.category}
               competitionTitle={matchedAttendee.competitionTitle}
+              ageGroupLabel={matchedAttendee.ageGroupLabel}
               eventId={matchedAttendee.eventId}
               eventDetails={matchedAttendee.eventDetails}
             />
@@ -361,13 +367,11 @@ export default function FindTicketPage() {
             </button>
 
             <p className={`text-[11px] text-center ${theme.subText}`}>
-              Save this ticket image to your mobile gallery for offline gate scanning.
+              Save this ticket image to your mobile gallery for offline gate scanning[cite: 16].
             </p>
           </div>
-
         </div>
       )}
-
     </main>
   );
 }

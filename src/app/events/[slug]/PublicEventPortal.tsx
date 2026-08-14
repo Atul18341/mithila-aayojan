@@ -7,10 +7,27 @@ import {
   Clock, Award, Users, CheckCircle2, ChevronDown, 
   Trophy, ExternalLink, HelpCircle, Navigation,
   Check, Hourglass, Sparkles, AlertCircle,
-  ArrowUpRight, Bookmark
+  ArrowUpRight, FileText, ChevronUp
 } from 'lucide-react';
 import UniversalRegistrationForm from '../../../components/EventRegistration';
 import { LinkedinIcon } from '@/lib/SocialIcons';
+
+export interface AgeGroup {
+  id: string;
+  label: string;
+  code: string;
+  minAge?: number;
+  maxAge?: number;
+}
+
+export interface SubCompetition {
+  id: string;
+  title: string;
+  code: string;
+  category?: string;
+  ageGroups?: AgeGroup[];
+  rules?: string;
+}
 
 interface Speaker {
   name: string;
@@ -55,7 +72,7 @@ interface PublicEventPageProps {
     image?: string;
     organizedBy?: string;
     isMultiCompetition?: boolean;
-    competitions?: Array<{ id: string; title: string; code: string; category?: string }>;
+    competitions?: SubCompetition[];
     speakers?: Speaker[];
     agenda?: AgendaItem[];
     faqs?: FAQItem[];
@@ -72,17 +89,16 @@ const DEFAULT_COVER_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20
 export default function PublicEventPortal({ event }: PublicEventPageProps) {
   const [isDark, setIsDark] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
+  const [openRulesCompId, setOpenRulesCompId] = useState<string | null>(null);
   const [copiedShare, setCopiedShare] = useState(false);
   const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number; totalMs: number } | null>(null);
 
-  // ⏳ Robust Date Resolver & Real-time Countdown
   useEffect(() => {
     const rawDateStr = event?.registrationEndDate || event?.registration_end_date || event?.date;
     if (!rawDateStr || typeof rawDateStr !== 'string') return;
 
     let targetTimestamp: number;
 
-    // Check if format is pure date (YYYY-MM-DD) or already contains time/ISO specifiers
     if (rawDateStr.includes('T') || rawDateStr.includes(':')) {
       targetTimestamp = new Date(rawDateStr).getTime();
     } else {
@@ -109,7 +125,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
       });
     };
 
-    // Run immediately on mount
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
@@ -123,9 +138,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
           text: event?.tagline || `Join ${event?.name}`,
           url: window.location.href,
         });
-      } catch (err) {
-        // Handled fallback
-      }
+      } catch {}
     } else if (typeof window !== 'undefined') {
       await navigator.clipboard.writeText(window.location.href);
       setCopiedShare(true);
@@ -210,13 +223,19 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
     }
   ];
 
-  // 🚀 Sticky Countdown Alert: Triggers when remaining time is less than or equal to 24 hours (86,400,000 ms)
+  const formatAgeBadge = (min?: number, max?: number) => {
+    if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
+    if (min !== undefined) return `≥ ${min} yrs`;
+    if (max !== undefined) return `≤ ${max} yrs`;
+    return 'Open Age';
+  };
+
   const isFinalCountdown = !!(timeLeft && timeLeft.totalMs > 0 && timeLeft.totalMs <= 24 * 60 * 60 * 1000);
 
   return (
     <div className={`min-h-screen font-sans transition-colors duration-200 ${isDark ? 'bg-[#090D16] text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* 🚀 TOP STICKY NOTIFICATION BANNER (Appears when ≤ 24 Hours remain) */}
+      {/* 🚀 TOP STICKY NOTIFICATION BANNER (<= 24 Hours) */}
       {isFinalCountdown && (
         <aside aria-label="Final registration countdown alert" className="sticky top-0 z-50 w-full backdrop-blur-md bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white shadow-xl border-b border-white/15 animate-in slide-in-from-top duration-300">
           <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2 text-xs font-semibold">
@@ -399,6 +418,101 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               </div>
             </div>
 
+            {/* 🏆 COMPETITION TRACKS & NESTED AGE GROUPS */}
+            {event?.isMultiCompetition && event.competitions && event.competitions.length > 0 && (
+              <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
+                <div className="flex items-center justify-between gap-3 mb-6">
+                  <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                    <Trophy size={20} className="text-amber-500" />
+                    <span>Competitions & Age Groups</span>
+                  </h3>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    {event.competitions.length} Tracks Available
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  {event.competitions.map((comp) => {
+                    const isRulesOpen = openRulesCompId === comp.id;
+                    const hasAgeGroups = comp.ageGroups && comp.ageGroups.length > 0;
+
+                    return (
+                      <div 
+                        key={comp.id} 
+                        className={`p-5 rounded-2xl border transition-all space-y-3.5 ${
+                          isDark ? 'bg-slate-800/30 border-slate-800 hover:border-slate-700' : 'bg-slate-50/80 border-slate-100 hover:border-slate-300'
+                        }`}
+                      >
+                        {/* Title & Category Line */}
+                        <div className="flex flex-wrap items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-[11px] font-black font-mono uppercase px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                              {comp.code}
+                            </span>
+                            <h4 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                              {comp.title}
+                            </h4>
+                          </div>
+
+                          {comp.category && (
+                            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-200/60 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                              {comp.category}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Nested Age Groups Section */}
+                        {hasAgeGroups && (
+                          <div className="space-y-1.5 pt-1">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              <Users size={12} className="text-blue-500" />
+                              <span>Eligible Age Groups:</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {comp.ageGroups!.map(grp => (
+                                <div 
+                                  key={grp.id}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                >
+                                  <span>{grp.label}</span>
+                                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/10 dark:bg-black/30 font-bold">
+                                    {formatAgeBadge(grp.minAge, grp.maxAge)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Expandable Rules & Regulations */}
+                        {comp.rules && (
+                          <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setOpenRulesCompId(isRulesOpen ? null : comp.id)}
+                              className="flex items-center justify-between w-full text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <FileText size={13} className="text-blue-500" />
+                                <span>Track Rules & Guidelines</span>
+                              </span>
+                              {isRulesOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+
+                            {isRulesOpen && (
+                              <div className="mt-2.5 p-3.5 rounded-xl border bg-white dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 text-xs leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap animate-in fade-in duration-200">
+                                {comp.rules}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* SPEAKERS / GUESTS */}
             {event?.speakers && event.speakers.length > 0 && (
               <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
@@ -470,32 +584,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               </div>
             )}
 
-            {/* COMPETITION TRACKS */}
-            {event?.isMultiCompetition && event.competitions && event.competitions.length > 0 && (
-              <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
-                <h3 className="text-lg font-bold tracking-tight mb-5 flex items-center gap-2">
-                  <Trophy size={20} className="text-amber-500" />
-                  <span>Competition Categories</span>
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {event.competitions.map((comp) => (
-                    <div 
-                      key={comp.id} 
-                      className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-800/30 border-slate-800' : 'bg-slate-50 border-slate-100'}`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                          {comp.code}
-                        </span>
-                        {comp.category && <span className="text-xs text-slate-400">{comp.category}</span>}
-                      </div>
-                      <h4 className="text-sm font-bold">{comp.title}</h4>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* FAQ ACCORDION */}
             <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
               <h3 className="text-lg font-bold tracking-tight mb-5 flex items-center gap-2">
@@ -548,15 +636,24 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
           {/* RIGHT STICKY REGISTRATION SIDEBAR */}
           <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-8">
             
-            {/* POSTER CARD */}
+            {/* 🟢 POSTER CARD (Proper Containment & Backdrop) */}
             <div className={`rounded-3xl border overflow-hidden shadow-xl ${
               isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
             }`}>
-              <div className="aspect-[4/5] w-full overflow-hidden bg-slate-950 relative group">
+              <div className="aspect-[4/5] w-full overflow-hidden bg-slate-950 relative group flex items-center justify-center p-2">
+                {/* Ambient Blurred Background (fills letterbox space seamlessly) */}
+                <img 
+                  src={resolvedPosterUrl} 
+                  alt="" 
+                  aria-hidden="true"
+                  className="absolute inset-0 w-full h-full object-cover blur-xl opacity-40 scale-110 pointer-events-none" 
+                />
+
+                {/* Main Fully-Contained Poster */}
                 <img 
                   src={resolvedPosterUrl} 
                   alt={`${event?.name} Poster`} 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                  className="relative z-10 max-w-full max-h-full w-auto h-auto object-contain rounded-2xl shadow-md group-hover:scale-[1.02] transition-transform duration-300" 
                   onError={(e) => {
                     e.currentTarget.onerror = null;
                     e.currentTarget.src = DEFAULT_POSTER_SVG;

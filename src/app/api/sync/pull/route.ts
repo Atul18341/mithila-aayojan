@@ -1,5 +1,6 @@
+// src/app/api/sync/pull/route.ts
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -21,9 +22,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing user identity lock identifier' }, { status: 400 });
   }
 
-  let client;
+  let client: PoolClient | null = null;
   try {
     client = await pool.connect();
+
+    // 🟢 Type Guard: Guarantees client is non-null for all subsequent queries
+    if (!client) {
+      throw new Error('Failed to acquire a database connection from pool.');
+    }
 
     // 1. Fetch all events assigned to or created by this volunteer/manager
     const eventsQuery = `
@@ -51,19 +57,43 @@ export async function GET(request: Request) {
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
-      // 3. Fetch all event registrations belonging to the assigned events
+      // 3. 🟢 Fetch all event registrations with complete competition and age group details
       const registrationsQuery = `
-        SELECT * FROM event_registrations 
+        SELECT 
+          id,
+          registration_id,
+          event_id,
+          name,
+          email,
+          phone,
+          category,
+          competition_id,
+          competition_title,
+          age_group_id,
+          age_group_label,
+          is_age_verified,
+          verified_age,
+          custom_answers,
+          base_price,
+          gst_amount,
+          total_price,
+          registration_timestamp,
+          status,
+          sync_status
+        FROM event_registrations 
         WHERE event_id = ANY($1);
       `;
       
       try {
         const registrationsResult = await client.query(registrationsQuery, [eventIds]);
         rawRegistrations = registrationsResult.rows;
-      } catch (regErr) {
-        // Fallback: Query 'registrations' if table is named differently
-        const altQuery = `SELECT * FROM registrations WHERE event_id = ANY($1);`;
-        const altResult = await client.query(altQuery, [eventIds]).catch(() => ({ rows: [] }));
+      } catch {
+        // Fallback: Query 'event_registrations' or 'registrations' if column schema varies
+        const altQuery = `SELECT * FROM event_registrations WHERE event_id = ANY($1);`;
+        const altResult = await client.query(altQuery, [eventIds]).catch(async () => {
+          if (!client) return { rows: [] };
+          return await client.query(`SELECT * FROM registrations WHERE event_id = ANY($1);`, [eventIds]).catch(() => ({ rows: [] }));
+        });
         rawRegistrations = altResult.rows;
       }
 
@@ -76,7 +106,7 @@ export async function GET(request: Request) {
       const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
       rawLinks = linksResult.rows;
 
-      // 🟢 5. RELATIONAL JOIN: PULL VOLUNTEER PROFILES BY JOINING manager_events -> users
+      // 5. RELATIONAL JOIN: PULL VOLUNTEER PROFILES BY JOINING manager_events -> users
       const usersQuery = `
         SELECT DISTINCT 
           u.id,
@@ -97,7 +127,7 @@ export async function GET(request: Request) {
       try {
         const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]);
         rawUsers = usersResult.rows;
-      } catch (userErr) {
+      } catch {
         // Fallback: Query users table directly if JOIN fails
         const assignedEmails = Array.from(new Set(rawLinks.map(l => (l.manager_identifier || '').toLowerCase()).filter(Boolean)));
         if (assignedEmails.length > 0) {
@@ -116,29 +146,43 @@ export async function GET(request: Request) {
     // =========================================================
     
     // Map Events
-    const formattedEvents = rawEvents.map(e => ({
-      id: Number(e.id),
-      name: e.name || '',
-      type: e.type || 'conference',
-      protocol: e.protocol || 'ticketed',
-      status: e.status || 'draft',
-      date: e.date || '',
-      startTime: e.start_time || '',
-      endTime: e.end_time || '',
-      location: e.location || '',
-      tagline: e.tagline || '',
-      description: e.description || '',
-      venueName: e.venue_name || '',
-      slug: e.slug || '',
-      hypeThreshold: Number(e.hype_threshold || 0),
-      visibility: typeof e.visibility === 'string' ? JSON.parse(e.visibility) : (e.visibility || { map: true, rsvp: true, schedule: true, gallery: false }),
-      foodConfig: typeof e.food_config === 'string' ? JSON.parse(e.food_config) : (e.food_config || { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] }),
-      pricingConfig: typeof e.pricing_config === 'string' ? JSON.parse(e.pricing_config) : (e.pricing_config || { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: {} }),
-      cover_image: e.cover_image || e.cover_image_url || null,
-      poster_image: e.poster_image || e.poster_image_url || null,
-      createdAt: e.created_at ? new Date(e.created_at).getTime() : Date.now(),
-      syncStatus: 'synced'
-    }));
+    const formattedEvents = rawEvents.map(e => {
+      let parsedCompetitions = [];
+      if (e.competitions) {
+        try {
+          parsedCompetitions = typeof e.competitions === 'string' ? JSON.parse(e.competitions) : e.competitions;
+        } catch {
+          parsedCompetitions = [];
+        }
+      }
+
+      return {
+        id: Number(e.id),
+        name: e.name || '',
+        type: e.type || 'conference',
+        protocol: e.protocol || 'ticketed',
+        status: e.status || 'draft',
+        date: e.date || '',
+        startTime: e.start_time || '',
+        endTime: e.end_time || '',
+        registrationEndDate: e.registration_end_date || e.registrationEndDate || '',
+        location: e.location || '',
+        tagline: e.tagline || '',
+        description: e.description || '',
+        venueName: e.venue_name || '',
+        slug: e.slug || '',
+        hypeThreshold: Number(e.hype_threshold || 0),
+        isMultiCompetition: Boolean(e.is_multi_competition),
+        competitions: Array.isArray(parsedCompetitions) ? parsedCompetitions : [],
+        visibility: typeof e.visibility === 'string' ? JSON.parse(e.visibility) : (e.visibility || { map: true, rsvp: true, schedule: true, gallery: false }),
+        foodConfig: typeof e.food_config === 'string' ? JSON.parse(e.food_config) : (e.food_config || { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] }),
+        pricingConfig: typeof e.pricing_config === 'string' ? JSON.parse(e.pricing_config) : (e.pricing_config || { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: {} }),
+        cover_image: e.cover_image || e.cover_image_url || null,
+        poster_image: e.poster_image || e.poster_image_url || null,
+        createdAt: e.created_at ? new Date(e.created_at).getTime() : Date.now(),
+        syncStatus: 'synced'
+      };
+    });
 
     // Map Guests
     const formattedGuests = rawGuests.map(g => ({
@@ -151,6 +195,8 @@ export async function GET(request: Request) {
       phone: g.phone || '',
       category: g.type || g.category || 'general-public',
       type: g.type || g.category || 'general-public',
+      competitionTitle: g.competition_title || g.competitionTitle || null,
+      ageGroupLabel: g.age_group_label || g.ageGroupLabel || null,
       qrToken: g.qr_token || g.ticket_id || '',
       isCheckedIn: Boolean(g.is_check_in || g.is_checked_in || g.has_checked_in),
       checkInTime: g.check_in_time ? Number(g.check_in_time) : undefined,
@@ -162,26 +208,52 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // Map Event Registrations
-    const formattedRegistrations = rawRegistrations.map(r => ({
-      id: Number(r.id),
-      registrationId: r.registration_id || r.ticket_id || `REG-${r.id}`,
-      eventId: Number(r.event_id),
-      attendeeName: r.attendee_name || r.name || '',
-      email: r.email || '',
-      phone: r.phone || '',
-      ticketType: r.ticket_type || r.category || 'GENERAL',
-      qrToken: r.qr_token || r.ticket_id || '',
-      paymentStatus: r.payment_status || 'PAID',
-      amountPaid: parseFloat(r.amount_paid || r.price || 0),
-      isCheckedIn: Boolean(r.is_checked_in || r.has_checked_in),
-      checkInTime: r.check_in_time ? new Date(r.check_in_time).getTime() : undefined,
-      foodIncluded: Boolean(r.food_included || r.has_food_access),
-      foodClaimed: Boolean(r.food_claimed || r.has_food_claimed),
-      foodClaimedAt: r.food_claimed_at ? new Date(r.food_claimed_at).getTime() : undefined,
-      registeredAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-      syncStatus: 'synced'
-    }));
+    // 🟢 Map Event Registrations matching AayojanDB EventRegistration schema
+    const formattedRegistrations = rawRegistrations.map(r => {
+      let parsedCustomAnswers = {};
+      if (r.custom_answers) {
+        try {
+          parsedCustomAnswers = typeof r.custom_answers === 'string' ? JSON.parse(r.custom_answers) : r.custom_answers;
+        } catch {
+          parsedCustomAnswers = {};
+        }
+      }
+
+      return {
+        id: Number(r.id),
+        registrationId: r.registration_id || r.ticket_id || `REG-${r.id}`,
+        eventId: Number(r.event_id),
+        name: r.name || r.attendee_name || '',
+        email: r.email || '',
+        phone: r.phone || '',
+        category: r.category || r.ticket_type || 'general-public',
+        
+        // Competition & Age Group Identification
+        competitionId: r.competition_id || null,
+        competitionTitle: r.competition_title || null,
+        ageGroupId: r.age_group_id || null,
+        ageGroupLabel: r.age_group_label || null,
+
+        // Verified Age Metadata
+        isAgeVerified: Boolean(r.is_age_verified),
+        verifiedAge: r.verified_age !== null && r.verified_age !== undefined ? Number(r.verified_age) : null,
+
+        // Dynamic answers & Financial ledger
+        customAnswers: parsedCustomAnswers,
+        basePrice: parseFloat(r.base_price || 0),
+        gstAmount: parseFloat(r.gst_amount || 0),
+        totalPrice: parseFloat(r.total_price || r.amount_paid || 0),
+
+        paymentId: r.payment_id || 'FREE_ENTRY',
+        orderId: r.order_id || null,
+
+        status: r.status || 'CONFIRMED',
+        syncStatus: 'synced',
+        registrationTimestamp: r.registration_timestamp 
+          ? Number(r.registration_timestamp) 
+          : (r.created_at ? new Date(r.created_at).getTime() : Date.now())
+      };
+    });
 
     // Map Manager/Volunteer Event Junction Records
     const formattedLinks = rawLinks.map(l => ({
@@ -193,7 +265,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // 🟢 Map Relational User / Volunteer Profiles
+    // Map Relational User / Volunteer Profiles
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
       name: u.name || (u.email ? u.email.split('@')[0] : 'Volunteer'),
@@ -224,9 +296,11 @@ export async function GET(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('❌ Cloud sync pull failure:', error.message);
-    return NextResponse.json({ error: 'Failed to retrieve cloud data state', details: error.message }, { status: 500 });
+    console.error('❌ Cloud sync pull failure:', error?.message || error);
+    return NextResponse.json({ error: 'Failed to retrieve cloud data state', details: error?.message || String(error) }, { status: 500 });
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+    }
   }
 }

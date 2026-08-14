@@ -1,3 +1,4 @@
+// src/app/api/registrations/route.ts
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { Pool } from 'pg';
@@ -81,9 +82,18 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. EXTRACT COMPETITION DETAILS FROM PAYLOAD
-    const competitionId = registration.competitionId || registration.competition_id || guest.competitionId || null;
-    const competitionTitle = registration.competitionTitle || registration.competition_title || registration.competitionName || guest.competitionTitle || null;
+    // 4. EXTRACT COMPETITION & AGE GROUP DETAILS FROM PAYLOAD
+    const competitionId = registration.competitionId || registration.competition_id || guest?.competitionId || null;
+    const competitionTitle = registration.competitionTitle || registration.competition_title || registration.competitionName || guest?.competitionTitle || null;
+
+    const ageGroupId = registration.ageGroupId || registration.age_group_id || guest?.ageGroupId || null;
+    const ageGroupLabel = registration.ageGroupLabel || registration.age_group_label || guest?.ageGroupLabel || null;
+
+    const isAgeVerified = Boolean(registration.isAgeVerified ?? registration.is_age_verified ?? false);
+    const rawVerifiedAge = registration.verifiedAge ?? registration.verified_age;
+    const verifiedAge = rawVerifiedAge !== undefined && rawVerifiedAge !== null && !isNaN(Number(rawVerifiedAge))
+      ? Number(rawVerifiedAge)
+      : null;
 
     // 5. ATOMIC POSTGRES TRANSACTION INSERTION
     await client.query('BEGIN');
@@ -98,6 +108,10 @@ export async function POST(request: Request) {
         category, 
         competition_id,
         competition_title,
+        age_group_id,
+        age_group_label,
+        is_age_verified,
+        verified_age,
         custom_answers, 
         base_price, 
         gst_amount, 
@@ -105,7 +119,7 @@ export async function POST(request: Request) {
         registration_timestamp, 
         status, 
         sync_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING id;
     `;
 
@@ -117,6 +131,10 @@ export async function POST(request: Request) {
       registration.category || registration.ticketType || 'general-public',
       competitionId,
       competitionTitle,
+      ageGroupId,
+      ageGroupLabel,
+      isAgeVerified,
+      verifiedAge,
       JSON.stringify(registration.customAnswers || {}),
       parseFloat(registration.basePrice || 0),
       parseFloat(registration.gstAmount || 0),
@@ -170,13 +188,14 @@ export async function POST(request: Request) {
       message: isPaidRegistration ? 'Payment verified and registration recorded.' : 'Free registration successfully recorded.',
       registrationId: createdRegistrationId,
       qrToken: guest.qrToken,
-      competitionTitle: competitionTitle || undefined
+      competitionTitle: competitionTitle || undefined,
+      ageGroupLabel: ageGroupLabel || undefined
     });
 
   } catch (error: any) {
     if (client) await client.query('ROLLBACK');
-    console.error('❌ Registration processing error:', error.message);
-    return NextResponse.json({ error: 'Failed to complete registration.', details: error.message }, { status: 500 });
+    console.error('❌ Registration processing error:', error?.message || error);
+    return NextResponse.json({ error: 'Failed to complete registration.', details: error?.message || String(error) }, { status: 500 });
   } finally {
     if (client) client.release();
   }

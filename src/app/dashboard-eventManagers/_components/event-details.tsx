@@ -1,3 +1,4 @@
+// src/components/EventEditor/EventDetailEditor.tsx
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -7,7 +8,8 @@ import {
   Calendar, Info, Shield, Layout, MapPin, Plus, 
   Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
   Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
-  Utensils, IndianRupee, Trophy, Trash2, UserCheck
+  Utensils, IndianRupee, Trophy, Trash2, UserCheck, FileText,
+  Edit2, RotateCcw, Users
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
 
@@ -24,11 +26,22 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
+// 🟢 Approach 1: Nested AgeGroup Interface
+export interface AgeGroup {
+  id: string;
+  label: string;
+  code: string;
+  minAge?: number;
+  maxAge?: number;
+}
+
 export interface SubCompetition {
   id: string;
   title: string;
   code: string;
   category?: string;
+  ageGroups: AgeGroup[]; // 🟢 Multiple age groups per track
+  rules?: string;
 }
 
 export interface EventData {
@@ -46,9 +59,9 @@ export interface EventData {
   description?: string;
   venueName?: string;
   location?: string;
-  organizerId?: number ; // 🟢 Primary Key of active organizer user
-  organizerName?: string; // 🟢 Display name of organizer
-  organizerEmail?: string; // 🟢 Communication identifier
+  organizerId?: number;
+  organizerName?: string;
+  organizerEmail?: string;
   status?: 'draft' | 'published' | 'unpublished';
   slug?: string;
   hypeThreshold?: number;
@@ -162,17 +175,40 @@ export default function EventDetailEditor({
   const [coverPreview, setCoverPreview] = useState<string>('');
   const [posterPreview, setPosterPreview] = useState<string>('');
 
-  // 🟢 Active User Session Details State
   const [organizerInfo, setOrganizerInfo] = useState<{
     id?: number;
     name: string;
     email: string;
   }>({ name: 'System Administrator', email: '' });
 
-  const [newComp, setNewComp] = useState({ title: '', code: '', category: '' });
+  // 🟢 Sub-competition input & editing state
+  const [newComp, setNewComp] = useState<{
+    title: string;
+    code: string;
+    category: string;
+    ageGroups: AgeGroup[];
+    rules: string;
+  }>({
+    title: '',
+    code: '',
+    category: '',
+    ageGroups: [],
+    rules: ''
+  });
+
+  // 🟢 Temp state for adding a nested age group inside the active competition
+  const [tempAgeGroup, setTempAgeGroup] = useState({
+    label: '',
+    code: '',
+    minAge: '',
+    maxAge: ''
+  });
+
+  const [editingCompId, setEditingCompId] = useState<string | null>(null);
 
   const coverInputRef = useRef<HTMLInputElement>(null);
   const posterInputRef = useRef<HTMLInputElement>(null);
+  const compFormRef = useRef<HTMLDivElement>(null);
 
   const initialCategoryFees = ATTENDEE_CATEGORIES.reduce((acc, cat) => {
     acc[cat.id] = 0;
@@ -211,7 +247,6 @@ export default function EventDetailEditor({
     }
   });
 
-  // 🟢 FETCH ACTIVE LOGGED-IN ORGANIZER SESSION FROM INDEXEDDB
   useEffect(() => {
     async function loadActiveSession() {
       try {
@@ -252,7 +287,10 @@ export default function EventDetailEditor({
         endTime: event.endTime || '',
         registrationEndDate: event.registrationEndDate || '',
         isMultiCompetition: event.isMultiCompetition ?? false,
-        competitions: event.competitions || [],
+        competitions: (event.competitions || []).map(c => ({
+          ...c,
+          ageGroups: Array.isArray(c.ageGroups) ? c.ageGroups : []
+        })),
         hypeThreshold: event.hypeThreshold || 0,
         type: event.type || 'conference',
         protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
@@ -312,7 +350,9 @@ export default function EventDetailEditor({
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
     });
-    setNewComp({ title: '', code: '', category: '' });
+    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
+    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
+    setEditingCompId(null);
     setCurrentStatus('draft');
     setIsCreateMode(true);
     setActiveModule('basics');
@@ -323,24 +363,101 @@ export default function EventDetailEditor({
     setPosterPreview('');
   };
 
-  const handleAddCompetition = () => {
-    if (!newComp.title.trim()) return;
-    const created: SubCompetition = {
-      id: Date.now().toString(),
-      title: newComp.title.trim(),
-      code: newComp.code.trim().toUpperCase() || `COMP-${details.competitions.length + 1}`,
-      category: newComp.category.trim() || 'General'
+  // 🟢 Helper to add an AgeGroup to the active sub-competition buffer
+  const handleAddAgeGroup = () => {
+    if (!tempAgeGroup.label.trim()) return;
+
+    const parsedMin = tempAgeGroup.minAge.trim() !== '' ? parseInt(tempAgeGroup.minAge, 10) : undefined;
+    const parsedMax = tempAgeGroup.maxAge.trim() !== '' ? parseInt(tempAgeGroup.maxAge, 10) : undefined;
+
+    const createdGroup: AgeGroup = {
+      id: `ag-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      label: tempAgeGroup.label.trim(),
+      code: tempAgeGroup.code.trim().toUpperCase() || `GRP-${newComp.ageGroups.length + 1}`,
+      minAge: isNaN(parsedMin as number) ? undefined : parsedMin,
+      maxAge: isNaN(parsedMax as number) ? undefined : parsedMax,
     };
 
-    setDetails(prev => ({
+    setNewComp(prev => ({
       ...prev,
-      competitions: [...prev.competitions, created]
+      ageGroups: [...prev.ageGroups, createdGroup]
     }));
-    setNewComp({ title: '', code: '', category: '' });
+
+    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
+  };
+
+  const handleRemoveAgeGroup = (groupId: string) => {
+    setNewComp(prev => ({
+      ...prev,
+      ageGroups: prev.ageGroups.filter(g => g.id !== groupId)
+    }));
+  };
+
+  // 🟢 Save Sub-Competition (Create or Edit)
+  const handleSaveCompetition = () => {
+    if (!newComp.title.trim()) return;
+
+    if (editingCompId) {
+      setDetails(prev => ({
+        ...prev,
+        competitions: prev.competitions.map(comp => 
+          comp.id === editingCompId 
+            ? {
+                ...comp,
+                title: newComp.title.trim(),
+                code: newComp.code.trim().toUpperCase() || comp.code,
+                category: newComp.category.trim() || 'General',
+                ageGroups: newComp.ageGroups,
+                rules: newComp.rules.trim() || undefined
+              }
+            : comp
+        )
+      }));
+      setEditingCompId(null);
+    } else {
+      const created: SubCompetition = {
+        id: Date.now().toString(),
+        title: newComp.title.trim(),
+        code: newComp.code.trim().toUpperCase() || `COMP-${details.competitions.length + 1}`,
+        category: newComp.category.trim() || 'General',
+        ageGroups: newComp.ageGroups,
+        rules: newComp.rules.trim() || undefined
+      };
+
+      setDetails(prev => ({
+        ...prev,
+        competitions: [...prev.competitions, created]
+      }));
+    }
+
+    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
+    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
     if (saveStatus === 'success') setSaveStatus('idle');
   };
 
+  const handleEditCompetition = (comp: SubCompetition) => {
+    setEditingCompId(comp.id);
+    setNewComp({
+      title: comp.title,
+      code: comp.code,
+      category: comp.category || '',
+      ageGroups: comp.ageGroups || [],
+      rules: comp.rules || ''
+    });
+    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
+    compFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCompId(null);
+    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
+    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
+  };
+
   const handleRemoveCompetition = (id: string) => {
+    if (editingCompId === id) {
+      handleCancelEdit();
+    }
     setDetails(prev => ({
       ...prev,
       competitions: prev.competitions.filter(item => item.id !== id)
@@ -434,12 +551,9 @@ export default function EventDetailEditor({
       registrationEndDate: details.registrationEndDate,
       isMultiCompetition: details.isMultiCompetition,
       competitions: details.isMultiCompetition ? details.competitions : [],
-      
-      // 🟢 AUTO-ATTACH ORGANIZER METADATA FROM ACTIVE SESSION
       organizerId: organizerInfo.id || event?.organizerId || null,
       organizerName: organizerInfo.name,
       organizerEmail: organizerInfo.email,
-
       type: details.type,
       protocol: details.protocol, 
       status: forcedStatus || currentStatus, 
@@ -499,9 +613,16 @@ export default function EventDetailEditor({
 
   const accentColor = details.type === 'celebration' ? 'emerald' : 'blue';
 
+  const formatAgeRangeBadge = (min?: number, max?: number) => {
+    if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
+    if (min !== undefined) return `≥ ${min} yrs`;
+    if (max !== undefined) return `≤ ${max} yrs`;
+    return 'Open Age';
+  };
+
   return (
     <div className={`w-full h-full flex flex-col overflow-hidden ${styles.panel}`}>
-      {/* HEADER SECTION CONTROLS */}
+      {/* HEADER CONTROLS */}
       <div className="p-6 border-b border-inherit flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-inherit z-10 shrink-0">
         <div>
           <div className={`flex items-center gap-2 text-${accentColor}-500 mb-1`}>
@@ -549,7 +670,6 @@ export default function EventDetailEditor({
               <input type="range" min="0" max="500" step="10" value={details.hypeThreshold} onChange={handleSliderChange} className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-${accentColor}-500 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
             </div>
 
-            {/* 🟢 READ-ONLY ORGANIZER IDENTIFIER BADGE */}
             <div className={`p-4 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
               <div className="flex items-center gap-3">
                 <UserCheck size={18} className="text-blue-500" />
@@ -658,7 +778,7 @@ export default function EventDetailEditor({
           </div>
         )}
 
-        {/* MODULE 3: CONTROLS, LOGISTICS & PAYMENT PIPELINES */}
+        {/* MODULE 3: CONTROLS, LOGISTICS & MULTI-COMPETITION */}
         {activeModule === 'protocols' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div>
@@ -680,7 +800,7 @@ export default function EventDetailEditor({
               </div>
             </div>
 
-            {/* 🏆 MULTI-COMPETITION EVENT TOGGLE & MANAGEMENT PANEL */}
+            {/* 🏆 MULTI-COMPETITION EVENT TOGGLE & NESTED AGE GROUPS BUILDER */}
             <div>
               <div className={styles.sectionHeader}>Multi-Competition Event Control</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
@@ -689,7 +809,7 @@ export default function EventDetailEditor({
                     <Trophy size={18} className={details.isMultiCompetition ? `text-${accentColor}-500` : 'text-slate-400'} />
                     <div>
                       <span className="text-xs font-bold block">Multi-Competition Event</span>
-                      <span className="text-[10px] text-slate-500">Enable this if this event hosts multiple sub-competitions, categories, or brackets</span>
+                      <span className="text-[10px] text-slate-500">Enable this if this event hosts multiple sub-competitions, categories, or age brackets</span>
                     </div>
                   </div>
                   <button 
@@ -707,72 +827,247 @@ export default function EventDetailEditor({
                 {details.isMultiCompetition && (
                   <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
                     <div className="flex items-center justify-between">
-                      <label className={styles.label}>Manage Sub-Competitions ({details.competitions.length})</label>
+                      <label className={styles.label}>
+                        {editingCompId ? 'Edit Sub-Competition Track' : `Manage Sub-Competitions (${details.competitions.length})`}
+                      </label>
+                      {editingCompId && (
+                        <button
+                          type="button"
+                          onClick={handleCancelEdit}
+                          className="text-[10px] font-bold text-amber-500 hover:underline flex items-center gap-1"
+                        >
+                          <RotateCcw size={10} />
+                          <span>Cancel Edit Mode</span>
+                        </button>
+                      )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                      <input
-                        type="text"
-                        placeholder="Competition Title (e.g. Hackathon)"
-                        value={newComp.title}
-                        onChange={(e) => setNewComp(prev => ({ ...prev, title: e.target.value }))}
-                        className={`sm:col-span-5 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Code (e.g. HACK-01)"
-                        value={newComp.code}
-                        onChange={(e) => setNewComp(prev => ({ ...prev, code: e.target.value }))}
-                        className={`sm:col-span-3 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Category"
-                        value={newComp.category}
-                        onChange={(e) => setNewComp(prev => ({ ...prev, category: e.target.value }))}
-                        className={`sm:col-span-2 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddCompetition}
-                        disabled={!newComp.title.trim()}
-                        className={`sm:col-span-2 flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all`}
-                      >
-                        <Plus size={14} />
-                        <span>Add</span>
-                      </button>
-                    </div>
+                    {/* Sub-Competition Form */}
+                    <div 
+                      ref={compFormRef}
+                      className={`p-4 rounded-2xl border space-y-4 transition-all ${
+                        editingCompId 
+                          ? 'border-blue-500/40 bg-blue-500/5 shadow-md shadow-blue-500/5' 
+                          : 'bg-black/5 dark:bg-white/[0.02] border-slate-200 dark:border-white/10'
+                      }`}
+                    >
+                      {/* Top Row: Track Meta */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                        <input
+                          type="text"
+                          placeholder="Competition Title (e.g. State Chess Championship)"
+                          value={newComp.title}
+                          onChange={(e) => setNewComp(prev => ({ ...prev, title: e.target.value }))}
+                          className={`sm:col-span-5 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Base Code (e.g. CHESS-2026)"
+                          value={newComp.code}
+                          onChange={(e) => setNewComp(prev => ({ ...prev, code: e.target.value }))}
+                          className={`sm:col-span-3 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Discipline / Category"
+                          value={newComp.category}
+                          onChange={(e) => setNewComp(prev => ({ ...prev, category: e.target.value }))}
+                          className={`sm:col-span-4 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                        />
+                      </div>
 
-                    {details.competitions.length > 0 ? (
-                      <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
-                        {details.competitions.map((comp) => (
-                          <div 
-                            key={comp.id} 
-                            className={`flex items-center justify-between p-3 rounded-2xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'}`}
+                      {/* 🟢 Approach 1: Nested Age Groups Builder */}
+                      <div className="p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 bg-white/60 dark:bg-white/[0.01] space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                            <Users size={12} className="text-blue-500" />
+                            <span>Configure Multiple Age Groups for this Track ({newComp.ageGroups.length})</span>
+                          </label>
+                        </div>
+
+                        {/* Age Group Input Bar */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                          <input
+                            type="text"
+                            placeholder="Age Group Label (e.g. Under-14 / Junior)"
+                            value={tempAgeGroup.label}
+                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, label: e.target.value }))}
+                            className={`sm:col-span-4 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Code (e.g. U14)"
+                            value={tempAgeGroup.code}
+                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, code: e.target.value }))}
+                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            max="120"
+                            placeholder="Min Age"
+                            value={tempAgeGroup.minAge}
+                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, minAge: e.target.value }))}
+                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            max="120"
+                            placeholder="Max Age"
+                            value={tempAgeGroup.maxAge}
+                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, maxAge: e.target.value }))}
+                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddAgeGroup}
+                            disabled={!tempAgeGroup.label.trim()}
+                            className="sm:col-span-2 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-all"
                           >
-                            <div className="flex items-center gap-3">
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                                {comp.code}
-                              </span>
-                              <div>
-                                <h5 className="text-xs font-bold leading-tight">{comp.title}</h5>
-                                <span className="text-[9px] text-slate-500">{comp.category}</span>
-                              </div>
-                            </div>
+                            <Plus size={13} />
+                            <span>Add Group</span>
+                          </button>
+                        </div>
 
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveCompetition(comp.id)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                        {/* List of Added Age Groups */}
+                        {newComp.ageGroups.length > 0 ? (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {newComp.ageGroups.map(group => (
+                              <div
+                                key={group.id}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-blue-500/20 bg-blue-500/10 text-blue-400"
+                              >
+                                <span>{group.label}</span>
+                                <span className="text-[9px] opacity-75 font-mono">[{group.code}]</span>
+                                <span className="text-[10px] px-1 py-0.2 rounded bg-black/20 text-slate-300">
+                                  {formatAgeRangeBadge(group.minAge, group.maxAge)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveAgeGroup(group.id)}
+                                  className="ml-1 hover:text-red-400 transition-colors"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        ) : (
+                          <p className="text-[10px] text-slate-400 italic">No age brackets configured (Track will default to Open for all ages).</p>
+                        )}
+                      </div>
+
+                      {/* Rules & Guidelines */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                          <FileText size={11} className="text-blue-500" />
+                          <span>Rules, Guidelines & Eligibility Criteria</span>
+                        </label>
+                        <textarea
+                          rows={2}
+                          placeholder="Provide specific guidelines, time limits, or submission details for this competition..."
+                          value={newComp.rules}
+                          onChange={(e) => setNewComp(prev => ({ ...prev, rules: e.target.value }))}
+                          className={`w-full p-2.5 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`}
+                        />
+                      </div>
+
+                      <div className="flex justify-end items-center gap-2">
+                        {editingCompId && (
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="px-3 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleSaveCompetition}
+                          disabled={!newComp.title.trim()}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all shadow-sm`}
+                        >
+                          {editingCompId ? <Save size={14} /> : <Plus size={14} />}
+                          <span>{editingCompId ? 'Update Track' : 'Add Competition Track'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Competitions List */}
+                    {details.competitions.length > 0 ? (
+                      <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
+                        {details.competitions.map((comp) => {
+                          const isBeingEdited = editingCompId === comp.id;
+                          return (
+                            <div 
+                              key={comp.id} 
+                              className={`p-3.5 rounded-2xl border space-y-2.5 transition-all ${
+                                isBeingEdited 
+                                  ? 'border-blue-500/50 bg-blue-500/10' 
+                                  : isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                    {comp.code}
+                                  </span>
+                                  <div>
+                                    <h5 className="text-xs font-bold leading-tight">{comp.title}</h5>
+                                    <span className="text-[10px] text-slate-400 font-medium">{comp.category || 'General'}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditCompetition(comp)}
+                                    title="Edit track details"
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+                                  >
+                                    <Edit2 size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveCompetition(comp.id)}
+                                    title="Delete track"
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Display Nested Age Groups */}
+                              {comp.ageGroups && comp.ageGroups.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 mr-1">Age Groups:</span>
+                                  {comp.ageGroups.map(grp => (
+                                    <span 
+                                      key={grp.id} 
+                                      className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-500"
+                                    >
+                                      {grp.label} ({formatAgeRangeBadge(grp.minAge, grp.maxAge)})
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {comp.rules && (
+                                <div className="p-2.5 rounded-xl border bg-black/5 dark:bg-white/[0.02] border-slate-200/50 dark:border-white/5">
+                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 block mb-0.5">Rules & Regulations:</span>
+                                  <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{comp.rules}</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="p-4 text-center border border-dashed rounded-2xl border-slate-200 dark:border-white/10">
-                        <p className="text-xs text-slate-400">No sub-competitions added yet. Use the fields above to add one.</p>
+                        <p className="text-xs text-slate-400">No sub-competitions added yet. Use the fields above to configure one.</p>
                       </div>
                     )}
                   </div>
@@ -780,7 +1075,7 @@ export default function EventDetailEditor({
               </div>
             </div>
 
-            {/* 🟢 REGISTRATION DEADLINE CUTOFF CONTROL */}
+            {/* REGISTRATION DEADLINE CUTOFF CONTROL */}
             <div>
               <div className={styles.sectionHeader}>Registration Deadline & Access Rules</div>
               <div className={`p-5 rounded-3xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
@@ -803,7 +1098,7 @@ export default function EventDetailEditor({
               </div>
             </div>
 
-            {/* 🍽️ FOOD MODULE MATRIX CONFIGURATION */}
+            {/* FOOD MODULE MATRIX CONFIGURATION */}
             <div>
               <div className={styles.sectionHeader}>Food Module Configuration</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
@@ -897,7 +1192,7 @@ export default function EventDetailEditor({
               </div>
             </div>
 
-            {/* 💰 REGISTRATION FEE MANAGEMENT */}
+            {/* REGISTRATION FEE MANAGEMENT */}
             <div>
               <div className={styles.sectionHeader}>Registration Fee Management</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>

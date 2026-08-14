@@ -10,11 +10,9 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-// Track attempt counts to restrict fallbacks to max 2 attempts per URL
 const MAX_IMAGE_RETRIES = 2;
 const imageFetchAttempts = new Map<string, number>();
 
-// 🟢 Helper utility to fetch remote public assets as Blobs with retry limiting (1-2 times)
 async function fetchImageAsBlob(url: string | null | undefined): Promise<Blob | null> {
   if (!url || typeof url !== 'string' || !url.trim()) {
     return null;
@@ -25,7 +23,6 @@ async function fetchImageAsBlob(url: string | null | undefined): Promise<Blob | 
     return null;
   }
 
-  // Increment attempt count
   imageFetchAttempts.set(url, currentAttempts + 1);
   
   try {
@@ -38,7 +35,7 @@ async function fetchImageAsBlob(url: string | null | undefined): Promise<Blob | 
       return blob;
     }
     return null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -96,15 +93,17 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
 
           const processedLocalData = {
             ...cachedLocalEvent,
-            registrationEndDate: cachedLocalEvent.registrationEndDate || null,
+            registrationEndDate: cachedLocalEvent.registrationEndDate ||  null,
             coverImageUrl: coverUrl,
             posterImageUrl: posterUrl,
+            isMultiCompetition: cachedLocalEvent.isMultiCompetition ??  false,
+            competitions: Array.isArray(cachedLocalEvent.competitions) ? cachedLocalEvent.competitions : [],
           };
           
           setEventRecord(processedLocalData);
           setLoading(false);
 
-          // Quiet background reconciliation
+          // Quiet background reconciliation if online
           if (navigator.onLine) {
             fetch(`/api/events/public?slug=${encodeURIComponent(slug)}`)
               .then(res => res.ok ? res.json() : null)
@@ -131,14 +130,26 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
                     updatedPosterBlob = await fetchImageAsBlob(remotePosterUrl);
                   }
 
-                  await db.events.put({
+                  const updatedLocalRecord = {
                     ...remoteEvent,
                     id: cachedLocalEvent.id, 
                     registrationEndDate: remoteEvent.registrationEndDate || remoteEvent.registration_end_date || cachedLocalEvent.registrationEndDate,
+                    isMultiCompetition: Boolean(remoteEvent.isMultiCompetition ?? remoteEvent.is_multi_competition),
+                    competitions: Array.isArray(remoteEvent.competitions) ? remoteEvent.competitions : [],
                     coverBlob: updatedCoverBlob,
                     posterBlob: updatedPosterBlob,
                     syncStatus: 'synced'
-                  });
+                  };
+
+                  await db.events.put(updatedLocalRecord);
+
+                  // Update UI state with latest cloud competitions and rules
+                  setEventRecord((prev: any) => ({
+                    ...prev,
+                    ...updatedLocalRecord,
+                    coverImageUrl: updatedCoverBlob ? createSafeObjectURL(updatedCoverBlob) : remoteCoverUrl,
+                    posterImageUrl: updatedPosterBlob ? createSafeObjectURL(updatedPosterBlob) : remotePosterUrl,
+                  }));
                 }
               })
               .catch(() => {});
@@ -180,6 +191,8 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
               ...remoteEvent,
               id: existingRecordBySlug ? existingRecordBySlug.id : (remoteEvent.id || undefined),
               registrationEndDate: normalizedCutoffDate,
+              isMultiCompetition: Boolean(remoteEvent.isMultiCompetition ?? remoteEvent.is_multi_competition),
+              competitions: Array.isArray(remoteEvent.competitions) ? remoteEvent.competitions : [],
               coverBlob: coverBlob || undefined,
               posterBlob: posterBlob || undefined,
               syncStatus: 'synced'
@@ -194,7 +207,8 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
               ...newLocalRecord,
               registrationEndDate: normalizedCutoffDate,
               coverImageUrl: finalCoverUrl,
-              posterImageUrl: finalPosterUrl
+              posterImageUrl: finalPosterUrl,
+              competitions: newLocalRecord.competitions
             });
           } else {
             throw new Error("Empty response returned from event service.");
