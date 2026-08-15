@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client } from '@/lib/r2';
 
@@ -8,6 +8,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: true },
 });
 
+// Helper to convert base64 image data to buffer for Cloudflare R2[cite: 17]
 function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: string } | null {
   if (!base64Data) return null;
   const matches = base64Data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -18,8 +19,23 @@ function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: stri
   };
 }
 
+// 🟢 Helper to safely convert any date string or timestamp to a valid numeric epoch (BIGINT)
+function toEpochMillis(val: any): number {
+  if (val === null || val === undefined || val === '') return Date.now();
+  if (typeof val === 'number') return isNaN(val) ? Date.now() : Math.floor(val);
+  const parsed = new Date(val).getTime();
+  return isNaN(parsed) ? Date.now() : parsed;
+}
+
+// 🟢 Helper to safely convert amounts to decimal NUMERIC(10, 2)
+function toNumeric(val: any): number {
+  if (val === null || val === undefined || val === '') return 0.00;
+  const parsed = parseFloat(val);
+  return isNaN(parsed) ? 0.00 : parsed;
+}
+
 export async function POST(request: Request) {
-  let client: any;
+  let client: PoolClient | null = null;
   
   let syncedEventsCount = 0;
   let syncedUsersCount = 0;
@@ -45,7 +61,8 @@ export async function POST(request: Request) {
     client = await pool.connect(); 
     await client.query('BEGIN');  
 
-    const logSyncAction = async (targetTable: string, action: string, recordId: number, clientTimestamp: number) => {
+    const logSyncAction = async (targetTable: string, action: string, recordId: number, clientTimestamp: any) => {
+      if (!client) return;
       let verifiedUserId = null;
       if (activeUserId) {
         const userCheck = await client.query('SELECT id FROM users WHERE id = $1', [activeUserId]);
@@ -63,12 +80,12 @@ export async function POST(request: Request) {
         targetTable,
         action,
         recordId,
-        clientTimestamp || Date.now()
+        toEpochMillis(clientTimestamp)
       ]).catch(() => {});
     };
 
     // ==========================================
-    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST
+    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST[cite: 17]
     // ==========================================
     for (const usr of users) {
       const rawIdentifier = usr.email || usr.identifier;
@@ -95,12 +112,12 @@ export async function POST(request: Request) {
         usr.role || 'volunteer'
       ]); 
 
-      await logSyncAction('users', 'UPSERT', result.rows[0].id, usr.clientTimestamp || Date.now());
+      await logSyncAction('users', 'UPSERT', result.rows[0].id, usr.clientTimestamp);
       syncedUsersCount++;  
     }
 
     // ==========================================
-    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2
+    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2[cite: 17]
     // ==========================================
     const realEventIdMap: Record<string | number, number> = {};
     const bucketName = 'mithila-aayojan';
@@ -178,6 +195,7 @@ export async function POST(request: Request) {
       const pricingConfigData = ev.pricingConfig ? JSON.stringify(ev.pricingConfig) : null;
       const isMultiCompetition = ev.isMultiCompetition !== undefined ? Boolean(ev.isMultiCompetition) : null;
       const competitionsData = Array.isArray(ev.competitions) ? JSON.stringify(ev.competitions) : null;
+      const eventCreationEpoch = toEpochMillis(ev.createdAt);
 
       const result = await client.query(eventUpsertQuery, [
         ev.name || null, 
@@ -198,7 +216,7 @@ export async function POST(request: Request) {
         isMultiCompetition,
         competitionsData,
         verifiedOrganizerId,
-        ev.createdAt || Date.now(), 
+        eventCreationEpoch, 
         generatedSlug
       ]); 
       
@@ -255,12 +273,12 @@ export async function POST(request: Request) {
       }
       
       const isNew = !ev.id || serverGeneratedId !== Number(ev.id);
-      await logSyncAction('events', isNew ? 'INSERT' : 'UPDATE', serverGeneratedId, ev.clientTimestamp || ev.createdAt);
+      await logSyncAction('events', isNew ? 'INSERT' : 'UPDATE', serverGeneratedId, ev.clientTimestamp || eventCreationEpoch);
       syncedEventsCount++; 
     }
 
     // ==========================================
-    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS[cite: 17]
     // ==========================================
     for (const link of managerEvents) {
       let rawTargetEventId = link.eventId;
@@ -311,13 +329,13 @@ export async function POST(request: Request) {
       ]); 
 
       if (result.rows.length > 0) {
-        await logSyncAction('manager_events', 'UPSERT', 0, link.clientTimestamp || Date.now());
+        await logSyncAction('manager_events', 'UPSERT', 0, link.clientTimestamp);
       }
       syncedLinksCount++;
     }
 
     // ==========================================
-    // 4. SYNCHRONIZE GUESTS & CHECK-IN / FOOD CLAIM DATA
+    // 4. SYNCHRONIZE GUESTS TABLE[cite: 17]
     // ==========================================
     for (const gst of guests) {
       let rawTargetEventId = gst.eventId; 
@@ -330,59 +348,51 @@ export async function POST(request: Request) {
       if (!targetEventId || !gst.qrToken) continue; 
 
       const guestType = gst.category || gst.type || 'general-public';
-
-      const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? 1 : 0;
-      const rawCheckInTime = gst.checkInTime ? BigInt(gst.checkInTime) : null;
-
-      const hasFoodAccess = (gst.hasFoodAccess === true || gst.isFoodAccess === true || gst.foodIncluded === true) ? 1 : 0;
-      const hasFoodClaimed = (gst.hasFoodClaimed === true || gst.isFoodClaimed === true || gst.foodClaimed === true) ? 1 : 0;
-      const rawFoodClaimedTime = gst.foodClaimedTime || gst.foodClaimedAt ? BigInt(gst.foodClaimedTime || gst.foodClaimedAt) : null;
+      const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? true : false;
+      const rawCheckInTime = gst.checkInTime ? toEpochMillis(gst.checkInTime) : null;
+      const hasFoodAccess = Boolean(gst.hasFoodAccess || gst.isFoodAccess || gst.foodIncluded);
+      const amountPaid = toNumeric(gst.amountPaid || gst.amount_paid);
 
       const guestUpsertQuery = `
         INSERT INTO guests (
           event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
-          has_food_access, has_food_claimed, check_in_time, food_claimed_time, server_updated_at
+          has_food_access, check_in_time, server_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('utc', now()))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
         ON CONFLICT (qr_token) 
         DO UPDATE SET 
           name = COALESCE(EXCLUDED.name, guests.name), 
           type = COALESCE(EXCLUDED.type, guests.type), 
           email = COALESCE(EXCLUDED.email, guests.email), 
           phone = COALESCE(EXCLUDED.phone, guests.phone), 
-          is_check_in = GREATEST(EXCLUDED.is_check_in, guests.is_check_in), 
+          is_check_in = EXCLUDED.is_check_in OR guests.is_check_in, 
           amount_paid = COALESCE(EXCLUDED.amount_paid, guests.amount_paid), 
           has_food_access = COALESCE(EXCLUDED.has_food_access, guests.has_food_access), 
-          has_food_claimed = GREATEST(EXCLUDED.has_food_claimed, guests.has_food_claimed), 
           check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), 
-          food_claimed_time = COALESCE(guests.food_claimed_time, EXCLUDED.food_claimed_time), 
           server_updated_at = timezone('utc', now())
         RETURNING id;
       `; 
 
       const result = await client.query(guestUpsertQuery, [
         Number(targetEventId), 
-        gst.name || null, 
+        gst.name || 'Event Attendee', 
         guestType, 
         gst.qrToken, 
         gst.email || null, 
         gst.phone || null, 
         checkInStatus, 
-        gst.amountPaid || 0.00, 
+        amountPaid, 
         hasFoodAccess, 
-        hasFoodClaimed, 
-        rawCheckInTime,
-        rawFoodClaimedTime
+        rawCheckInTime
       ]); 
 
       const serverGuestId = result.rows[0].id;
-      const syncActionType = hasFoodClaimed ? 'FOOD_CLAIM' : (checkInStatus ? 'CHECK_IN' : 'UPDATE');
-      await logSyncAction('guests', syncActionType, serverGuestId, gst.clientTimestamp || Date.now());
+      await logSyncAction('guests', checkInStatus ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp);
       syncedGuestsCount++;  
     }
 
     // ==========================================
-    // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
+    // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE (Exact Schema Match)
     // ==========================================
     for (const reg of allRegistrations) {
       let rawTargetEventId = reg.eventId;
@@ -392,75 +402,130 @@ export async function POST(request: Request) {
         realEventIdMap[String(rawTargetEventId)] || 
         rawTargetEventId;
 
-      const qrToken = reg.qrToken || reg.registrationId || reg.ticketId;
-      if (!targetEventId || !qrToken) continue;
+      if (!targetEventId) continue;
 
-      const isCheckedIn = Boolean(reg.isCheckedIn || reg.checkInTime || reg.isCheckIn === 1);
-      const isFoodClaimed = Boolean(reg.hasFoodClaimed || reg.isFoodClaimed || reg.foodClaimed || reg.foodClaimedAt);
+      const regName = reg.name || reg.attendeeName || '';
+      const regEmail = reg.email || '';
+      const regPhone = reg.phone || '';
+      if (!regName || !regEmail || !regPhone) continue;
 
-      const regUpsertQuery = `
-        INSERT INTO event_registrations (
-          event_id, registration_id, attendee_name, email, phone, ticket_type, 
-          competition_id, competition_title,
-          qr_token, payment_status, amount_paid, is_checked_in, check_in_time, 
-          food_included, food_claimed, food_claimed_at, created_at
-        )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-          $11, $12, $13, $14, $15, $16, timezone('utc', TO_TIMESTAMP($17 / 1000.0))
-        )
-        ON CONFLICT (qr_token)
-        DO UPDATE SET
-          attendee_name = COALESCE(EXCLUDED.attendee_name, event_registrations.attendee_name),
-          email = COALESCE(EXCLUDED.email, event_registrations.email),
-          phone = COALESCE(EXCLUDED.phone, event_registrations.phone),
-          ticket_type = COALESCE(EXCLUDED.ticket_type, event_registrations.ticket_type),
-          competition_id = COALESCE(EXCLUDED.competition_id, event_registrations.competition_id),
-          competition_title = COALESCE(EXCLUDED.competition_title, event_registrations.competition_title),
-          payment_status = COALESCE(EXCLUDED.payment_status, event_registrations.payment_status),
-          amount_paid = COALESCE(EXCLUDED.amount_paid, event_registrations.amount_paid),
-          is_checked_in = GREATEST(EXCLUDED.is_checked_in, event_registrations.is_checked_in),
-          check_in_time = COALESCE(event_registrations.check_in_time, EXCLUDED.check_in_time),
-          food_included = COALESCE(EXCLUDED.food_included, event_registrations.food_included),
-          food_claimed = GREATEST(EXCLUDED.food_claimed, event_registrations.food_claimed),
-          food_claimed_at = COALESCE(event_registrations.food_claimed_at, EXCLUDED.food_claimed_at);
-      `;
+      // 🟢 Type-safe numeric & epoch timestamp parsing
+      const basePrice = toNumeric(reg.basePrice || reg.base_price);
+      const gstAmount = toNumeric(reg.gstAmount || reg.gst_amount);
+      const totalPrice = toNumeric(reg.totalPrice || reg.total_price || reg.amountPaid);
+      const registrationTimestamp = toEpochMillis(reg.registrationTimestamp || reg.registeredAt || reg.createdAt);
 
-      await client.query(regUpsertQuery, [
-        Number(targetEventId),
-        reg.registrationId || `REG-${Date.now()}`,
-        reg.attendeeName || reg.name || null,
-        reg.email || null,
-        reg.phone || null,
-        reg.ticketType || reg.category || 'GENERAL',
-        reg.competitionId || null,
-        reg.competitionTitle || null,
-        qrToken,
-        reg.paymentStatus || 'PAID',
-        reg.amountPaid || 0.00,
-        isCheckedIn,
-        reg.checkInTime ? new Date(reg.checkInTime) : null,
-        Boolean(reg.hasFoodAccess || reg.foodIncluded || reg.isFoodAccess),
-        isFoodClaimed,
-        reg.foodClaimedAt ? new Date(reg.foodClaimedAt) : (reg.foodClaimedTime ? new Date(reg.foodClaimedTime) : null),
-        reg.registeredAt || reg.createdAt || Date.now()
-      ]).catch(async () => {
-        const fallbackQuery = `
-          INSERT INTO registrations (event_id, ticket_id, attendee_name, email, competition_id, competition_title, has_checked_in, food_included, food_claimed)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (ticket_id) DO UPDATE SET 
-            has_checked_in = GREATEST(EXCLUDED.has_checked_in, registrations.has_checked_in), 
-            food_claimed = GREATEST(EXCLUDED.food_claimed, registrations.food_claimed),
-            competition_id = COALESCE(EXCLUDED.competition_id, registrations.competition_id),
-            competition_title = COALESCE(EXCLUDED.competition_title, registrations.competition_title);
+      const customAnswersData = typeof reg.customAnswers === 'object' 
+        ? JSON.stringify(reg.customAnswers) 
+        : (typeof reg.customAnswers === 'string' ? reg.customAnswers : '{}');
+
+      const verifiedAge = reg.verifiedAge !== null && reg.verifiedAge !== undefined && !isNaN(Number(reg.verifiedAge)) 
+        ? Number(reg.verifiedAge) 
+        : null;
+
+      // If an explicit numerical ID exists from client-side record
+      const hasNumericId = reg.id && !isNaN(Number(reg.id)) && Number(reg.id) > 0;
+
+      let regQuery: string;
+      let regParams: any[];
+
+      if (hasNumericId) {
+        regQuery = `
+          INSERT INTO event_registrations (
+            id, event_id, name, email, phone, category, custom_answers,
+            base_price, gst_amount, total_price, registration_timestamp,
+            status, sync_status, competition_id, competition_title,
+            age_group_id, age_group_label, is_age_verified, verified_age
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7::jsonb,
+            $8, $9, $10, $11,
+            $12, $13, $14, $15,
+            $16, $17, $18, $19
+          )
+          ON CONFLICT (id) 
+          DO UPDATE SET
+            name = COALESCE(EXCLUDED.name, event_registrations.name),
+            email = COALESCE(EXCLUDED.email, event_registrations.email),
+            phone = COALESCE(EXCLUDED.phone, event_registrations.phone),
+            category = COALESCE(EXCLUDED.category, event_registrations.category),
+            custom_answers = COALESCE(EXCLUDED.custom_answers, event_registrations.custom_answers),
+            base_price = EXCLUDED.base_price,
+            gst_amount = EXCLUDED.gst_amount,
+            total_price = EXCLUDED.total_price,
+            status = COALESCE(EXCLUDED.status, event_registrations.status),
+            competition_id = COALESCE(EXCLUDED.competition_id, event_registrations.competition_id),
+            competition_title = COALESCE(EXCLUDED.competition_title, event_registrations.competition_title),
+            age_group_id = COALESCE(EXCLUDED.age_group_id, event_registrations.age_group_id),
+            age_group_label = COALESCE(EXCLUDED.age_group_label, event_registrations.age_group_label),
+            is_age_verified = EXCLUDED.is_age_verified,
+            verified_age = EXCLUDED.verified_age,
+            sync_status = 'synced'
+          RETURNING id;
         `;
-        await client.query(fallbackQuery, [
-          Number(targetEventId), qrToken, reg.attendeeName || reg.name || null, reg.email || null,
-          reg.competitionId || null, reg.competitionTitle || null,
-          isCheckedIn, Boolean(reg.hasFoodAccess || reg.foodIncluded), isFoodClaimed
-        ]).catch(() => {});
-      });
+        regParams = [
+          Number(reg.id),
+          Number(targetEventId),
+          regName,
+          regEmail,
+          regPhone,
+          reg.category || reg.ticketType || 'general-public',
+          customAnswersData,
+          basePrice,
+          gstAmount,
+          totalPrice,
+          registrationTimestamp,
+          reg.status || 'CONFIRMED',
+          'synced',
+          reg.competitionId || null,
+          reg.competitionTitle || null,
+          reg.ageGroupId || null,
+          reg.ageGroupLabel || null,
+          Boolean(reg.isAgeVerified),
+          verifiedAge
+        ];
+      } else {
+        regQuery = `
+          INSERT INTO event_registrations (
+            event_id, name, email, phone, category, custom_answers,
+            base_price, gst_amount, total_price, registration_timestamp,
+            status, sync_status, competition_id, competition_title,
+            age_group_id, age_group_label, is_age_verified, verified_age
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6::jsonb,
+            $7, $8, $9, $10,
+            $11, $12, $13, $14,
+            $15, $16, $17, $18
+          )
+          RETURNING id;
+        `;
+        regParams = [
+          Number(targetEventId),
+          regName,
+          regEmail,
+          regPhone,
+          reg.category || reg.ticketType || 'general-public',
+          customAnswersData,
+          basePrice,
+          gstAmount,
+          totalPrice,
+          registrationTimestamp,
+          reg.status || 'CONFIRMED',
+          'synced',
+          reg.competitionId || null,
+          reg.competitionTitle || null,
+          reg.ageGroupId || null,
+          reg.ageGroupLabel || null,
+          Boolean(reg.isAgeVerified),
+          verifiedAge
+        ];
+      }
 
+      const regResult = await client.query(regQuery, regParams);
+      const serverRegId = regResult.rows[0]?.id || (hasNumericId ? Number(reg.id) : 0);
+
+      await logSyncAction('event_registrations', 'UPSERT', serverRegId, registrationTimestamp);
       syncedRegistrationsCount++;
     }
 
@@ -481,9 +546,11 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     if (client) await client.query('ROLLBACK');  
-    console.error('❌ Sync workflow pipeline failure:', error.message); 
-    return NextResponse.json({ error: 'Sync pipeline execution failed', details: error.message }, { status: 500 }); 
+    console.error('❌ Sync workflow pipeline failure:', error?.message || error); 
+    return NextResponse.json({ error: 'Sync pipeline execution failed', details: error?.message || String(error) }, { status: 500 }); 
   } finally {
-    if (client) client.release(); 
+    if (client) {
+      client.release(); 
+    }
   }
 }
