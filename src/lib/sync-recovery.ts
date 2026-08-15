@@ -10,21 +10,27 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
     const result = await response.json();
     if (!result.success) throw new Error(result.error || 'Unknown sync error');
 
-    // Extract users/volunteers array safely from payload
-    const { events = [], guests = [], managerEvents = [], users = [] } = result.data || result;
+    // 🟢 Extract eventRegistrations alongside events, guests, managerEvents, and users
+    const { 
+      events = [], 
+      guests = [], 
+      eventRegistrations = [], 
+      managerEvents = [], 
+      users = [] 
+    } = result.data || result;
 
     const normalizedManagerEmail = managerEmail.toLowerCase();
 
-    // 🚀 ATOMIC CLIENT HYDRATION TRANSACTION
-    await db.transaction('rw', [db.events, db.guests, db.managerEvents, db.users], async () => {
+    // 🚀 ATOMIC CLIENT HYDRATION TRANSACTION (Added db.eventRegistrations)
+    await db.transaction('rw', [db.events, db.guests, db.eventRegistrations, db.managerEvents, db.users], async () => {
       
       // 1. Clear out staging tables that don't hold persistent session state
       await db.events.clear();
       await db.guests.clear();
+      await db.eventRegistrations.clear(); // 🟢 Clear stale event registrations
       await db.managerEvents.clear();
 
       // 🟢 2. PRESERVE ACTIVE MANAGER SESSION & PRUNE STALE VOLUNTEERS
-      // Delete all users except the active manager row
       await db.users
         .filter(u => {
           const uEmail = (u.identifier || '').toLowerCase();
@@ -44,11 +50,14 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
           date: ev.date || '',
           startTime: ev.startTime || '',
           endTime: ev.endTime || '',
+          registrationEndDate: ev.registrationEndDate || ev.registration_end_date || '',
           location: ev.location || '',
           tagline: ev.tagline || '',
           description: ev.description || '',
           venueName: ev.venueName || '',
           hypeThreshold: Number(ev.hypeThreshold || 0),
+          isMultiCompetition: Boolean(ev.isMultiCompetition),
+          competitions: Array.isArray(ev.competitions) ? ev.competitions : [],
           visibility: ev.visibility || {
             map: true,
             rsvp: true,
@@ -69,6 +78,10 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
             applicableForAll: 'yes',
             categoryFees: {}
           },
+          coverBlob: null,
+          posterBlob: null,
+          coverImageUrl: ev.cover_image || ev.coverImageUrl || null,
+          posterImageUrl: ev.poster_image || ev.posterImageUrl || null,
           createdAt: ev.createdAt || Date.now(),
           syncStatus: 'synced',
         } as any);
@@ -85,20 +98,16 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
         });
       }
 
-      // 🟢 5. HYDRATE VOLUNTEERS & USERS STORE ALONGSIDE MANAGER ROW
+      // 5. HYDRATE VOLUNTEERS & USERS STORE ALONGSIDE MANAGER ROW
       for (const usr of users) {
         const userEmail = (usr.email || usr.identifier || '').toLowerCase();
         if (!userEmail) continue;
 
-        // Check if this record belongs to the manager (already in row 1)
         const existingUser = await db.users
-          .filter(u => 
-            (u.identifier === userEmail)
-          )
+          .filter(u => (u.identifier === userEmail))
           .first();
 
         if (existingUser && existingUser.id) {
-          // Update manager or existing volunteer record in place
           await db.users.update(existingUser.id, {
             name: usr.name || existingUser.name,
             role: usr.role || existingUser.role,
@@ -106,7 +115,6 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
             syncStatus: 'synced'
           } as any);
         } else {
-          // Insert new volunteer row without explicit ID so Dexie auto-increments
           await db.users.add({
             name: usr.name || userEmail.split('@')[0],
             identifier: userEmail,
@@ -129,19 +137,55 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
           phone: gst.phone || '',
           category: gst.category || 'general-public',
           type: gst.category || gst.type || 'general-public',
+          competitionTitle: gst.competitionTitle || null,
+          ageGroupLabel: gst.ageGroupLabel || null,
           qrToken: gst.qrToken || '',
           isCheckedIn: Boolean(gst.isCheckedIn),
           checkInTime: gst.checkInTime ? Number(gst.checkInTime) : undefined,
           hasFoodAccess: Boolean(gst.hasFoodAccess),
           hasFoodClaimed: Boolean(gst.hasFoodClaimed),
+          foodClaimedTime: gst.foodClaimedTime ? Number(gst.foodClaimedTime) : undefined,
           amountPaid: Number(gst.amountPaid || 0),
           registeredAt: gst.registeredAt || Date.now(),
           syncStatus: 'synced',
         } as any);
       }
+
+      // 🟢 7. Hydrate Local Event Registrations Store
+      for (const reg of eventRegistrations) {
+        await db.eventRegistrations.put({
+          id: Number(reg.id),
+          registrationId: reg.registrationId || `REG-${reg.id}`,
+          eventId: Number(reg.eventId),
+          name: reg.name || reg.attendeeName || '',
+          email: reg.email || '',
+          phone: reg.phone || '',
+          category: reg.category || reg.ticketType || 'general-public',
+          
+          // Competition & Age Group Identification
+          competitionId: reg.competitionId || null,
+          competitionTitle: reg.competitionTitle || null,
+          ageGroupId: reg.ageGroupId || null,
+          ageGroupLabel: reg.ageGroupLabel || null,
+          
+          // Verified Age Metadata
+          isAgeVerified: Boolean(reg.isAgeVerified),
+          verifiedAge: reg.verifiedAge !== null && reg.verifiedAge !== undefined ? Number(reg.verifiedAge) : null,
+
+          customAnswers: typeof reg.customAnswers === 'string' ? JSON.parse(reg.customAnswers) : (reg.customAnswers || {}),
+          basePrice: parseFloat(reg.basePrice || 0),
+          gstAmount: parseFloat(reg.gstAmount || 0),
+          totalPrice: parseFloat(reg.totalPrice || reg.amountPaid || 0),
+          paymentId: reg.paymentId || 'FREE_ENTRY',
+          orderId: reg.orderId || null,
+          status: reg.status || 'CONFIRMED',
+          syncStatus: 'synced',
+          registrationTimestamp: reg.registrationTimestamp || reg.registeredAt || Date.now()
+        } as any);
+      }
     });
 
-    console.log('✅ Workspace state local hydration execution successfully complete (manager session preserved & volunteers populated).');
+    console.log('✅ Workspace state local hydration execution successfully complete (events, guests, registrations, manager sessions & volunteers populated).');
     return true;
 
   } catch (error) {

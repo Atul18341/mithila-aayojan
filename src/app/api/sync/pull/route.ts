@@ -10,7 +10,7 @@ const pool = new Pool({
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   
-  // 🟢 Accept volunteer/manager identifier dynamically
+  // 🟢 Accept volunteer/manager identifier dynamically[cite: 16]
   const userIdentifier = 
     searchParams.get('volunteerIdentifier') || 
     searchParams.get('volunteerEmail') || 
@@ -26,12 +26,11 @@ export async function GET(request: Request) {
   try {
     client = await pool.connect();
 
-    // 🟢 Type Guard: Guarantees client is non-null for all subsequent queries
     if (!client) {
       throw new Error('Failed to acquire a database connection from pool.');
     }
 
-    // 1. Fetch all events assigned to or created by this volunteer/manager
+    // 1. Fetch all events assigned to or created by this volunteer/manager[cite: 16]
     const eventsQuery = `
       SELECT DISTINCT e.*, me.assigned_desk FROM events e
       JOIN manager_events me ON e.id = me.event_id
@@ -40,7 +39,7 @@ export async function GET(request: Request) {
     const eventsResult = await client.query(eventsQuery, [userIdentifier]);
     const rawEvents = eventsResult.rows;
 
-    // Extract assigned event IDs
+    // Extract assigned event IDs[cite: 16]
     const eventIds = rawEvents.map(e => Number(e.id)).filter(id => !isNaN(id) && id > 0);
 
     let rawGuests: any[] = [];
@@ -49,7 +48,7 @@ export async function GET(request: Request) {
     let rawUsers: any[] = [];
 
     if (eventIds.length > 0) {
-      // 2. Fetch all guests belonging to the assigned events
+      // 2. Fetch all guests belonging to the assigned events[cite: 16]
       const guestsQuery = `
         SELECT * FROM guests 
         WHERE event_id = ANY($1);
@@ -57,29 +56,28 @@ export async function GET(request: Request) {
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
-      // 3. 🟢 Fetch all event registrations with complete competition and age group details
+      // 3. 🟢 Fetch all event registrations using the exact PostgreSQL schema
       const registrationsQuery = `
         SELECT 
           id,
-          registration_id,
           event_id,
           name,
           email,
           phone,
           category,
-          competition_id,
-          competition_title,
-          age_group_id,
-          age_group_label,
-          is_age_verified,
-          verified_age,
           custom_answers,
           base_price,
           gst_amount,
           total_price,
           registration_timestamp,
           status,
-          sync_status
+          sync_status,
+          competition_id,
+          competition_title,
+          age_group_id,
+          age_group_label,
+          is_age_verified,
+          verified_age
         FROM event_registrations 
         WHERE event_id = ANY($1);
       `;
@@ -88,7 +86,7 @@ export async function GET(request: Request) {
         const registrationsResult = await client.query(registrationsQuery, [eventIds]);
         rawRegistrations = registrationsResult.rows;
       } catch {
-        // Fallback: Query 'event_registrations' or 'registrations' if column schema varies
+        // Fallback safety query if table schema has variations[cite: 16]
         const altQuery = `SELECT * FROM event_registrations WHERE event_id = ANY($1);`;
         const altResult = await client.query(altQuery, [eventIds]).catch(async () => {
           if (!client) return { rows: [] };
@@ -97,7 +95,7 @@ export async function GET(request: Request) {
         rawRegistrations = altResult.rows;
       }
 
-      // 4. Fetch all volunteer/manager assignment junction records for these events
+      // 4. Fetch all volunteer/manager assignment junction records for these events[cite: 16]
       const linksQuery = `
         SELECT DISTINCT me.* FROM manager_events me
         WHERE me.event_id = ANY($1)
@@ -106,7 +104,7 @@ export async function GET(request: Request) {
       const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
       rawLinks = linksResult.rows;
 
-      // 5. RELATIONAL JOIN: PULL VOLUNTEER PROFILES BY JOINING manager_events -> users
+      // 5. RELATIONAL JOIN: Pull volunteer profiles by joining manager_events -> users[cite: 16]
       const usersQuery = `
         SELECT DISTINCT 
           u.id,
@@ -128,7 +126,7 @@ export async function GET(request: Request) {
         const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]);
         rawUsers = usersResult.rows;
       } catch {
-        // Fallback: Query users table directly if JOIN fails
+        // Fallback: Query users table directly if JOIN fails[cite: 16]
         const assignedEmails = Array.from(new Set(rawLinks.map(l => (l.manager_identifier || '').toLowerCase()).filter(Boolean)));
         if (assignedEmails.length > 0) {
           const fallbackUsersQuery = `
@@ -142,10 +140,10 @@ export async function GET(request: Request) {
     }
 
     // =========================================================
-    // MAP POSTGRESQL SNAKE_CASE FIELDS TO DEXIE CAMELCASE
+    // MAP POSTGRESQL SNAKE_CASE FIELDS TO DEXIE CAMELCASE[cite: 16]
     // =========================================================
     
-    // Map Events
+    // Map Events[cite: 16]
     const formattedEvents = rawEvents.map(e => {
       let parsedCompetitions = [];
       if (e.competitions) {
@@ -184,7 +182,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Map Guests
+    // Map Guests[cite: 16]
     const formattedGuests = rawGuests.map(g => ({
       id: Number(g.id),
       guestId: g.guest_id || `GUEST-${g.id}`,
@@ -208,7 +206,7 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // 🟢 Map Event Registrations matching AayojanDB EventRegistration schema
+    // 🟢 Map Event Registrations matching exact database schema
     const formattedRegistrations = rawRegistrations.map(r => {
       let parsedCustomAnswers = {};
       if (r.custom_answers) {
@@ -221,41 +219,37 @@ export async function GET(request: Request) {
 
       return {
         id: Number(r.id),
-        registrationId: r.registration_id || r.ticket_id || `REG-${r.id}`,
+        registrationId: `REG-${r.id}`, // Deterministic standard ID mapped from Primary Key
         eventId: Number(r.event_id),
-        name: r.name || r.attendee_name || '',
+        name: r.name || '',
         email: r.email || '',
         phone: r.phone || '',
-        category: r.category || r.ticket_type || 'general-public',
+        category: r.category || 'general-public',
         
-        // Competition & Age Group Identification
+        // Multi-Competition & Age Bracket Identification
         competitionId: r.competition_id || null,
         competitionTitle: r.competition_title || null,
         ageGroupId: r.age_group_id || null,
         ageGroupLabel: r.age_group_label || null,
 
-        // Verified Age Metadata
+        // Age Verification Metadata
         isAgeVerified: Boolean(r.is_age_verified),
         verifiedAge: r.verified_age !== null && r.verified_age !== undefined ? Number(r.verified_age) : null,
 
-        // Dynamic answers & Financial ledger
+        // Financial Ledger & Dynamic Answers
         customAnswers: parsedCustomAnswers,
         basePrice: parseFloat(r.base_price || 0),
         gstAmount: parseFloat(r.gst_amount || 0),
-        totalPrice: parseFloat(r.total_price || r.amount_paid || 0),
+        totalPrice: parseFloat(r.total_price || 0),
 
-        paymentId: r.payment_id || 'FREE_ENTRY',
-        orderId: r.order_id || null,
-
-        status: r.status || 'CONFIRMED',
-        syncStatus: 'synced',
-        registrationTimestamp: r.registration_timestamp 
-          ? Number(r.registration_timestamp) 
-          : (r.created_at ? new Date(r.created_at).getTime() : Date.now())
+        // Status & Timestamps
+        status: r.status || 'pending',
+        syncStatus: r.sync_status || 'synced',
+        registrationTimestamp: Number(r.registration_timestamp || Date.now())
       };
     });
 
-    // Map Manager/Volunteer Event Junction Records
+    // Map Manager/Volunteer Event Junction Records[cite: 16]
     const formattedLinks = rawLinks.map(l => ({
       id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
@@ -265,7 +259,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Map Relational User / Volunteer Profiles
+    // Map Relational User / Volunteer Profiles[cite: 16]
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
       name: u.name || (u.email ? u.email.split('@')[0] : 'Volunteer'),
