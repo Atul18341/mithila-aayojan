@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
 import { loadRazorpayScript } from '@/hooks/useRazorpay';
+import { translations, Locale } from '@/lib/translations';
 
 // Unified Attendee Category Definitions
 export type AttendeeCategory = 
@@ -43,22 +44,21 @@ export interface SubCompetition {
   ageGroups?: AgeGroup[];
 }
 
-const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
-  { id: 'patron', label: 'Chief Patrons & Core Members' },
-  { id: 'dignitary', label: 'Dignitaries / State Officials' }, 
-  { id: 'vip', label: 'VIP Guests' },
-  { id: 'sponsor', label: 'Event Sponsors' },              
-  { id: 'speaker', label: 'Keynote Speakers & Panelists' },
-  { id: 'artisan', label: 'Cultural Artists & Artisans' },
-  { id: 'delegate', label: 'Registered Delegates' },
-  { id: 'trainee', label: 'Trainees & Scholars' },
-  { id: 'exhibitor', label: 'Exhibitors & Vendors' },
-  { id: 'general-public', label: 'General Visitors & Public' },
-  { id: 'event-participant', label: 'Event Participant' },
-  { id: 'ops-team', label: 'Operations & Logistics Team' }
+const ATTENDEE_CATEGORY_KEYS: AttendeeCategory[] = [
+  'patron',
+  'dignitary',
+  'vip',
+  'sponsor',
+  'speaker',
+  'artisan',
+  'delegate',
+  'trainee',
+  'exhibitor',
+  'general-public',
+  'event-participant',
+  'ops-team'
 ];
 
-// Whitelist filter defining which specific profiles are permitted on public self-registration paths
 const PUBLIC_EXCLUSIVE_CATEGORIES: AttendeeCategory[] = [
   'sponsor',
   'speaker',
@@ -94,15 +94,18 @@ interface CustomFieldConfig {
   label: string;
   type: 'text' | 'select' | 'textarea';
   required: boolean;
-  options?: string[];
+  options?: { value: string; label: string }[];
 }
 
 interface UniversalRegistrationFormProps {
   event: EventData;
+  lang?: Locale;
 }
 
-export default function UniversalRegistrationForm({ event }: UniversalRegistrationFormProps) {
+export default function UniversalRegistrationForm({ event, lang = 'en' }: UniversalRegistrationFormProps) {
   const router = useRouter();
+  const t = translations[lang] || translations.en;
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [duplicateError, setDuplicateError] = useState<{ message: string; queryParam: string } | null>(null);
@@ -112,12 +115,11 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     email: '',
     phone: '',
     category: '' as AttendeeCategory | '',
-    competitionId: '', // 🟢 Selected sub-competition ID
-    ageGroupId: '',    // 🟢 Selected age group ID within track
+    competitionId: '',
+    ageGroupId: '',
     customAnswers: {} as Record<string, string>
   });
 
-  // 🟢 LIVE DB-FETCHED COMPETITIONS STATE
   const [competitionsList, setCompetitionsList] = useState<SubCompetition[]>(
     event.competitions || []
   );
@@ -132,7 +134,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     totalPrice: 0
   });
 
-  // 🔴 REGISTRATION CUTOFF EVALUATION RULE
   const cutoffDateStr = event.registrationEndDate || event.registration_end_date;
   let isRegistrationClosed = false;
 
@@ -143,7 +144,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     }
   }
 
-  // 🟢 FETCH LATEST COMPETITIONS DIRECTLY FROM DEXIE DB
   useEffect(() => {
     async function loadCompetitionsFromDb() {
       if (!db || !db.events) return;
@@ -181,11 +181,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     loadCompetitionsFromDb();
   }, [event.id, event.slug]);
 
-  // Selected Competition Reference
   const selectedCompetition = competitionsList.find(c => c.id === formData.competitionId);
   const availableAgeGroups = selectedCompetition?.ageGroups || [];
 
-  // Calculate fees dynamically whenever category selection changes
   useEffect(() => {
     if (!event.pricingConfig?.isRequired) {
       setPricing({ basePrice: 0, gstAmount: 0, totalPrice: 0 });
@@ -214,18 +212,37 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       case 'summit':
       case 'conference':
         return [
-          { id: 'company', label: 'Organization / Institution', type: 'text', required: true },
-          { id: 'designation', label: 'Designation / Job Title', type: 'text', required: true }
+          { id: 'company', label: t.customFields.company, type: 'text', required: true },
+          { id: 'designation', label: t.customFields.designation, type: 'text', required: true }
         ];
       case 'workshop':
         return [
-          { id: 'experience', label: 'Prior Coding/Domain Experience', type: 'select', required: true, options: ['Beginner', 'Intermediate', 'Advanced'] },
-          { id: 'laptop', label: 'Will you bring your own laptop?', type: 'select', required: true, options: ['Yes', 'No'] }
+          { 
+            id: 'experience', 
+            label: t.customFields.experience, 
+            type: 'select', 
+            required: true, 
+            options: [
+              { value: 'Beginner', label: t.customFields.optionBeginner },
+              { value: 'Intermediate', label: t.customFields.optionIntermediate },
+              { value: 'Advanced', label: t.customFields.optionAdvanced }
+            ] 
+          },
+          { 
+            id: 'laptop', 
+            label: t.customFields.laptop, 
+            type: 'select', 
+            required: true, 
+            options: [
+              { value: 'Yes', label: t.customFields.optionYes },
+              { value: 'No', label: t.customFields.optionNo }
+            ] 
+          }
         ];
       case 'celebration':
       default:
         return [
-          { id: 'location', label: 'Home Town / City', type: 'text', required: false }
+          { id: 'location', label: t.customFields.location, type: 'text', required: false }
         ];
     }
   };
@@ -243,12 +260,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
     if (min !== undefined) return `≥ ${min} yrs`;
     if (max !== undefined) return `≤ ${max} yrs`;
-    return 'Open Bracket';
+    return t.formOpenBracket;
   };
 
-  /**
-   * Fail-safe QR Token Generator
-   */
   const generateQrToken = (eventData: EventData, phone: string): string => {
     const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
     let prefix = rawEventTitle.replace(/[^A-Za-z]/g, '').substring(0, 2).toUpperCase();
@@ -266,7 +280,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
   const sendRegistrationToServer = async (registrationPayload: any, guestPayload: any, paymentResponse?: any) => {
     if (typeof window !== 'undefined' && !navigator.onLine) {
-      console.warn("⚠️ Client offline. Cloud endpoint sync skipped.");
       return;
     }
 
@@ -289,7 +302,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     if (response.status === 409 || data.isDuplicate) {
       const queryParam = registrationPayload.phone || registrationPayload.email;
       const errorObj = {
-        message: data.error || 'An account with this email or phone is already registered for this event.',
+        message: data.error || (lang === 'hi' ? 'इस ईमेल या फोन नंबर से पहले ही पंजीकरण किया जा चुका है।' : lang === 'mai' ? 'एहि ईमेल या फोन नंबर सं पहिनेहि पंजीकरण भऽ चुकल अछि।' : 'An account with this email or phone is already registered for this event.'),
         queryParam: encodeURIComponent(queryParam)
       };
       setDuplicateError(errorObj);
@@ -300,7 +313,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       throw new Error(data.error || 'Server registration record failed.');
     }
 
-    console.log("☁️ Successfully recorded registration on PostgreSQL server.");
     return data;
   };
 
@@ -310,7 +322,6 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     const qrToken = generateQrToken(event, formData.phone);
     const isOnline = typeof window !== 'undefined' && navigator.onLine;
 
-    // Resolve selected competition & age group objects
     const selectedComp = competitionsList.find(c => c.id === formData.competitionId);
     const selectedAgeGroup = selectedComp?.ageGroups?.find(g => g.id === formData.ageGroupId);
 
@@ -323,8 +334,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       category: formData.category as AttendeeCategory,
       competitionId: formData.competitionId || null,
       competitionTitle: selectedComp ? selectedComp.title : null,
-      ageGroupId: formData.ageGroupId || null, // 🟢 Age Group identifier
-      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null, // 🟢 Age Group label
+      ageGroupId: formData.ageGroupId || null,
+      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null,
       customAnswers: formData.customAnswers,
       
       basePrice: pricing.basePrice,
@@ -375,9 +386,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           await db.eventRegistrations.add(registrationPayload);
           await db.guests.add(guestPayload);
         });
-        console.log("✅ Successfully stored in local Dexie database!");
       } catch (error) {
-        console.error("❌ Dexie Write Failure Trace:", error);
+        console.error("❌ Dexie Write Failure:", error);
       }
     }
 
@@ -389,17 +399,16 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     setDuplicateError(null);
 
     if (isRegistrationClosed) {
-      alert('Registrations for this event are closed.');
+      alert(t.formClosedHeading);
       return;
     }
 
-    // Require Age Group selection if track contains multiple age groups
     if (
       formData.category === 'event-participant' && 
       availableAgeGroups.length > 0 && 
       !formData.ageGroupId
     ) {
-      alert('Please select an Age Group / Category for this competition.');
+      alert(t.formAgeGroupPlaceholder);
       return;
     }
 
@@ -410,7 +419,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
     const isOffline = typeof window !== 'undefined' && !navigator.onLine;
 
     if (isFeeApplicable && isOffline) {
-      alert('Payment processing requires an active internet connection. Please connect to the internet to complete your ticket purchase.');
+      alert('Payment processing requires an active internet connection.');
       setIsSubmitting(false);
       return;
     }
@@ -514,13 +523,13 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         <div className="space-y-1.5">
           <div className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-amber-500">
             <CalendarX size={14} />
-            <span>Registrations Closed</span>
+            <span>{t.formClosedTitle}</span>
           </div>
           <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Online Registration Deadline Reached
+            {t.formClosedHeading}
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
-            Public registration for this event closed on <strong className="text-slate-700 dark:text-slate-200">{cutoffDateStr}</strong>.
+            {t.formClosedDesc} <strong className="text-slate-700 dark:text-slate-200">{cutoffDateStr}</strong>.
           </p>
         </div>
 
@@ -530,7 +539,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 active:scale-95"
           >
             <Ticket size={14} />
-            <span>Find My Registered Pass</span>
+            <span>{t.formFindPassBtn}</span>
           </Link>
         </div>
       </div>
@@ -544,9 +553,9 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           <CheckCircle2 size={28} />
         </div>
         <div className="space-y-1.5">
-          <h4 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">Registration Processed</h4>
+          <h4 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">{t.formSubmittedHeading}</h4>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[260px] mx-auto leading-relaxed">
-            Your registration was completed successfully. Redirecting to your ticket pass...
+            {t.formSubmittedDesc}
           </p>
         </div>
       </div>
@@ -562,7 +571,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           <div className="flex items-start gap-3 text-red-600 dark:text-red-400">
             <AlertCircle size={20} className="shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <h4 className="text-xs font-black uppercase tracking-wider">Already Registered!</h4>
+              <h4 className="text-xs font-black uppercase tracking-wider">{t.formDuplicateTitle}</h4>
               <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-300">
                 {duplicateError.message}
               </p>
@@ -574,7 +583,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
               className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-red-600/20"
             >
               <Ticket size={14} />
-              <span>Retrieve My Ticket Pass</span>
+              <span>{t.formDuplicateBtn}</span>
             </Link>
           </div>
         </div>
@@ -584,14 +593,14 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       <div className="space-y-3">
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Name
+            {t.formNameLabel}
           </label>
           <div className="relative group">
             <User size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
             <input 
               type="text" 
               required 
-              placeholder="Ex: Atul Kumar" 
+              placeholder={t.formNamePlaceholder} 
               value={formData.name} 
               onChange={e => setFormData({...formData, name: e.target.value})} 
               className="w-full bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400"
@@ -601,14 +610,14 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Email Id
+            {t.formEmailLabel}
           </label>
           <div className="relative group">
             <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
             <input 
               type="email" 
               required 
-              placeholder="name@company.com" 
+              placeholder={t.formEmailPlaceholder} 
               value={formData.email} 
               onChange={e => setFormData({...formData, email: e.target.value})} 
               className="w-full bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400"
@@ -618,14 +627,14 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
 
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-           Mobile No./WhatsApp No.
+            {t.formPhoneLabel}
           </label>
           <div className="relative group">
             <Phone size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
             <input 
               type="tel" 
               required 
-              placeholder="+91 XXXXX XXXXX" 
+              placeholder={t.formPhonePlaceholder} 
               value={formData.phone} 
               onChange={e => setFormData({...formData, phone: e.target.value})} 
               className="w-full bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400"
@@ -636,7 +645,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         {/* ATTENDEE CATEGORY SELECTION DROPDOWN */}
         <div className="space-y-1">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Select Category
+            {t.formCategoryLabel}
           </label>
           <div className="relative group">
             <Users size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -654,13 +663,13 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
               }}
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer"
             >
-              <option value="" className="text-slate-400">Select attendee profile type...</option>
-              {ATTENDEE_CATEGORIES.filter(cat => 
-                getApplicableCategoriesForType(event.type).includes(cat.id) &&
-                PUBLIC_EXCLUSIVE_CATEGORIES.includes(cat.id)
+              <option value="" className="text-slate-400">{t.formCategoryPlaceholder}</option>
+              {ATTENDEE_CATEGORY_KEYS.filter(cat => 
+                getApplicableCategoriesForType(event.type).includes(cat) &&
+                PUBLIC_EXCLUSIVE_CATEGORIES.includes(cat)
               ).map(cat => (
-                <option key={cat.id} value={cat.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
-                  {cat.label}
+                <option key={cat} value={cat} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                  {t.formCategories[cat]}
                 </option>
               ))}
             </select>
@@ -672,7 +681,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
           <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-white/5 animate-in fade-in duration-200">
             <div className="space-y-1">
               <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-                Select Competition / Track <span className="text-red-400 font-bold">*</span>
+                {t.formCompLabel} <span className="text-red-400 font-bold">*</span>
               </label>
               <div className="relative group">
                 <Trophy size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -684,7 +693,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
                     setFormData({
                       ...formData, 
                       competitionId: newCompId,
-                      ageGroupId: '' // Reset age group when track changes
+                      ageGroupId: ''
                     });
                   }}
                   disabled={isLoadingCompetitions}
@@ -692,10 +701,10 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
                 >
                   <option value="" className="text-slate-400">
                     {isLoadingCompetitions 
-                      ? "Loading competitions..." 
+                      ? t.formCompLoading 
                       : competitionsList.length === 0 
-                        ? "No sub-competitions available" 
-                        : "Select sub-competition to enter..."}
+                        ? t.formCompNone 
+                        : t.formCompPlaceholder}
                   </option>
                   {competitionsList.map(comp => (
                     <option key={comp.id} value={comp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
@@ -710,8 +719,8 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
             {availableAgeGroups.length > 0 && (
               <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
                 <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1 flex items-center justify-between">
-                  <span>Select Age Group / Category <span className="text-red-400 font-bold">*</span></span>
-                  <span className="text-[9px] lowercase opacity-75 font-normal">({availableAgeGroups.length} brackets available)</span>
+                  <span>{t.formAgeGroupLabel} <span className="text-red-400 font-bold">*</span></span>
+                  <span className="text-[9px] lowercase opacity-75 font-normal">({availableAgeGroups.length} {t.formBracketsAvailable})</span>
                 </label>
                 <div className="relative group">
                   <Layers size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
@@ -721,7 +730,7 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
                     onChange={e => setFormData({...formData, ageGroupId: e.target.value})}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer"
                   >
-                    <option value="" className="text-slate-400">Select eligible age bracket...</option>
+                    <option value="" className="text-slate-400">{t.formAgeGroupPlaceholder}</option>
                     {availableAgeGroups.map(grp => (
                       <option key={grp.id} value={grp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
                         {grp.label} ({formatAgeBadgeText(grp.minAge, grp.maxAge)}) [{grp.code}]
@@ -751,16 +760,16 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
                   onChange={e => handleCustomChange(field.id, e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer"
                 >
-                  <option value="" className="text-slate-400">Select option...</option>
+                  <option value="" className="text-slate-400">{t.customFields.selectPlaceholder}</option>
                   {field.options?.map(opt => (
-                    <option key={opt} value={opt} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">{opt}</option>
+                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">{opt.label}</option>
                   ))}
                 </select>
               ) : (
                 <input 
                   type="text" 
                   required={field.required}
-                  placeholder={`Provide target ${field.label.toLowerCase()}...`}
+                  placeholder={`${t.customFields.inputPlaceholder} ${field.label.toLowerCase()}...`}
                   value={formData.customAnswers[field.id] || ''}
                   onChange={e => handleCustomChange(field.id, e.target.value)}
                   className="w-full bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400" 
@@ -775,25 +784,25 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
       {event.pricingConfig?.isRequired && (
         <div className="pt-3 border-t border-dashed border-slate-200 dark:border-white/10 space-y-2 animate-in fade-in duration-300">
           <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
-            Ticket Summary
+            {t.formTicketSummary}
           </span>
           <div className="p-3.5 rounded-xl border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs space-y-1 text-slate-600 dark:text-slate-400 font-semibold">
             {event.pricingConfig.applicableForAll === 'no' && !formData.category ? (
-              <p className="text-[11px] text-amber-500 italic font-medium">Please select an entry category to calculate registration fees.</p>
+              <p className="text-[11px] text-amber-500 italic font-medium">{t.formSelectCategoryToCalculate}</p>
             ) : (
               <>
                 <div className="flex justify-between items-center">
-                  <span>Base Booking Price:</span>
+                  <span>{t.formBasePrice}</span>
                   <span className="font-bold text-slate-800 dark:text-white">₹{pricing.basePrice}</span>
                 </div>
                 {event.pricingConfig.gstApplicable && (
                   <div className="flex justify-between items-center text-[11px] text-slate-400">
-                    <span>Statutory GST (18%):</span>
+                    <span>{t.formGst}</span>
                     <span>₹{pricing.gstAmount}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center border-t border-slate-200 dark:border-white/10 pt-1.5 mt-1 text-slate-900 dark:text-white font-black">
-                  <span className="flex items-center gap-0.5"><IndianRupee size={12} /> Payable Amount:</span>
+                  <span className="flex items-center gap-0.5"><IndianRupee size={12} /> {t.formPayableAmount}</span>
                   <span className="text-sm text-emerald-500">₹{pricing.totalPrice}</span>
                 </div>
               </>
@@ -811,12 +820,12 @@ export default function UniversalRegistrationForm({ event }: UniversalRegistrati
         {isSubmitting ? (
           <>
             <Loader2 className="animate-spin text-white" size={14} />
-            <span>Processing...</span>
+            <span>{t.formProcessing}</span>
           </>
         ) : (
           <>
             <span>
-              {pricing.totalPrice > 0 ? `Pay ₹${pricing.totalPrice} & Register` : 'Free Registration'}
+              {pricing.totalPrice > 0 ? `₹${pricing.totalPrice} ${t.formPayAndRegBtn}` : t.formFreeRegBtn}
             </span>
             <Send size={12} className="text-white/70 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </>

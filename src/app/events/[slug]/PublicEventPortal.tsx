@@ -5,12 +5,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   Calendar, MapPin, Share2, ShieldCheck, Sun, Moon,
   Clock, Award, Users, CheckCircle2, ChevronDown, 
-  Trophy, ExternalLink, HelpCircle, Navigation,
-  Check, Hourglass, Sparkles, AlertCircle,
-  ArrowUpRight, FileText, ChevronUp
+  Trophy, HelpCircle, Check, Hourglass, Sparkles, 
+  AlertCircle, ArrowUpRight, FileText, ChevronUp, 
+  AlertTriangle, IdCard
 } from 'lucide-react';
 import UniversalRegistrationForm from '../../../components/EventRegistration';
 import { LinkedinIcon } from '@/lib/SocialIcons';
+import { translations, Locale } from '@/lib/translations';
 
 export interface AgeGroup {
   id: string;
@@ -87,11 +88,14 @@ const DEFAULT_POSTER_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2
 const DEFAULT_COVER_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='400' viewBox='0 0 1200 400'%3E%3Crect width='1200' height='400' fill='%230f172a'/%3E%3C/svg%3E";
 
 export default function PublicEventPortal({ event }: PublicEventPageProps) {
+  const [lang, setLang] = useState<Locale>('en');
   const [isDark, setIsDark] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
   const [openRulesCompId, setOpenRulesCompId] = useState<string | null>(null);
   const [copiedShare, setCopiedShare] = useState(false);
   const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number; totalMs: number } | null>(null);
+
+  const t = translations[lang] || translations.en;
 
   useEffect(() => {
     const rawDateStr = event?.registrationEndDate || event?.registration_end_date || event?.date;
@@ -175,7 +179,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
 
   const activeTheme = accentStyles[event?.branding?.accentColor || 'blue'];
   const organizerText = event?.organizedBy || "Event Organizing Committee";
-  const finalVenueName = event?.venue_name || "Main Event Venue";
+  const finalVenueName = event?.venue_name || t.portalMainVenue;
 
   const resolvedPosterUrl = 
     event?.posterImageUrl || 
@@ -187,7 +191,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
   const resolvedCoverUrl = event?.coverImageUrl || DEFAULT_COVER_SVG;
   const rawCount = event?.registrationCount ?? 0;
   const threshold = event?.hypeThreshold ?? 20;
-  const displayCountText = rawCount >= threshold ? `${rawCount}+ Confirmed Attendees` : 'Registration Active';
+  const displayCountText = rawCount >= threshold ? `${rawCount}+ ${t.portalConfirmedAttendees}` : t.portalRegActive;
 
   const formatTimeString = (timeStr?: string) => {
     if (!timeStr) return '';
@@ -206,28 +210,15 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
   const formattedEnd = formatTimeString(event?.end_time);
   const timeDisplay = formattedEnd 
     ? `${formattedStart} - ${formattedEnd}` 
-    : `${formattedStart || '09:30 AM'} Onwards`;
+    : `${formattedStart || '09:30 AM'} ${t.portalOnwards}`;
 
-  const defaultFaqs: FAQItem[] = event?.faqs || [
-    {
-      question: "How do I receive my pass after registering?",
-      answer: "Your entry pass with a unique QR code is generated right after registration. You can download it immediately or retrieve it anytime from the check-in portal."
-    },
-    {
-      question: "Will physical verification be conducted at the entrance?",
-      answer: "Yes, present your digital QR pass on your mobile device or bring a printed copy to check-in smoothly at the desk."
-    },
-    {
-      question: "Can I register for multiple tracks or sub-events?",
-      answer: "Yes, if multiple tracks are available, you will have the option to pick your preferred category during form submission."
-    }
-  ];
+  const activeFaqs = event?.faqs || t.portalDefaultFaqs;
 
   const formatAgeBadge = (min?: number, max?: number) => {
     if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
     if (min !== undefined) return `≥ ${min} yrs`;
     if (max !== undefined) return `≤ ${max} yrs`;
-    return 'Open Age';
+    return t.portalOpenAge;
   };
 
   const isFinalCountdown = !!(timeLeft && timeLeft.totalMs > 0 && timeLeft.totalMs <= 24 * 60 * 60 * 1000);
@@ -246,7 +237,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               </span>
               <span className="uppercase tracking-wider font-bold text-[11px] flex items-center gap-1.5">
                 <AlertCircle size={14} className="text-amber-200" />
-                <span>Registrations Closing Soon:</span>
+                <span>{t.portalClosingSoon}</span>
               </span>
             </div>
 
@@ -266,14 +257,14 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
 
             <div className="hidden md:flex items-center gap-1 text-[11px] text-white/90">
               <Sparkles size={13} className="text-amber-200" />
-              <span>Secure your entry spot before deadline</span>
+              <span>{t.portalSecureSpot}</span>
             </div>
           </div>
         </aside>
       )}
 
       {/* HERO COVER BANNER */}
-      <div className="relative w-full h-64 md:h-80 lg:h-96 overflow-hidden bg-slate-950">
+      <div className="relative w-full h-56 sm:h-72 md:h-80 lg:h-96 overflow-hidden bg-slate-950">
         <img 
           src={resolvedCoverUrl} 
           alt="Event Header" 
@@ -284,32 +275,10 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
           }}
         />
         <div className={`absolute inset-0 bg-gradient-to-t ${isDark ? 'from-[#090D16] via-[#090D16]/50' : 'from-slate-50 via-slate-50/40'} to-transparent`} />
-        
-        {/* TOP CONTROLS */}
-        <div className="absolute top-4 right-4 sm:top-6 sm:right-6 flex items-center gap-2 z-30">
-          <button 
-            type="button" 
-            onClick={() => setIsDark(!isDark)}
-            aria-label="Toggle Theme"
-            className="p-2.5 rounded-full backdrop-blur-md bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all shadow-lg"
-          >
-            {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          
-          <button 
-            type="button" 
-            onClick={handleShare}
-            aria-label="Share Event"
-            className="px-3.5 py-2.5 rounded-full backdrop-blur-md bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all shadow-lg flex items-center gap-2 text-xs font-semibold"
-          >
-            {copiedShare ? <Check size={16} className="text-emerald-400" /> : <Share2 size={16} />}
-            <span className="hidden sm:inline">{copiedShare ? 'Copied' : 'Share'}</span>
-          </button>
-        </div>
       </div>
 
       {/* MAIN CONTAINER */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 -mt-24 md:-mt-36 relative z-20 pb-28">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 -mt-20 md:-mt-32 relative z-20 pb-24">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* LEFT CONTENT COLUMN */}
@@ -321,15 +290,73 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             }`}>
               <div className={`absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl ${activeTheme.accentGlow} rounded-full blur-3xl pointer-events-none`} />
 
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${activeTheme.badge}`}>
-                  {event?.type || 'Conference'}
-                </span>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                  isDark ? 'bg-slate-800/60 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
-                }`}>
-                  {event?.protocol ? event.protocol.replace('-', ' ') : 'Open Access'}
-                </span>
+              {/* CARD TOP TOOLBAR: Badges & Header Action Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${activeTheme.badge}`}>
+                    {event?.type || 'Conference'}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                    isDark ? 'bg-slate-800/60 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
+                  }`}>
+                    {event?.protocol ? event.protocol.replace('-', ' ') : t.portalOpenAccess}
+                  </span>
+                </div>
+
+                {/* 🟢 HEADER ACTION BAR */}
+                <div className="flex items-center gap-2">
+                  {/* Language Switcher */}
+                  <div className={`flex items-center p-1 rounded-full border shadow-sm text-[11px] font-bold ${
+                    isDark ? 'bg-slate-800/90 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                  }`}>
+                    <button
+                      type="button"
+                      onClick={() => setLang('en')}
+                      className={`px-2 py-0.5 rounded-full transition-all ${lang === 'en' ? 'bg-blue-600 text-white shadow' : 'hover:text-blue-500'}`}
+                    >
+                      EN
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLang('hi')}
+                      className={`px-2 py-0.5 rounded-full transition-all ${lang === 'hi' ? 'bg-blue-600 text-white shadow' : 'hover:text-blue-500'}`}
+                    >
+                      हिन्दी
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLang('mai')}
+                      className={`px-2 py-0.5 rounded-full transition-all ${lang === 'mai' ? 'bg-blue-600 text-white shadow' : 'hover:text-blue-500'}`}
+                    >
+                      मैथिली
+                    </button>
+                  </div>
+
+                  {/* Dark Mode Toggle */}
+                  <button 
+                    type="button" 
+                    onClick={() => setIsDark(!isDark)}
+                    aria-label="Toggle Theme"
+                    className={`p-2 rounded-full border transition-all ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {isDark ? <Sun size={15} /> : <Moon size={15} />}
+                  </button>
+                  
+                  {/* Share Button */}
+                  <button 
+                    type="button" 
+                    onClick={handleShare}
+                    aria-label="Share Event"
+                    className={`px-3 py-1.5 rounded-full border transition-all flex items-center gap-1.5 text-xs font-semibold ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {copiedShare ? <Check size={14} className="text-emerald-500" /> : <Share2 size={14} />}
+                    <span className="hidden sm:inline">{copiedShare ? t.portalCopied : t.portalShare}</span>
+                  </button>
+                </div>
               </div>
 
               <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight leading-tight mb-3">
@@ -351,8 +378,8 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                     <Calendar size={18} className={activeTheme.textAccent} />
                   </div>
                   <div>
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Date</span>
-                    <span className="text-sm font-semibold">{event?.date || 'To be announced'}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">{t.portalDateLabel}</span>
+                    <span className="text-sm font-semibold">{event?.date || t.portalTba}</span>
                   </div>
                 </div>
 
@@ -361,7 +388,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                     <Clock size={18} className={activeTheme.textAccent} />
                   </div>
                   <div>
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Time</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">{t.portalTimeLabel}</span>
                     <span className="text-sm font-semibold">{timeDisplay}</span>
                   </div>
                 </div>
@@ -371,7 +398,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                     <MapPin size={18} className={activeTheme.textAccent} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Venue & Location</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">{t.portalVenueLabel}</span>
                     <span className="text-sm font-semibold block truncate">{finalVenueName}</span>
                     <a 
                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${finalVenueName}, ${event?.location}`)}`} 
@@ -386,10 +413,26 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 </div>
               </div>
 
+              {/* 🔴 MANDATORY DOCUMENTATION ALERT BOX */}
+              <div className="mt-6 p-4 sm:p-4.5 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-3.5 shadow-sm">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                  <IdCard size={20} />
+                </div>
+                <div className="space-y-1 text-xs sm:text-sm">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide text-xs">
+                    <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400" />
+                    <span>{t.portalMandatoryNoticeTitle}</span>
+                  </div>
+                  <p className="leading-relaxed font-medium">
+                    {t.portalMandatoryNoticeBody}
+                  </p>
+                </div>
+              </div>
+
               {/* ABOUT SECTION */}
               {event?.description && (
                 <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800/80">
-                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">About This Event</h2>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">{t.portalAboutHeading}</h2>
                   <p className={`text-sm sm:text-base leading-relaxed whitespace-pre-line ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                     {event.description}
                   </p>
@@ -401,20 +444,20 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             <div className="grid grid-cols-3 gap-3 sm:gap-4">
               <div className={`p-4 rounded-2xl border text-center ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <Award size={20} className={`mx-auto mb-2 ${activeTheme.textAccent}`} />
-                <div className="text-xs sm:text-sm font-bold">Verified Entry</div>
-                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">Official Pass</div>
+                <div className="text-xs sm:text-sm font-bold">{t.portalVerifiedEntry}</div>
+                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">{t.portalOfficialPass}</div>
               </div>
 
               <div className={`p-4 rounded-2xl border text-center ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <Users size={20} className={`mx-auto mb-2 ${activeTheme.textAccent}`} />
                 <div className="text-xs sm:text-sm font-bold truncate px-1">{displayCountText}</div>
-                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">Attendee Status</div>
+                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">{t.portalAttendeeStatus}</div>
               </div>
 
               <div className={`p-4 rounded-2xl border text-center ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <ShieldCheck size={20} className={`mx-auto mb-2 ${activeTheme.textAccent}`} />
-                <div className="text-xs sm:text-sm font-bold">Guaranteed</div>
-                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">Secure Check-in</div>
+                <div className="text-xs sm:text-sm font-bold">{t.portalGuaranteed}</div>
+                <div className="text-[10px] sm:text-xs text-slate-400 mt-0.5">{t.portalSecureCheckin}</div>
               </div>
             </div>
 
@@ -424,10 +467,10 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 <div className="flex items-center justify-between gap-3 mb-6">
                   <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
                     <Trophy size={20} className="text-amber-500" />
-                    <span>Competitions & Age Groups</span>
+                    <span>{t.portalCompTitle}</span>
                   </h3>
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                    {event.competitions.length} Tracks Available
+                    {event.competitions.length} {t.portalTracksAvailable}
                   </span>
                 </div>
 
@@ -466,7 +509,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                           <div className="space-y-1.5 pt-1">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                               <Users size={12} className="text-blue-500" />
-                              <span>Eligible Age Groups:</span>
+                              <span>{t.portalEligibleAgeGroups}</span>
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {comp.ageGroups!.map(grp => (
@@ -494,7 +537,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                             >
                               <span className="flex items-center gap-1.5">
                                 <FileText size={13} className="text-blue-500" />
-                                <span>Track Rules & Guidelines</span>
+                                <span>{t.portalRulesBtn}</span>
                               </span>
                               {isRulesOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                             </button>
@@ -518,7 +561,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <h3 className="text-lg font-bold tracking-tight mb-5 flex items-center gap-2">
                   <Users size={20} className={activeTheme.textAccent} />
-                  <span>Featured Speakers</span>
+                  <span>{t.portalFeaturedSpeakers}</span>
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {event.speakers.map((speaker, idx) => (
@@ -565,7 +608,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <h3 className="text-lg font-bold tracking-tight mb-6 flex items-center gap-2">
                   <Clock size={20} className={activeTheme.textAccent} />
-                  <span>Event Schedule</span>
+                  <span>{t.portalEventSchedule}</span>
                 </h3>
                 <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
                   {event.agenda.map((item, idx) => (
@@ -588,10 +631,10 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
               <h3 className="text-lg font-bold tracking-tight mb-5 flex items-center gap-2">
                 <HelpCircle size={20} className={activeTheme.textAccent} />
-                <span>Frequently Asked Questions</span>
+                <span>{t.portalFaqHeading}</span>
               </h3>
               <div className="space-y-3">
-                {defaultFaqs.map((faq, idx) => (
+                {activeFaqs.map((faq, idx) => (
                   <div 
                     key={idx} 
                     className={`rounded-2xl border transition-all overflow-hidden ${
@@ -622,12 +665,12 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200'
             }`}>
               <div>
-                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">Organized by</span>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">{t.portalOrganizedBy}</span>
                 <span className="text-sm font-bold mt-0.5 block">{organizerText}</span>
               </div>
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                 <CheckCircle2 size={14} />
-                <span>Verified Host</span>
+                <span>{t.portalVerifiedHost}</span>
               </div>
             </div>
 
@@ -636,12 +679,11 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
           {/* RIGHT STICKY REGISTRATION SIDEBAR */}
           <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-8">
             
-            {/* 🟢 POSTER CARD (Proper Containment & Backdrop) */}
+            {/* POSTER CARD */}
             <div className={`rounded-3xl border overflow-hidden shadow-xl ${
               isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
             }`}>
               <div className="aspect-[4/5] w-full overflow-hidden bg-slate-950 relative group flex items-center justify-center p-2">
-                {/* Ambient Blurred Background (fills letterbox space seamlessly) */}
                 <img 
                   src={resolvedPosterUrl} 
                   alt="" 
@@ -649,7 +691,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                   className="absolute inset-0 w-full h-full object-cover blur-xl opacity-40 scale-110 pointer-events-none" 
                 />
 
-                {/* Main Fully-Contained Poster */}
                 <img 
                   src={resolvedPosterUrl} 
                   alt={`${event?.name} Poster`} 
@@ -666,9 +707,18 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             <div className={`p-6 rounded-3xl border shadow-xl relative overflow-hidden ${
               isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
             }`}>
-              <div className="mb-5">
-                <h3 className="text-lg font-bold tracking-tight">Reserve Your Spot</h3>
-                <p className="text-xs text-slate-400 mt-1">Register below to receive instant access confirmation.</p>
+              <div className="mb-4">
+                <h3 className="text-lg font-bold tracking-tight">{t.portalReserveSpot}</h3>
+                <p className="text-xs text-slate-400 mt-1">{t.portalReserveSub}</p>
+              </div>
+
+              {/* 🔴 SIDEBAR COMPULSORY IDENTITY CARD NOTICE BOX */}
+              <div className="mb-5 p-3 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+                <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <strong className="font-bold text-amber-800 dark:text-amber-300 block mb-0.5">{t.portalSidebarNoticeTitle}</strong>
+                  {t.portalSidebarNoticeBody}
+                </div>
               </div>
 
               {/* SIDEBAR COUNTDOWN BADGE */}
@@ -678,7 +728,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 }`}>
                   <div className="flex items-center gap-1.5 text-xs font-semibold">
                     <Hourglass size={14} className={activeTheme.textAccent} />
-                    <span>Closing in</span>
+                    <span>{t.portalClosingIn}</span>
                   </div>
                   <div className="font-mono text-xs font-bold flex items-center gap-1">
                     <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{timeLeft.days}d</span>
@@ -694,13 +744,13 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
 
               {/* EMBEDDED UNIVERSAL FORM */}
               <div className="universal-form-wrapper">
-                {event && <UniversalRegistrationForm event={event} />}
+                {event && <UniversalRegistrationForm event={event} lang={lang} />}
               </div>
 
               {/* SECURITY NOTE */}
               <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-400">
                 <ShieldCheck size={14} className="text-emerald-500 shrink-0" />
-                <span>Instant QR pass issue upon submission</span>
+                <span>{t.portalInstantPass}</span>
               </div>
             </div>
 
