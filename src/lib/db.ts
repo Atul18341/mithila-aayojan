@@ -72,11 +72,19 @@ export interface Events {
   date?: string;
   startTime?: string;
   endTime?: string;
-  registrationEndDate?: string; 
+  registrationEndDate?: string;
+  registration_end_date?: string; 
   location?: string;
   tagline?: string;
   description?: string;
   venueName?: string;
+  venue_name?: string;
+
+  // 🟢 WhatsApp & Helpline Communication Fields
+  whatsappNumber?: string;
+  whatsapp_number?: string;
+  helplineNumber?: string;
+  helpline_number?: string;
 
   // 🟢 ORGANIZER USER RELATION (Session Metadata)
   organizerId?: number | null;
@@ -117,14 +125,14 @@ export interface Guest {
   // Primary Keys & Linking
   id?: number;                          // Dexie local auto-increment primary key
   guestId: string;                      // Public unique key (e.g. 'GUEST-1753456800000')
-  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 9]
-  eventId: string | number;             // Associated Event ID[cite: 9]
+  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 11]
+  eventId: string | number;             // Associated Event ID[cite: 11]
   
   // Attendee Core Profile
-  name: string;                         //[cite: 9]
-  email?: string;                       // Optional contact details[cite: 9]
-  phone?: string;                       // Optional contact details[cite: 9]
-  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 9]
+  name: string;                         //[cite: 11]
+  email?: string;                       // Optional contact details[cite: 11]
+  phone?: string;                       // Optional contact details[cite: 11]
+  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 11]
   
   // 🟢 Competition & Age Group Meta for check-in
   competitionTitle?: string | null;
@@ -133,14 +141,14 @@ export interface Guest {
   // Gate Security & QR Verification
   qrToken: string;                      // Encrypted or unique QR payload string
   // Check-In Operations
-  isCheckedIn: boolean;                 // Entrance status flag[cite: 9]
+  isCheckedIn: boolean;                 // Entrance status flag[cite: 11]
   checkInTime?: number;                 // Numeric timestamp (Date.now())
   // Catering & Lounge Logistics
   hasFoodAccess: boolean;               // Entitlement flag for meals
   hasFoodClaimed: boolean;              // Claimed status flag
   foodClaimedTime?: number;             // Timestamp when food was claimed
   // Sync & Financial Metadata
-  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 9]
+  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 11]
   syncStatus: string;                   // Sync status for offline-first operation
   registeredAt: number;                 // Registration timestamp (Date.now())
 }
@@ -206,13 +214,13 @@ export class AayojanDB extends Dexie {
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
-  eventRegistrations!: Table<EventRegistration>; //[cite: 9]
+  eventRegistrations!: Table<EventRegistration>; //[cite: 11]
 
   constructor() {
     super('MithilaAayojanDB');
-    // Bumped database version to 8 to update indices for age groups & competitions[cite: 9]
-    this.version(8).stores({
-      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, createdAt, syncStatus',
+    // Bumped database version to 9 to index whatsapp_number & helpline_number
+    this.version(9).stores({
+      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus',
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus',
       users: '++id, email, identifier, role, activeEventId, syncStatus',
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',

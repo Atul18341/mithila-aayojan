@@ -8,7 +8,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: true },
 });
 
-// Helper to convert base64 image data to buffer for Cloudflare R2[cite: 17]
+// Helper to convert base64 image data to buffer for Cloudflare R2[cite: 8]
 function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: string } | null {
   if (!base64Data) return null;
   const matches = base64Data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -19,7 +19,7 @@ function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: stri
   };
 }
 
-// 🟢 Helper to safely convert any date string or timestamp to a valid numeric epoch (BIGINT)
+// Helper to safely convert any date string or timestamp to a valid numeric epoch (BIGINT)
 function toEpochMillis(val: any): number {
   if (val === null || val === undefined || val === '') return Date.now();
   if (typeof val === 'number') return isNaN(val) ? Date.now() : Math.floor(val);
@@ -27,7 +27,7 @@ function toEpochMillis(val: any): number {
   return isNaN(parsed) ? Date.now() : parsed;
 }
 
-// 🟢 Helper to safely convert amounts to decimal NUMERIC(10, 2)
+// Helper to safely convert amounts to decimal NUMERIC(10, 2)
 function toNumeric(val: any): number {
   if (val === null || val === undefined || val === '') return 0.00;
   const parsed = parseFloat(val);
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     };
 
     // ==========================================
-    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST[cite: 17]
+    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST[cite: 8]
     // ==========================================
     for (const usr of users) {
       const rawIdentifier = usr.email || usr.identifier;
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2[cite: 17]
+    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2[cite: 8]
     // ==========================================
     const realEventIdMap: Record<string | number, number> = {};
     const bucketName = 'mithila-aayojan';
@@ -153,18 +153,19 @@ export async function POST(request: Request) {
         }
       }
 
+      // Updated query with whatsapp_number and helpline_number columns
       const eventUpsertQuery = `
         INSERT INTO events (
           name, type, protocol, status, date, start_time, end_time, registration_end_date,
-          location, tagline, description, venue_name, visibility, 
+          location, tagline, description, venue_name, whatsapp_number, helpline_number, visibility, 
           food_config, pricing_config, is_multi_competition, competitions, organizer_id,
           created_at, updated_at, slug
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12, $13::jsonb, 
-          $14::jsonb, $15::jsonb, $16, $17::jsonb, $18,
-          timezone('utc', TO_TIMESTAMP($19 / 1000.0)), timezone('utc', now()), $20
+          $9, $10, $11, $12, $13, $14, $15::jsonb, 
+          $16::jsonb, $17::jsonb, $18, $19::jsonb, $20,
+          timezone('utc', TO_TIMESTAMP($21 / 1000.0)), timezone('utc', now()), $22
         )
         ON CONFLICT (slug) 
         DO UPDATE SET 
@@ -180,6 +181,8 @@ export async function POST(request: Request) {
           tagline = COALESCE(EXCLUDED.tagline, events.tagline),       
           description = COALESCE(EXCLUDED.description, events.description), 
           venue_name = COALESCE(EXCLUDED.venue_name, events.venue_name),
+          whatsapp_number = COALESCE(EXCLUDED.whatsapp_number, events.whatsapp_number),
+          helpline_number = COALESCE(EXCLUDED.helpline_number, events.helpline_number),
           visibility = COALESCE(EXCLUDED.visibility, events.visibility),
           food_config = COALESCE(EXCLUDED.food_config, events.food_config),
           pricing_config = COALESCE(EXCLUDED.pricing_config, events.pricing_config),
@@ -189,6 +192,14 @@ export async function POST(request: Request) {
           updated_at = timezone('utc', now())
         RETURNING id;
       `; 
+
+      const cleanWhatsAppNumber = ev.whatsappNumber || ev.whatsapp_number 
+        ? String(ev.whatsappNumber || ev.whatsapp_number).replace(/\D/g, '').slice(0, 15) 
+        : null;
+
+      const cleanHelplineNumber = ev.helplineNumber || ev.helpline_number 
+        ? String(ev.helplineNumber || ev.helpline_number).replace(/\D/g, '').slice(0, 15) 
+        : null;
 
       const visibilityData = ev.visibility ? JSON.stringify(ev.visibility) : null;
       const foodConfigData = ev.foodConfig ? JSON.stringify(ev.foodConfig) : null;
@@ -209,7 +220,9 @@ export async function POST(request: Request) {
         ev.location || null, 
         ev.tagline || null, 
         ev.description || null, 
-        ev.venueName || null, 
+        ev.venueName || ev.venue_name || null, 
+        cleanWhatsAppNumber,
+        cleanHelplineNumber,
         visibilityData,
         foodConfigData, 
         pricingConfigData, 
@@ -278,7 +291,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS[cite: 17]
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS[cite: 8]
     // ==========================================
     for (const link of managerEvents) {
       let rawTargetEventId = link.eventId;
@@ -335,7 +348,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 4. SYNCHRONIZE GUESTS TABLE[cite: 17]
+    // 4. SYNCHRONIZE GUESTS TABLE[cite: 8]
     // ==========================================
     for (const gst of guests) {
       let rawTargetEventId = gst.eventId; 
@@ -392,7 +405,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE (Exact Schema Match)
+    // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
     // ==========================================
     for (const reg of allRegistrations) {
       let rawTargetEventId = reg.eventId;
@@ -409,7 +422,6 @@ export async function POST(request: Request) {
       const regPhone = reg.phone || '';
       if (!regName || !regEmail || !regPhone) continue;
 
-      // 🟢 Type-safe numeric & epoch timestamp parsing
       const basePrice = toNumeric(reg.basePrice || reg.base_price);
       const gstAmount = toNumeric(reg.gstAmount || reg.gst_amount);
       const totalPrice = toNumeric(reg.totalPrice || reg.total_price || reg.amountPaid);
@@ -423,7 +435,6 @@ export async function POST(request: Request) {
         ? Number(reg.verifiedAge) 
         : null;
 
-      // If an explicit numerical ID exists from client-side record
       const hasNumericId = reg.id && !isNaN(Number(reg.id)) && Number(reg.id) > 0;
 
       let regQuery: string;

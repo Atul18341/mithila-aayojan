@@ -9,7 +9,7 @@ import {
   Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
   Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
   Utensils, IndianRupee, Trophy, Trash2, UserCheck, FileText,
-  Edit2, RotateCcw, Users
+  Edit2, RotateCcw, Users, MessageCircle, PhoneCall
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
 
@@ -26,7 +26,6 @@ const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
   { id: 'ops-team', label: 'Operations & Logistics Team' }
 ];
 
-// 🟢 Approach 1: Nested AgeGroup Interface
 export interface AgeGroup {
   id: string;
   label: string;
@@ -40,7 +39,7 @@ export interface SubCompetition {
   title: string;
   code: string;
   category?: string;
-  ageGroups: AgeGroup[]; // 🟢 Multiple age groups per track
+  ageGroups: AgeGroup[];
   rules?: string;
 }
 
@@ -53,6 +52,10 @@ export interface EventData {
   endTime?: string;
   registrationEndDate?: string;
   protocol: string;
+  whatsapp_number?: string;
+  whatsappNumber?: string;
+  helpline_number?: string;
+  helplineNumber?: string;
   isMultiCompetition?: boolean;
   competitions?: SubCompetition[];
   tagline?: string;
@@ -181,7 +184,6 @@ export default function EventDetailEditor({
     email: string;
   }>({ name: 'System Administrator', email: '' });
 
-  // 🟢 Sub-competition input & editing state
   const [newComp, setNewComp] = useState<{
     title: string;
     code: string;
@@ -196,7 +198,6 @@ export default function EventDetailEditor({
     rules: ''
   });
 
-  // 🟢 Temp state for adding a nested age group inside the active competition
   const [tempAgeGroup, setTempAgeGroup] = useState({
     label: '',
     code: '',
@@ -225,6 +226,8 @@ export default function EventDetailEditor({
     startTime: '',
     endTime: '',
     registrationEndDate: '',
+    whatsappNumber: '',
+    helplineNumber: '',
     isMultiCompetition: false,
     competitions: [] as SubCompetition[],
     hypeThreshold: 0,
@@ -286,6 +289,8 @@ export default function EventDetailEditor({
         startTime: event.startTime || '',
         endTime: event.endTime || '',
         registrationEndDate: event.registrationEndDate || '',
+        whatsappNumber: event.whatsappNumber || event.whatsapp_number || '',
+        helplineNumber: event.helplineNumber || event.helpline_number || '',
         isMultiCompetition: event.isMultiCompetition ?? false,
         competitions: (event.competitions || []).map(c => ({
           ...c,
@@ -345,7 +350,7 @@ export default function EventDetailEditor({
 
   const handleResetToCreation = () => {
     setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', isMultiCompetition: false, competitions: [], hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
+      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: false, competitions: [], hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
       visibility: { map: true, rsvp: true, schedule: true, gallery: false },
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
@@ -363,7 +368,6 @@ export default function EventDetailEditor({
     setPosterPreview('');
   };
 
-  // 🟢 Helper to add an AgeGroup to the active sub-competition buffer
   const handleAddAgeGroup = () => {
     if (!tempAgeGroup.label.trim()) return;
 
@@ -393,7 +397,6 @@ export default function EventDetailEditor({
     }));
   };
 
-  // 🟢 Save Sub-Competition (Create or Edit)
   const handleSaveCompetition = () => {
     if (!newComp.title.trim()) return;
 
@@ -549,6 +552,10 @@ export default function EventDetailEditor({
       startTime: details.startTime,
       endTime: details.endTime,
       registrationEndDate: details.registrationEndDate,
+      whatsappNumber: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
+      whatsapp_number: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
+      helplineNumber: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
+      helpline_number: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
       isMultiCompetition: details.isMultiCompetition,
       competitions: details.isMultiCompetition ? details.competitions : [],
       organizerId: organizerInfo.id || event?.organizerId || null,
@@ -638,11 +645,11 @@ export default function EventDetailEditor({
         </div>
         
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
-          <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30`}>
+          <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30 cursor-pointer`}>
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
             {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Event Details')}
           </button>
-          <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20"><X size={18} /></button>
+          <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20 cursor-pointer"><X size={18} /></button>
         </div>
       </div>
 
@@ -800,6 +807,76 @@ export default function EventDetailEditor({
               </div>
             </div>
 
+            {/* 🟢 WHATSAPP & OFFLINE REGISTRATION HELPLINE CONFIGURATION */}
+            <div>
+              <div className={styles.sectionHeader}>WhatsApp & Offline Registration Helpline</div>
+              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                    <MessageCircle size={18} />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block">Assisted WhatsApp Submission Number</span>
+                    <span className="text-[10px] text-slate-500">
+                      Attendees who download the offline PDF form will submit filled form photos directly to this WhatsApp number.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className={styles.label}>
+                      <span>WhatsApp Helpline (10 Digits)</span>
+                    </label>
+                    <div className="relative">
+                      <MessageCircle size={14} className="absolute left-3.5 top-3.5 text-emerald-500 pointer-events-none" />
+                      <input 
+                        type="tel"
+                        maxLength={10}
+                        name="whatsappNumber"
+                        placeholder="e.g. 9876543210"
+                        value={details.whatsappNumber}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setDetails(prev => ({ ...prev, whatsappNumber: val }));
+                          if (saveStatus === 'success') setSaveStatus('idle');
+                        }}
+                        className={`w-full pl-10 pr-4 py-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                      />
+                    </div>
+                    <span className="text-[9.5px] text-slate-400 block ml-1">
+                      {details.whatsappNumber ? `Direct Link: https://wa.me/91${details.whatsappNumber}` : 'Defaults to universal WhatsApp sharing if unconfigured.'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className={styles.label}>
+                      <span>General Voice Helpline / Contact</span>
+                    </label>
+                    <div className="relative">
+                      <PhoneCall size={14} className="absolute left-3.5 top-3.5 text-blue-500 pointer-events-none" />
+                      <input 
+                        type="tel"
+                        maxLength={10}
+                        name="helplineNumber"
+                        placeholder="e.g. 9123456780"
+                        value={details.helplineNumber}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setDetails(prev => ({ ...prev, helplineNumber: val }));
+                          if (saveStatus === 'success') setSaveStatus('idle');
+                        }}
+                        className={`w-full pl-10 pr-4 py-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                      />
+                    </div>
+                    <span className="text-[9.5px] text-slate-400 block ml-1">
+                      Secondary contact displayed on physical printouts & helpline inquiries.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* 🏆 MULTI-COMPETITION EVENT TOGGLE & NESTED AGE GROUPS BUILDER */}
             <div>
               <div className={styles.sectionHeader}>Multi-Competition Event Control</div>
@@ -876,7 +953,7 @@ export default function EventDetailEditor({
                         />
                       </div>
 
-                      {/* 🟢 Approach 1: Nested Age Groups Builder */}
+                      {/* Nested Age Groups Builder */}
                       <div className="p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 bg-white/60 dark:bg-white/[0.01] space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -923,7 +1000,7 @@ export default function EventDetailEditor({
                             type="button"
                             onClick={handleAddAgeGroup}
                             disabled={!tempAgeGroup.label.trim()}
-                            className="sm:col-span-2 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-all"
+                            className="sm:col-span-2 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-all cursor-pointer"
                           >
                             <Plus size={13} />
                             <span>Add Group</span>
@@ -987,7 +1064,7 @@ export default function EventDetailEditor({
                           type="button"
                           onClick={handleSaveCompetition}
                           disabled={!newComp.title.trim()}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all shadow-sm`}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all shadow-sm cursor-pointer`}
                         >
                           {editingCompId ? <Save size={14} /> : <Plus size={14} />}
                           <span>{editingCompId ? 'Update Track' : 'Add Competition Track'}</span>
@@ -1025,7 +1102,7 @@ export default function EventDetailEditor({
                                     type="button"
                                     onClick={() => handleEditCompetition(comp)}
                                     title="Edit track details"
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer"
                                   >
                                     <Edit2 size={13} />
                                   </button>
@@ -1033,14 +1110,13 @@ export default function EventDetailEditor({
                                     type="button"
                                     onClick={() => handleRemoveCompetition(comp.id)}
                                     title="Delete track"
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
                                   >
                                     <Trash2 size={13} />
                                   </button>
                                 </div>
                               </div>
 
-                              {/* Display Nested Age Groups */}
                               {comp.ageGroups && comp.ageGroups.length > 0 && (
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 mr-1">Age Groups:</span>

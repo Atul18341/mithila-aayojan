@@ -912,7 +912,7 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
         </div>
 
         {/* 📷 PARTICIPANT PHOTO CAPTURE MODULE */}
-        <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-white/5">
+        {/*<div className="space-y-2 pt-1 border-t border-slate-100 dark:border-white/5">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1 flex items-center justify-between">
             <span>Participant Photo <span className="text-red-400 font-bold">*</span></span>
             <span className="text-[9px] lowercase opacity-75 font-normal">Passport size / Clear face</span>

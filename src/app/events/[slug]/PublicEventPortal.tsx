@@ -7,9 +7,10 @@ import {
   Clock, Award, Users, CheckCircle2, ChevronDown, 
   Trophy, HelpCircle, Check, Hourglass, Sparkles, 
   AlertCircle, ArrowUpRight, FileText, ChevronUp, 
-  AlertTriangle, IdCard
+  AlertTriangle, IdCard, MessageCircle
 } from 'lucide-react';
 import UniversalRegistrationForm from '../../../components/EventRegistration';
+import WhatsAppRegistrationForm from '../../../components/WhatsAppRegistrationForm';
 import { LinkedinIcon } from '@/lib/SocialIcons';
 import { translations, Locale } from '@/lib/translations';
 
@@ -72,6 +73,8 @@ interface PublicEventPageProps {
     poster?: string;
     image?: string;
     organizedBy?: string;
+    helpline_number?: string;
+    whatsapp_number?: string;
     isMultiCompetition?: boolean;
     competitions?: SubCompetition[];
     speakers?: Speaker[];
@@ -94,6 +97,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
   const [openRulesCompId, setOpenRulesCompId] = useState<string | null>(null);
   const [copiedShare, setCopiedShare] = useState(false);
   const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number; totalMs: number } | null>(null);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
 
   const t = translations[lang] || translations.en;
 
@@ -290,7 +294,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
             }`}>
               <div className={`absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl ${activeTheme.accentGlow} rounded-full blur-3xl pointer-events-none`} />
 
-              {/* CARD TOP TOOLBAR: Badges & Header Action Controls */}
+              {/* CARD TOP TOOLBAR */}
               <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${activeTheme.badge}`}>
@@ -303,7 +307,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                   </span>
                 </div>
 
-                {/* 🟢 HEADER ACTION BAR */}
+                {/* HEADER ACTION BAR */}
                 <div className="flex items-center gap-2">
                   {/* Language Switcher */}
                   <div className={`flex items-center p-1 rounded-full border shadow-sm text-[11px] font-bold ${
@@ -413,7 +417,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 </div>
               </div>
 
-              {/* 🔴 MANDATORY DOCUMENTATION ALERT BOX */}
+              {/* MANDATORY DOCUMENTATION ALERT BOX */}
               <div className="mt-6 p-4 sm:p-4.5 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-3.5 shadow-sm">
                 <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
                   <IdCard size={20} />
@@ -461,7 +465,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               </div>
             </div>
 
-            {/* 🏆 COMPETITION TRACKS & NESTED AGE GROUPS */}
+            {/* COMPETITION TRACKS */}
             {event?.isMultiCompetition && event.competitions && event.competitions.length > 0 && (
               <div className={`p-6 sm:p-8 rounded-3xl border ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-white border-slate-200'}`}>
                 <div className="flex items-center justify-between gap-3 mb-6">
@@ -486,7 +490,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                           isDark ? 'bg-slate-800/30 border-slate-800 hover:border-slate-700' : 'bg-slate-50/80 border-slate-100 hover:border-slate-300'
                         }`}
                       >
-                        {/* Title & Category Line */}
                         <div className="flex flex-wrap items-center justify-between gap-2.5">
                           <div className="flex items-center gap-2.5">
                             <span className="text-[11px] font-black font-mono uppercase px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
@@ -504,7 +507,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                           )}
                         </div>
 
-                        {/* Nested Age Groups Section */}
                         {hasAgeGroups && (
                           <div className="space-y-1.5 pt-1">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -527,7 +529,6 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                           </div>
                         )}
 
-                        {/* Expandable Rules & Regulations */}
                         {comp.rules && (
                           <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800">
                             <button
@@ -712,7 +713,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 <p className="text-xs text-slate-400 mt-1">{t.portalReserveSub}</p>
               </div>
 
-              {/* 🔴 SIDEBAR COMPULSORY IDENTITY CARD NOTICE BOX */}
+              {/* MANDATORY ID NOTICE */}
               <div className="mb-5 p-3 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
                 <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-[11px] leading-relaxed">
@@ -721,7 +722,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 </div>
               </div>
 
-              {/* SIDEBAR COUNTDOWN BADGE */}
+              {/* COUNTDOWN BADGE */}
               {timeLeft && (
                 <div className={`mb-5 p-3 rounded-2xl border flex items-center justify-between ${
                   isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
@@ -752,12 +753,32 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
                 <ShieldCheck size={14} className="text-emerald-500 shrink-0" />
                 <span>{t.portalInstantPass}</span>
               </div>
+
+              {/* 🟢 TRIGGER BUTTON FOR WHATSAPP MODAL */}
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 text-center">
+                <button
+                  type="button"
+                  onClick={() => setIsWhatsAppModalOpen(true)}
+                  className="w-full py-2.5 px-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
+                >
+                  <MessageCircle size={15} />
+                  <span>Facing issue? Register via WhatsApp</span>
+                </button>
+              </div>
             </div>
 
           </div>
 
         </div>
       </main>
+
+      {/* 🟢 WHATSAPP ASSISTED REGISTRATION MODAL */}
+      <WhatsAppRegistrationForm
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => setIsWhatsAppModalOpen(false)}
+        event={event}
+        lang={lang}
+      />
     </div>
   );
 }

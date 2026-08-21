@@ -15,7 +15,7 @@ export async function GET() {
   try {
     client = await pool.connect();
     
-    // 🚀 Cleaned SQL query without non-existent columns
+    // 🚀 Added whatsapp_number and helpline_number to SQL query
     const query = `
       SELECT 
         e.id, 
@@ -29,6 +29,8 @@ export async function GET() {
         e.tagline, 
         e.description, 
         e.venue_name, 
+        e.whatsapp_number,
+        e.helpline_number,
         e.visibility, 
         e.start_time, 
         e.end_time, 
@@ -111,6 +113,13 @@ export async function GET() {
         tagline: event.tagline,
         description: event.description,
         venue_name: event.venue_name,
+        venueName: event.venue_name,
+        
+        // 🟢 WHATSAPP & HELPLINE CONFIGURATION MAPPING
+        whatsapp_number: event.whatsapp_number || null,
+        whatsappNumber: event.whatsapp_number || null,
+        helpline_number: event.helpline_number || null,
+        helplineNumber: event.helpline_number || null,
         
         // 🟢 REGISTRATION COUNT
         registrationCount: parseInt(event.registration_count || '0', 10),
