@@ -210,7 +210,7 @@ export default function GuestManagementPage() {
       const updatedRecord = { ...target, ...fieldsToUpdate };
 
       if (target.id && typeof target.id === 'number') {
-        await db.eventRegistrations.update(target.id, fieldsToUpdate);
+        await db.eventRegistrations.update(target.id, fieldsToUpdate as any);
       } else {
         await db.eventRegistrations.put(updatedRecord as any);
       }
