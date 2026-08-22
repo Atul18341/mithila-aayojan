@@ -125,14 +125,14 @@ export interface Guest {
   // Primary Keys & Linking
   id?: number;                          // Dexie local auto-increment primary key
   guestId: string;                      // Public unique key (e.g. 'GUEST-1753456800000')
-  registrationId: string;               // Foreign Key linking back to eventRegistration table[cite: 11]
-  eventId: string | number;             // Associated Event ID[cite: 11]
+  registrationId: string;               // Foreign Key linking back to eventRegistration table
+  eventId: string | number;             // Associated Event ID
   
   // Attendee Core Profile
-  name: string;                         //[cite: 11]
-  email?: string;                       // Optional contact details[cite: 11]
-  phone?: string;                       // Optional contact details[cite: 11]
-  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)[cite: 11]
+  name: string;                         //
+  email?: string | null;                // Optional contact details
+  phone?: string | null;                // Optional contact details
+  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)
   
   // 🟢 Competition & Age Group Meta for check-in
   competitionTitle?: string | null;
@@ -140,15 +140,19 @@ export interface Guest {
 
   // Gate Security & QR Verification
   qrToken: string;                      // Encrypted or unique QR payload string
+  qr_token?: string | null;             // Alternative legacy token variant support
+  
   // Check-In Operations
-  isCheckedIn: boolean;                 // Entrance status flag[cite: 11]
-  checkInTime?: number;                 // Numeric timestamp (Date.now())
+  isCheckedIn: boolean;                 // Entrance status flag
+  checkInTime?: number | null;          // Numeric timestamp (Date.now())
+  
   // Catering & Lounge Logistics
-  hasFoodAccess: boolean;               // Entitlement flag for meals
-  hasFoodClaimed: boolean;              // Claimed status flag
-  foodClaimedTime?: number;             // Timestamp when food was claimed
+  hasFoodAccess?: boolean;              // Entitlement flag for meals
+  hasFoodClaimed?: boolean;             // Claimed status flag
+  foodClaimedTime?: number | null;      // Timestamp when food was claimed
+  
   // Sync & Financial Metadata
-  amountPaid?: number;                  // Verified booking fee at gate scan endpoints[cite: 11]
+  amountPaid?: number | null;           // Verified booking fee at gate scan endpoints
   syncStatus: string;                   // Sync status for offline-first operation
   registeredAt: number;                 // Registration timestamp (Date.now())
 }
@@ -180,32 +184,32 @@ export interface EventRegistration {
   registrationId: string;              // Public unique pass ID (e.g., 'REG-982314')
   eventId: string | number;            // Associated Event ID
   // Attendee Core Profile
-  name: string;
-  email: string;
-  phone: string;
-  category: AttendeeCategory;
+  name: string;                        //
+  email: string;                       //
+  phone: string;                       //
+  category: AttendeeCategory;          //
   
   // 🟢 Selected Competition & Age Group Identification
-  competitionId?: string | null;
-  competitionTitle?: string | null;
-  ageGroupId?: string | null;
-  ageGroupLabel?: string | null;
+  competitionId?: string | null;       //
+  competitionTitle?: string | null;    //
+  ageGroupId?: string | null;          //
+  ageGroupLabel?: string | null;       //
 
   // 🟢 Verified Age Metadata
-  isAgeVerified?: boolean;
-  verifiedAge?: number | null;
+  isAgeVerified?: boolean;             //
+  verifiedAge?: number | null;         //
 
-  customAnswers: Record<string, any>;
+  customAnswers: Record<string, any>;  //
   // Financial Audit Breakdown
-  basePrice: number;
-  gstAmount: number;
-  totalPrice: number;
+  basePrice: number;                   //
+  gstAmount: number;                   //
+  totalPrice: number;                  //
   // Gateway Payment Verification
   paymentId?: string;                  // Razorpay payment ID (or 'FREE_ENTRY')
   orderId?: string | null;             // Razorpay order ID
   // System Lifecycle & Sync Metadata
-  status: string;
-  syncStatus: string;
+  status: string;                      //
+  syncStatus: string;                  //
   registrationTimestamp: number;       // Date.now()
 }
 
@@ -214,19 +218,19 @@ export class AayojanDB extends Dexie {
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
-  eventRegistrations!: Table<EventRegistration>; //[cite: 11]
+  eventRegistrations!: Table<EventRegistration>; //
 
   constructor() {
-    super('MithilaAayojanDB');
+    super('MithilaAayojanDB'); //
     // Bumped database version to 9 to index whatsapp_number & helpline_number
     this.version(9).stores({
-      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus',
-      guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus',
-      users: '++id, email, identifier, role, activeEventId, syncStatus',
-      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus',
-      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus'
+      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus', //
+      guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus', //
+      users: '++id, email, identifier, role, activeEventId, syncStatus', //
+      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus', //
+      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus' //
     });
   }
 }
 
-export const db = new AayojanDB();
+export const db = new AayojanDB(); //
