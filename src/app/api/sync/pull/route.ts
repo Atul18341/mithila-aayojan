@@ -10,7 +10,6 @@ const pool = new Pool({
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   
-  // 🟢 Accept volunteer/manager identifier dynamically[cite: 16]
   const userIdentifier = 
     searchParams.get('volunteerIdentifier') || 
     searchParams.get('volunteerEmail') || 
@@ -25,12 +24,9 @@ export async function GET(request: Request) {
   let client: PoolClient | null = null;
   try {
     client = await pool.connect();
+    if (!client) throw new Error('Failed to acquire database connection.');
 
-    if (!client) {
-      throw new Error('Failed to acquire a database connection from pool.');
-    }
-
-    // 1. Fetch all events assigned to or created by this volunteer/manager[cite: 16]
+    // 1. Fetch all events assigned to or created by this manager/volunteer[cite: 10]
     const eventsQuery = `
       SELECT DISTINCT e.*, me.assigned_desk FROM events e
       JOIN manager_events me ON e.id = me.event_id
@@ -38,8 +34,6 @@ export async function GET(request: Request) {
     `;
     const eventsResult = await client.query(eventsQuery, [userIdentifier]);
     const rawEvents = eventsResult.rows;
-
-    // Extract assigned event IDs[cite: 16]
     const eventIds = rawEvents.map(e => Number(e.id)).filter(id => !isNaN(id) && id > 0);
 
     let rawGuests: any[] = [];
@@ -48,15 +42,12 @@ export async function GET(request: Request) {
     let rawUsers: any[] = [];
 
     if (eventIds.length > 0) {
-      // 2. Fetch all guests belonging to the assigned events[cite: 16]
-      const guestsQuery = `
-        SELECT * FROM guests 
-        WHERE event_id = ANY($1);
-      `;
+      // 2. Fetch guests[cite: 10]
+      const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1);`;
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
-      // 3. 🟢 Fetch all event registrations using the exact PostgreSQL schema
+      // 3. Fetch registrations with full schema support[cite: 10]
       const registrationsQuery = `
         SELECT 
           id,
@@ -82,29 +73,21 @@ export async function GET(request: Request) {
         WHERE event_id = ANY($1);
       `;
       
-      try {
-        const registrationsResult = await client.query(registrationsQuery, [eventIds]);
-        rawRegistrations = registrationsResult.rows;
-      } catch {
-        // Fallback safety query if table schema has variations[cite: 16]
-        const altQuery = `SELECT * FROM event_registrations WHERE event_id = ANY($1);`;
-        const altResult = await client.query(altQuery, [eventIds]).catch(async () => {
-          if (!client) return { rows: [] };
-          return await client.query(`SELECT * FROM registrations WHERE event_id = ANY($1);`, [eventIds]).catch(() => ({ rows: [] }));
-        });
-        rawRegistrations = altResult.rows;
-      }
+      const registrationsResult = await client.query(registrationsQuery, [eventIds]).catch(async () => {
+        if (!client) return { rows: [] };
+        return await client.query(`SELECT * FROM event_registrations WHERE event_id = ANY($1);`, [eventIds]).catch(() => ({ rows: [] }));
+      });
+      rawRegistrations = registrationsResult.rows;
 
-      // 4. Fetch all volunteer/manager assignment junction records for these events[cite: 16]
+      // 4. Fetch manager_events link rows[cite: 10]
       const linksQuery = `
         SELECT DISTINCT me.* FROM manager_events me
-        WHERE me.event_id = ANY($1)
-        OR LOWER(me.manager_identifier) = LOWER($2);
+        WHERE me.event_id = ANY($1) OR LOWER(me.manager_identifier) = LOWER($2);
       `;
       const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
       rawLinks = linksResult.rows;
 
-      // 5. RELATIONAL JOIN: Pull volunteer profiles by joining manager_events -> users[cite: 16]
+      // 5. Robust volunteer & user query: Pull all users linked via manager_events OR sharing the event workspace[cite: 10]
       const usersQuery = `
         SELECT DISTINCT 
           u.id,
@@ -112,38 +95,26 @@ export async function GET(request: Request) {
           u.email,
           u.phone,
           u.role,
+          u.passkey,
+          u.password_hash,
           me.assigned_desk,
           me.event_id AS assigned_event_id
-        FROM manager_events me
-        LEFT JOIN users u ON 
-          LOWER(u.email) = LOWER(me.manager_identifier) OR 
-          LOWER(u.identifier) = LOWER(me.manager_identifier)
-        WHERE me.event_id = ANY($1)
-        OR LOWER(me.manager_identifier) = LOWER($2);
+        FROM users u
+        INNER JOIN manager_events me ON 
+          LOWER(me.manager_identifier) = LOWER(u.email) OR 
+          LOWER(me.manager_identifier) = LOWER(u.identifier)
+        WHERE me.event_id = ANY($1) 
+          OR LOWER(u.email) = LOWER($2) 
+          OR LOWER(u.identifier) = LOWER($2);
       `;
       
-      try {
-        const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]);
-        rawUsers = usersResult.rows;
-      } catch {
-        // Fallback: Query users table directly if JOIN fails[cite: 16]
-        const assignedEmails = Array.from(new Set(rawLinks.map(l => (l.manager_identifier || '').toLowerCase()).filter(Boolean)));
-        if (assignedEmails.length > 0) {
-          const fallbackUsersQuery = `
-            SELECT * FROM users 
-            WHERE LOWER(email) = ANY($1) OR LOWER(identifier) = ANY($1);
-          `;
-          const fallbackResult = await client.query(fallbackUsersQuery, [assignedEmails]).catch(() => ({ rows: [] }));
-          rawUsers = fallbackResult.rows;
-        }
-      }
+      const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]).catch(async () => {
+        return await client!.query(`SELECT * FROM users;`);
+      });
+      rawUsers = usersResult.rows;
     }
 
-    // =========================================================
-    // MAP POSTGRESQL SNAKE_CASE FIELDS TO DEXIE CAMELCASE[cite: 16]
-    // =========================================================
-    
-    // Map Events[cite: 16]
+    // Format events with full multi-competition and configuration mapping
     const formattedEvents = rawEvents.map(e => {
       let parsedCompetitions = [];
       if (e.competitions) {
@@ -175,14 +146,14 @@ export async function GET(request: Request) {
         visibility: typeof e.visibility === 'string' ? JSON.parse(e.visibility) : (e.visibility || { map: true, rsvp: true, schedule: true, gallery: false }),
         foodConfig: typeof e.food_config === 'string' ? JSON.parse(e.food_config) : (e.food_config || { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] }),
         pricingConfig: typeof e.pricing_config === 'string' ? JSON.parse(e.pricing_config) : (e.pricing_config || { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: {} }),
-        cover_image: e.cover_image || e.cover_image_url || null,
-        poster_image: e.poster_image || e.poster_image_url || null,
+        coverImageUrl: e.cover_image || e.cover_image_url || null,
+        posterImageUrl: e.poster_image || e.poster_image_url || null,
         createdAt: e.created_at ? new Date(e.created_at).getTime() : Date.now(),
         syncStatus: 'synced'
       };
     });
 
-    // Map Guests[cite: 16]
+    // Format guests with full metadata mapping[cite: 10]
     const formattedGuests = rawGuests.map(g => ({
       id: Number(g.id),
       guestId: g.guest_id || `GUEST-${g.id}`,
@@ -206,7 +177,7 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // 🟢 Map Event Registrations matching exact database schema
+    // Format event registrations with custom answers and age verifications[cite: 10]
     const formattedRegistrations = rawRegistrations.map(r => {
       let parsedCustomAnswers = {};
       if (r.custom_answers) {
@@ -219,37 +190,29 @@ export async function GET(request: Request) {
 
       return {
         id: Number(r.id),
-        registrationId: `REG-${r.id}`, // Deterministic standard ID mapped from Primary Key
+        registrationId: `REG-${r.id}`,
         eventId: Number(r.event_id),
         name: r.name || '',
         email: r.email || '',
         phone: r.phone || '',
         category: r.category || 'general-public',
-        
-        // Multi-Competition & Age Bracket Identification
         competitionId: r.competition_id || null,
         competitionTitle: r.competition_title || null,
         ageGroupId: r.age_group_id || null,
         ageGroupLabel: r.age_group_label || null,
-
-        // Age Verification Metadata
         isAgeVerified: Boolean(r.is_age_verified),
         verifiedAge: r.verified_age !== null && r.verified_age !== undefined ? Number(r.verified_age) : null,
-
-        // Financial Ledger & Dynamic Answers
         customAnswers: parsedCustomAnswers,
         basePrice: parseFloat(r.base_price || 0),
         gstAmount: parseFloat(r.gst_amount || 0),
         totalPrice: parseFloat(r.total_price || 0),
-
-        // Status & Timestamps
         status: r.status || 'pending',
         syncStatus: r.sync_status || 'synced',
         registrationTimestamp: Number(r.registration_timestamp || Date.now())
       };
     });
 
-    // Map Manager/Volunteer Event Junction Records[cite: 16]
+    // Format manager_events junction links[cite: 10]
     const formattedLinks = rawLinks.map(l => ({
       id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
@@ -259,27 +222,23 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Map Relational User / Volunteer Profiles[cite: 16]
+    // Format users & volunteers[cite: 10]
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
-      name: u.name || (u.email ? u.email.split('@')[0] : 'Volunteer'),
+      name: u.name || (u.email ? u.email.split('@')[0] : 'User'),
       email: u.email || '',
       identifier: u.email || u.identifier || '',
       phone: u.phone || '',
       role: u.role || 'volunteer',
+      passkey: u.passkey || u.password_hash || '',
+      passwordHash: u.password_hash || u.passkey || '',
       assignedDesk: u.assigned_desk || 'CHECK_IN',
       activeEventId: u.assigned_event_id ? Number(u.assigned_event_id) : undefined,
-      createdAt: u.created_at ? new Date(u.created_at).getTime() : Date.now(),
       syncStatus: 'synced'
     }));
 
     return NextResponse.json({
       success: true,
-      events: formattedEvents,
-      guests: formattedGuests,
-      eventRegistrations: formattedRegistrations,
-      managerEvents: formattedLinks,
-      users: formattedUsers,
       data: {
         events: formattedEvents,
         guests: formattedGuests,
@@ -290,11 +249,9 @@ export async function GET(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('❌ Cloud sync pull failure:', error?.message || error);
-    return NextResponse.json({ error: 'Failed to retrieve cloud data state', details: error?.message || String(error) }, { status: 500 });
+    console.error('❌ Pull sync error:', error);
+    return NextResponse.json({ error: error?.message || 'Pull failed' }, { status: 500 });
   } finally {
-    if (client) {
-      client.release();
-    }
+    if (client) client.release();
   }
 }

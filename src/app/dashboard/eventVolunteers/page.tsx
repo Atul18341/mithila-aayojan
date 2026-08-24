@@ -1,3 +1,4 @@
+// src/app/dashboard-eventManagers/volunteers/panel/page.tsx
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -9,7 +10,7 @@ import {
   MoreVertical, X
 } from 'lucide-react';
 import { db } from '../../../lib/db';
-import EntryDeskCameraScanner from '../../../components/Scanner';
+import EventScanner from '../../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
 
@@ -24,12 +25,9 @@ export default function VolunteerCheckInPanel() {
   const [syncMessage, setSyncMessage] = useState('');
   const [scanMode, setScanMode] = useState<ScanMode>('CHECK_IN');
 
-  // HYDRATION GUARD REF: Prevents infinite re-hydration loops across device screen sizes
   const hasHydratedRef = useRef(false);
-
   const router = useRouter();
 
-  // 1. RESOLVE ACTIVE VOLUNTEER IDENTITY AND EVENT ID FROM LOCAL DEXIE SESSION
   const activeUser = useLiveQuery(async () => {
     if (!db.isOpen()) await db.open();
     return await db.users.toCollection().first();
@@ -37,7 +35,6 @@ export default function VolunteerCheckInPanel() {
 
   const activeEventId = activeUser?.activeEventId || null;
 
-  // 2. DEXIE LIVE QUERIES FOR ACTIVE WORKSPACE
   const activeEvent = useLiveQuery(
     async () => {
       if (!activeEventId) {
@@ -59,7 +56,6 @@ export default function VolunteerCheckInPanel() {
 
   const resolvedEventId = activeEvent?.id || activeEventId || null;
 
-  // FETCH ASSIGNED DESK SCOPE FROM INDEXEDDB managerEvents TABLE
   const activeAssignment = useLiveQuery(
     async () => {
       if (!activeUser?.identifier || !resolvedEventId) return null;
@@ -72,10 +68,8 @@ export default function VolunteerCheckInPanel() {
     [activeUser?.identifier, resolvedEventId]
   );
 
-  // Read assignedDesk stored in IndexedDB (defaulting to CHECK_IN)
   const assignedDesk = activeAssignment?.assignedDesk || 'CHECK_IN';
 
-  // AUTOMATICALLY LOCK AND SYNC SCAN MODE BASED ON ASSIGNED DESK PERMISSION
   useEffect(() => {
     if (assignedDesk === 'CHECK_IN') {
       setScanMode('CHECK_IN');
@@ -97,7 +91,6 @@ export default function VolunteerCheckInPanel() {
     [resolvedEventId]
   ) || [];
 
-  // 3. CONTEXTUAL METRICS FOR VOLUNTEER DESK (ADAPTS TO ACTIVE SCAN MODE)
   const deskMetrics = useLiveQuery(
     async () => {
       if (!resolvedEventId) {
@@ -116,12 +109,10 @@ export default function VolunteerCheckInPanel() {
     [resolvedEventId]
   ) || { totalRegistered: 0, totalCheckedIn: 0, totalFoodEligible: 0, totalFoodClaimed: 0 };
 
-  // Calculate percentage progress for active mode
   const currentCount = scanMode === 'CHECK_IN' ? deskMetrics.totalCheckedIn : deskMetrics.totalFoodClaimed;
   const currentTotal = scanMode === 'CHECK_IN' ? deskMetrics.totalRegistered : deskMetrics.totalFoodEligible;
   const progressPercent = currentTotal > 0 ? Math.min(100, Math.round((currentCount / currentTotal) * 100)) : 0;
 
-  // 4. HYDRATION ENGINE: FETCH FROM POSTGRESQL AND STORE assignedDesk IN INDEXEDDB
   const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null, forceRefresh = false) => {
     if (!navigator.onLine) return;
     setIsHydrating(true);
@@ -228,7 +219,6 @@ export default function VolunteerCheckInPanel() {
     );
   }
 
-  // Non-blocking fallback: Render main shell with loading overlay if needed rather than unmounting entire layout
   if (!activeEvent && !isHydrating) {
     return (
       <div className={`h-screen w-full flex flex-col items-center justify-center p-6 text-center ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
@@ -269,7 +259,6 @@ export default function VolunteerCheckInPanel() {
           </div>
         </div>
 
-        {/* SMALL SCREEN HEADER CONTROLS */}
         <div className="flex sm:hidden items-center gap-2">
           <SyncStatusBar />
 
@@ -282,7 +271,6 @@ export default function VolunteerCheckInPanel() {
           </button>
         </div>
 
-        {/* DESKTOP HEADER ACTION UTILITIES */}
         <div className="hidden sm:flex items-center gap-2.5">
           <SyncStatusBar />
 
@@ -337,7 +325,6 @@ export default function VolunteerCheckInPanel() {
           <LogoutButton />
         </div>
 
-        {/* COLLAPSIBLE SECONDARY MENU FOR SMALL SCREENS */}
         {isUtilitiesOpen && (
           <div className={`sm:hidden absolute top-full right-6 mt-2 p-4 rounded-2xl border z-50 shadow-2xl flex flex-col gap-3 animate-in slide-in-from-top-2 duration-200 ${theme.dropdownMenu}`}>
             <div className="flex items-center justify-between gap-6">
@@ -377,7 +364,6 @@ export default function VolunteerCheckInPanel() {
       {/* CORE CONTROL COUNTER SUB-PANEL */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
         
-        {/* RESTRICTED MODE SELECTOR BRIDGE */}
         <div className={`grid grid-cols-2 gap-2 p-1 rounded-xl border w-full max-w-xs ${theme.card}`}>
           <button
             disabled={assignedDesk !== 'ALL' && assignedDesk !== 'CHECK_IN'}
@@ -405,7 +391,6 @@ export default function VolunteerCheckInPanel() {
           </button>
         </div>
 
-        {/* CONTEXTUAL RATIO STAT CARD (ADAPTS TO CHECK_IN VS FOOD_CLAIM) */}
         <div className={`w-full max-w-xs p-5 rounded-2xl border flex flex-col gap-3 ${theme.card}`}>
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
@@ -441,7 +426,6 @@ export default function VolunteerCheckInPanel() {
             )}
           </div>
 
-          {/* STREAM PROGRESS BAR */}
           <div className="w-full h-2 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
             <div 
               className={`h-full rounded-full transition-all duration-500 ${scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'}`} 
@@ -451,16 +435,13 @@ export default function VolunteerCheckInPanel() {
         </div>
       </div>
 
-      {/* TARGETED SCAN TOUCH ZONE (ENLARGED TOUCH TARGET WITH PULSE EFFECT) */}
       <div className="flex-1 flex flex-col justify-center items-center p-6 my-auto">
         <div className="relative flex items-center justify-center">
           
-          {/* OUTER RADAR PULSE GLOW */}
           <div className={`absolute -inset-4 rounded-full opacity-30 animate-ping ${
             scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'
           }`} />
 
-          {/* MAIN ENLARGED BUTTON */}
           <button 
             onClick={() => setIsScanning(true)}
             className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 ${
@@ -477,14 +458,12 @@ export default function VolunteerCheckInPanel() {
         </div>
       </div>
 
-      {/* FOOTER BAR */}
       <footer className={`p-4 text-center border-t ${isDark ? 'border-white/5 text-slate-600' : 'border-slate-200 text-slate-400'} text-[8px] font-black uppercase tracking-[0.2em]`}>
         Mithila Aayojan Encryption Lock Edge Terminal Secure Active
       </footer>
 
-      {/* DETACHED CAMERA SCANNER ENGINE PORTAL */}
       {isScanning && resolvedEventId && (
-        <EntryDeskCameraScanner 
+        <EventScanner 
           currentEventId={resolvedEventId}
           variant={scanMode === 'CHECK_IN' ? 'purple' : 'amber'}
           isDark={isDark}
@@ -494,13 +473,19 @@ export default function VolunteerCheckInPanel() {
             const guest = await db.guests.where('qrToken').equals(token).first();
             
             if (!guest || guest.eventId !== resolvedEventId) {
-              return { status: 'error', message: 'Access Denied: Invalid credential for this venue.' };
+              return { 
+                status: 'error', 
+                message: 'Access Denied: Invalid pass for this venue/event. / प्रवेश अस्वीकृत: इस स्थान/कार्यक्रम के लिए अमान्य पास।' 
+              };
             }
 
             // GATE CHECK-IN EVALUATION
             if (scanMode === 'CHECK_IN') {
               if (guest.checkInTime || guest.isCheckedIn === true) {
-                return { status: 'warning', message: 'Pass duplicate scan exception.', name: guest.name };
+                return { 
+                  status: 'warning', 
+                  message: `${guest.name} has already checked in. / ${guest.name} पहले ही चेक-इन कर चुके हैं।`
+                };
               }
               
               await db.guests.update(guest.id!, { 
@@ -508,17 +493,28 @@ export default function VolunteerCheckInPanel() {
                 isCheckedIn: true,
                 syncStatus: 'pending'
               });
-              return { status: 'success', message: `${(guest.category || 'General').toUpperCase()} pass authenticated.`, name: guest.name };
+              return { 
+                status: 'success', 
+                message: `${(guest.category || 'General').toUpperCase()} pass authenticated. / पास सत्यापित।`, 
+                name: guest.name 
+              };
             }
 
             // FOOD COUNTER VOUCHER EVALUATION
             if (scanMode === 'FOOD_CLAIM') {
               if (!guest.hasFoodAccess) {
-                return { status: 'error', message: 'Denied: Food not included with this pass tier.', name: guest.name };
+                return { 
+                  status: 'error', 
+                  message: 'Denied: Food not included with this pass type. / अस्वीकृत: इस पास के साथ भोजन शामिल नहीं है।' 
+                };
               }
               
               if (guest.hasFoodClaimed) {
-                return { status: 'warning', message: 'Food already claimed for this pass reference.', name: guest.name };
+                return { 
+                  status: 'warning', 
+                  message: `Food already claimed for ${guest.name}. / ${guest.name} के लिए भोजन पहले ही प्राप्त किया जा चुका है।`,
+                  name: guest.name 
+                };
               }
 
               await db.guests.update(guest.id!, { 
@@ -527,10 +523,17 @@ export default function VolunteerCheckInPanel() {
                 syncStatus: 'pending'
               });
               
-              return { status: 'success', message: 'Meal Plate Allocation Approved.', name: guest.name };
+              return { 
+                status: 'success', 
+                message: 'Meal Plate Allocation Approved. / भोजन थाली स्वीकृत।', 
+                name: guest.name 
+              };
             }
 
-            return { status: 'error', message: 'System processing fault.' };
+            return { 
+              status: 'error', 
+              message: 'System processing fault. / सिस्टम प्रोसेसिंग त्रुटि।' 
+            };
           }}
         />
       )}

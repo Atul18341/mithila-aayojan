@@ -1,22 +1,13 @@
+// src/components/Scanner.tsx
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { 
-  Camera, X, CheckCircle2, AlertTriangle, Loader2, Keyboard, 
-  LogIn, Utensils 
-} from 'lucide-react';
+import { Html5Qrcode } from 'html5-qrcode';
+import { Camera, X, Keyboard, Loader2, LogIn, Utensils } from 'lucide-react';
 import SyncStatusBar from '@/components/SyncStatusBar';
-import { db } from '../lib/db';
 
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
 export type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
-
-interface ScanResultState {
-  status: ScanStatus;
-  message: string;
-  title?: string;
-}
 
 interface ReusableScannerProps {
   currentEventId: number;
@@ -24,10 +15,10 @@ interface ReusableScannerProps {
   isDark?: boolean;
   scanMode?: ScanMode;
   onClose: () => void;
-  onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message: string; name?: string }>;
+  onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message?: string; name?: string }>;
 }
 
-export default function EntryDeskCameraScanner({ 
+export default function EventScanner({ 
   currentEventId, 
   variant = 'blue', 
   isDark = true,
@@ -35,269 +26,80 @@ export default function EntryDeskCameraScanner({
   onClose, 
   onScanExecute 
 }: ReusableScannerProps) {
-  const [scanResult, setScanResult] = useState<ScanResultState>({ status: 'idle', message: '' });
   const [isProcessing, setIsProcessing] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const isScanningRef = useRef(false);
 
-  /**
-   * Helper function to extract qrToken & attendee parameters from JSON payload or raw text
-   */
-  const parseQrContent = (rawText: string) => {
-    const trimmedText = rawText.trim();
-    try {
-      const parsed = JSON.parse(trimmedText);
-      if (parsed && typeof parsed === 'object') {
-        return {
-          // 🟢 Extract explicit qrToken from JSON payload or fallback
-          qrToken: parsed.qrToken || parsed.token || parsed.uid || trimmedText,
-          userId: parsed.uid ? String(parsed.uid) : null,
-          eventId: parsed.eid ? Number(parsed.eid) : null,
-          category: parsed.cat || null,
-          hasFood: Boolean(parsed.food),
-          rawToken: trimmedText
-        };
-      }
-    } catch (e) {
-      // Fallback for plain text qrToken (e.g. MI26-9122)
-    }
-    return {
-      qrToken: trimmedText,
-      userId: trimmedText,
-      eventId: null,
-      category: null,
-      hasFood: false,
-      rawToken: trimmedText
-    };
-  };
-
-  /**
-   * Core execution pipeline: Fetch via qrToken -> Validate -> Mutate local Dexie DB -> Sync online
-   */
   const executePipeline = async (scannedText: string) => {
     const rawInput = scannedText.trim();
     if (!rawInput || isProcessing) return;
 
     setIsProcessing(true);
-    if (scannerRef.current) {
-      try {
-        scannerRef.current.pause(true); // Pause camera feed during validation
-      } catch (err) {
-        console.warn("Scanner pause exception:", err);
-      }
-    }
 
     try {
-      // Step A: Parse scanned payload to extract exact qrToken
-      const qrData = parseQrContent(rawInput);
-      const targetQrToken = qrData.qrToken;
-
-      console.log(`🔍 Scanning pass for qrToken: "${targetQrToken}" under Mode: ${scanMode}`);
-
-      // Delegate to custom execution handler if provided
       if (onScanExecute) {
-        const customResult = await onScanExecute(targetQrToken, scanMode);
-        setScanResult({
-          status: customResult.status,
-          message: customResult.message,
-          title: customResult.name
-        });
-        return;
+        await onScanExecute(rawInput, scanMode);
       }
-
-      // Step B: Locate guest record in Dexie IndexedDB using targetQrToken
-      if (!db.isOpen()) await db.open();
-
-      // 🟢 Primary query filtering strictly by qrToken index
-      let guest = await db.guests
-        .where('qrToken')
-        .equals(targetQrToken)
-        .first();
-
-      // Secondary fallback query for legacy column naming (qr_token)
-      if (!guest) {
-        guest = await db.guests
-          .where('qr_token')
-          .equals(targetQrToken)
-          .first();
-      }
-
-      // Flexible fallback query for raw text or user ID matches
-      if (!guest && qrData.rawToken !== targetQrToken) {
-        guest = await db.guests
-          .where('qrToken')
-          .equals(qrData.rawToken)
-          .first();
-      }
-
-      if (!guest) {
-        setScanResult({
-          status: 'error',
-          message: `Access Denied: Ticket pass (${targetQrToken}) not found in roster.`
-        });
-        return;
-      }
-
-      // Verify event ID venue match
-      if (
-        guest.eventId && 
-        Number(guest.eventId) !== Number(currentEventId) && 
-        qrData.eventId && 
-        Number(qrData.eventId) !== Number(currentEventId)
-      ) {
-        setScanResult({
-          status: 'error',
-          message: 'Access Denied: Ticket pass is registered for a different event venue.'
-        });
-        return;
-      }
-
-      const now = Date.now();
-      let mutationPayload: Record<string, any> = {};
-
-      // Step C: Update columns according to active scanMode
-      if (scanMode === 'CHECK_IN') {
-        const isAlreadyCheckedIn = 
-          Boolean(guest.checkInTime) || 
-          guest.isCheckedIn === true ;
-
-        if (isAlreadyCheckedIn) {
-          setScanResult({
-            status: 'warning',
-            title: guest.name,
-            message: `Duplicate Gate Scan: ${guest.name} has already checked in.`
-          });
-          return;
-        }
-
-        // 🟢 Column updates for CHECK_IN mode
-        mutationPayload = {
-          checkInTime: now,
-          isCheckedIn: true,
-          isCheckIn: 1, // Dual support for boolean & integer column types
-          syncStatus: 'pending'
-        };
-
-        setScanResult({
-          status: 'success',
-          title: guest.name,
-          message: `✓ Pass Verified (${guest.category || 'General'}). Gate check-in complete.`
-        });
-
-      } else if (scanMode === 'FOOD_CLAIM') {
-        const isFoodEligible = 
-          Boolean(guest.hasFoodAccess) || 
-          qrData.hasFood === true;
-
-        if (!isFoodEligible) {
-          setScanResult({
-            status: 'error',
-            title: guest.name,
-            message: 'Meal Access Denied: Food entitlement is not included with this pass tier.'
-          });
-          return;
-        }
-
-        const isFoodAlreadyClaimed = 
-          guest.hasFoodClaimed === true 
-
-        if (isFoodAlreadyClaimed) {
-          setScanResult({
-            status: 'warning',
-            title: guest.name,
-            message: `Duplicate Meal Voucher: Food plate already redeemed for ${guest.name}.`
-          });
-          return;
-        }
-
-        // 🟢 Column updates for FOOD_CLAIM mode
-        mutationPayload = {
-          hasFoodClaimed: true,
-          isFoodClaimed: true,
-          foodClaimedTime: now,
-          syncStatus: 'pending'
-        };
-
-        setScanResult({
-          status: 'success',
-          title: guest.name,
-          message: '🍱 Meal Allocation Approved. Voucher successfully redeemed.'
-        });
-      }
-
-      // Step D: Write Mutation to Local Offline DB by matching guest record ID
-      await db.guests.update(guest.id!, mutationPayload);
-      const updatedGuestRecord = { ...guest, ...mutationPayload };
-
-      console.log(`💾 Local IndexedDB updated for pass (${targetQrToken}):`, mutationPayload);
-
-      // Step E: Online Push Sync to PostgreSQL server if device is online
-      if (navigator.onLine) {
-        try {
-          const syncResponse = await fetch('/api/sync/push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ guests: [updatedGuestRecord] }),
-          });
-
-          if (syncResponse.ok) {
-            await db.guests.update(guest.id!, { syncStatus: 'synced' });
-            console.log(`⚡ Online DB sync committed for pass (${targetQrToken})`);
-          }
-        } catch (syncErr) {
-          console.warn("🌐 Device offline/unreachable. Mutation saved locally for auto-sync.");
-        }
-      }
-
     } catch (err: any) {
       console.error("Fatal scan execution error:", err);
-      setScanResult({ status: 'error', message: 'Terminal camera processing error.' });
     } finally {
       setIsProcessing(false);
       setManualToken('');
-
-      // Auto-resume camera feed after 2.5 seconds
-      setTimeout(() => {
-        setScanResult({ status: 'idle', message: '' });
-        if (scannerRef.current) {
-          try {
-            scannerRef.current.resume();
-          } catch (err) {
-            console.warn("Scanner resume exception:", err);
-          }
-        }
-      }, 2500);
     }
   };
 
   useEffect(() => {
     if (showManualInput) return;
 
-    scannerRef.current = new Html5QrcodeScanner(
-      "qr-reader-container",
-      { 
-        fps: 15, 
-        qrbox: { width: 230, height: 230 }, 
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE] 
-      },
-      /* verbose= */ false
-    );
+    const qrCodeInstance = new Html5Qrcode("qr-reader-container");
+    html5QrCodeRef.current = qrCodeInstance;
 
-    scannerRef.current.render(
-      (decodedText) => executePipeline(decodedText),
-      (err) => {} // Silent camera frame parser
-    );
+    const startBackCamera = async () => {
+      try {
+        isScanningRef.current = true;
+        await qrCodeInstance.start(
+          { facingMode: { exact: "environment" } }, 
+          {
+            fps: 15,
+            qrbox: { width: 230, height: 230 }
+          },
+          (decodedText) => {
+            executePipeline(decodedText);
+          },
+          () => {}
+        );
+      } catch (err) {
+        try {
+          if (isScanningRef.current) {
+            await qrCodeInstance.start(
+              { facingMode: "environment" },
+              {
+                fps: 15,
+                qrbox: { width: 230, height: 230 }
+              },
+              (decodedText) => executePipeline(decodedText),
+              () => {}
+            );
+          }
+        } catch (fallbackErr) {
+          console.error("Failed to start back camera stream:", fallbackErr);
+        }
+      }
+    };
+
+    startBackCamera();
 
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(err => console.error("Scanner stream drop failed:", err));
+      isScanningRef.current = false;
+      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+        html5QrCodeRef.current.stop().catch(err => console.warn("Camera stop error:", err));
       }
     };
   }, [currentEventId, showManualInput, scanMode]);
 
-  // Dynamic color accents matching active scan mode
   const activeVariant = scanMode === 'CHECK_IN' ? (variant === 'amber' ? 'purple' : variant) : 'amber';
 
   const accentText = {
@@ -325,7 +127,7 @@ export default function EntryDeskCameraScanner({
           <div className="flex items-center gap-2 shrink-0">
             <Camera size={16} className={accentText} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              Terminal Desk
+              Event Scanner
             </span>
           </div>
 
@@ -364,7 +166,6 @@ export default function EntryDeskCameraScanner({
         {/* CAMERA / MANUAL ENTRY FRAME */}
         <div className="relative rounded-3xl overflow-hidden bg-black min-h-[260px] flex flex-col justify-center items-center border border-white/5">
           {showManualInput ? (
-            /* MANUAL INPUT FALLBACK */
             <div className="w-full p-6 space-y-4 animate-in zoom-in-95 duration-200">
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Manual QR Token</label>
@@ -385,35 +186,16 @@ export default function EntryDeskCameraScanner({
               </button>
             </div>
           ) : (
-            /* CAMERA FEED CONTAINER */
-            <div id="qr-reader-container" className="w-full" />
-          )}
-
-          {/* OVERLAY FEEDBACK STATUS */}
-          {scanResult.status !== 'idle' && (
-            <div className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-20 ${
-              scanResult.status === 'success' ? 'bg-emerald-950/95 text-emerald-400' :
-              scanResult.status === 'warning' ? 'bg-amber-950/95 text-amber-400' : 'bg-red-950/95 text-red-400'
-            }`}>
-              {scanResult.status === 'success' && <CheckCircle2 size={48} className="mb-3 animate-bounce" />}
-              {scanResult.status === 'warning' && <AlertTriangle size={48} className="mb-3" />}
-              {scanResult.status === 'error' && <X size={48} className="mb-3" />}
-
-              {scanResult.title && (
-                <h4 className="text-base font-black text-white tracking-tight mb-1">{scanResult.title}</h4>
-              )}
-              <p className="text-xs font-bold text-slate-200 max-w-xs">{scanResult.message}</p>
-            </div>
+            <div id="qr-reader-container" className="w-full [&_video]:object-cover" />
           )}
         </div>
 
         <p className="mt-4 text-[9px] text-slate-500 text-center font-bold uppercase tracking-widest leading-relaxed">
           {showManualInput 
             ? "Enter ticket qrToken explicitly" 
-            : `Align TicketQR code inside frame boundary (${scanMode})`}
+            : `Align Ticket QR code inside frame boundary (${scanMode})`}
         </p>
 
-        {/* CLOSE BUTTON */}
         <button
           onClick={onClose}
           className={`w-full mt-4 py-3 rounded-2xl border text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${

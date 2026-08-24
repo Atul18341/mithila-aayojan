@@ -3,20 +3,23 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
-  LayoutDashboard, Users, QrCode, Loader,
-  Settings, Calendar, Sparkles, 
-  Briefcase, Globe, Heart, ShieldCheck,
-  Sun, Moon, ChevronDown, Menu, Utensils
+  LayoutDashboard, Users, Box, QrCode, Loader,
+  Settings, Bell, Clock, Calendar, Sparkles, Plus,
+  Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
+  Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket,
+  User, Crown, ChevronRight
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
 import EventDetailEditor from './_components/event-details';
 import VolunteerManager from './_components/volunteer-manager';
-import Sidebar from './_components/sidebar';
-import EntryDeskCameraScanner from '../../components/Scanner';
+import Sidebar from './_components/sidebar'; // 🟢 Sidebar component import
+import EventScanner from '../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
+import LogoutButton from '@/components/LogoutButton';
 
 const EVENT_TYPES = [
   { id: 'summit', label: 'Summit', icon: Briefcase, protocol: 'invite-only', color: 'blue', threshold: 0 },
@@ -38,11 +41,13 @@ export default function ManagerDashboard() {
   const [isDark, setIsDark] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [isManagingVolunteers, setIsManagingVolunteers] = useState(false);
   
+  // 🟢 Manager Profile Session State
   const [managerSession, setManagerSession] = useState<{
     id?: number;
     name: string;
@@ -91,6 +96,7 @@ export default function ManagerDashboard() {
     const targetEvent = await db.events.get(session.activeEventId);
     if (!targetEvent) return null;
 
+    // FETCH GUEST MANIFEST FOR ACTIVE EVENT FROM INDEXEDDB
     const targetGuests = await db.guests.where('eventId').equals(session.activeEventId).toArray();
     
     const recentCheckIns = await db.guests
@@ -100,6 +106,7 @@ export default function ManagerDashboard() {
       .limit(10)
       .toArray();
 
+    // COMPUTING REAL-TIME METRICS FROM INDEXEDDB DATA
     const totalRegistrations = targetGuests.length;
     const liveCheckIns = targetGuests.filter(g => Boolean(g.checkInTime || g.isCheckedIn)).length;
     const foodIssued = targetGuests.filter(g => Boolean(g.hasFoodAccess || (g as any).foodIncluded)).length;
@@ -119,11 +126,13 @@ export default function ManagerDashboard() {
   const activeEvent = currentWorkspace?.event || sessionData[0] || null;
   const recentCheckIns = currentWorkspace?.recentCheckIns || [];
   
+  // METRICS DIRECTLY SOURCED FROM INDEXEDDB
   const totalRegistrationCount = currentWorkspace?.totalRegistrations || 0;
   const totalCheckInCount = currentWorkspace?.liveCheckIns || 0;
   const foodIssuedCount = currentWorkspace?.foodIssued || 0;
   const foodScannedCount = currentWorkspace?.foodScanned || 0;
 
+  // PERCENTAGE COMPUTATIONS
   const gateCheckInPercent = totalRegistrationCount > 0 
     ? Math.min(100, Math.round((totalCheckInCount / totalRegistrationCount) * 100)) 
     : 0;
@@ -193,10 +202,9 @@ export default function ManagerDashboard() {
   };
 
   const showEditorScreen = isEditing || isCreatingNew;
-  const showActiveScreen = showEditorScreen || isManagingVolunteers;
 
   return (
-    <div className={`flex h-screen w-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 overflow-hidden relative`}>
+    <div className={`flex h-screen w-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 overflow-hidden relative pt-12 sm:pt-20`}>
       
       {/* MOBILE BACKDROP OVERLAY */}
       {isSidebarOpen && (
@@ -206,7 +214,7 @@ export default function ManagerDashboard() {
         />
       )}
 
-      {/* SIDEBAR COMPONENT */}
+      {/* 🟢 REPLACED INLINE SIDEBAR CODE WITH SIDEBAR COMPONENT CALL */}
       <Sidebar
         isDark={isDark}
         setIsDark={setIsDark}
@@ -214,7 +222,7 @@ export default function ManagerDashboard() {
         setIsSidebarOpen={setIsSidebarOpen}
         activeEvent={activeEvent}
         managerSession={managerSession}
-        showActiveScreen={showActiveScreen}
+        showActiveScreen={showEditorScreen || isManagingVolunteers}
         isManagingVolunteers={isManagingVolunteers}
         isEditing={isEditing}
         setIsManagingVolunteers={setIsManagingVolunteers}
@@ -225,15 +233,17 @@ export default function ManagerDashboard() {
       />
 
       {/* MAIN CONTENT WORKSPACE */}
-      <main className={`flex-1 flex flex-col space-y-8 overflow-hidden h-full ${showActiveScreen ? 'p-4 sm:p-6 overflow-y-auto custom-scrollbar' : 'p-4 sm:p-8 overflow-y-auto custom-scrollbar'}`}>
+      <main className={`flex-1 flex flex-col space-y-8 overflow-hidden h-full ${showEditorScreen || isManagingVolunteers ? 'p-4 sm:p-6 overflow-y-auto custom-scrollbar' : 'p-4 sm:p-8 overflow-y-auto custom-scrollbar'}`}>
         
         {/* UNIFIED HEADER BAR */}
-        {!showActiveScreen && (
+        {!showEditorScreen && !isManagingVolunteers && (
           <header className={`shrink-0 w-full py-4 border-b ${theme.bg} flex items-center justify-between z-40 relative gap-3`}>
+            
             <div className="flex items-center gap-3 sm:gap-6">
               <button 
                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
                 className={`lg:hidden p-2.5 rounded-xl border ${theme.inputBg} shrink-0`}
+                aria-label="Open Navigation Menu"
               >
                 <Menu size={18} />
               </button>
@@ -247,16 +257,25 @@ export default function ManagerDashboard() {
                     </h1>
                     <div className="flex items-center gap-3 text-slate-500 text-[9px] font-black uppercase tracking-[0.2em]">
                       <span className="flex items-center gap-1.5"><Calendar size={11} className={theme.accent} /> {activeEvent.date || 'No Date'}</span>
+                      <span className="hidden sm:flex items-center gap-1.5"><Sparkles size={11} className={theme.accent} /> {activeEvent.protocol || 'open'}</span>
                     </div>
                   </button>
                 ) : (
                   <div className="space-y-1">
                     <h1 className="text-xl sm:text-2xl font-black italic text-white flex items-center gap-2">Setup Engine</h1>
+                    <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest">
+                      {isCreatingNew ? 'Configuring new event attributes' : 'No active matrix files found on local device storage links'}
+                    </p>
                   </div>
                 )}
 
+                {/* DROPDOWN SWITCHER */}
                 {isDropdownOpen && sessionData.length > 0 && (
                   <div className={`absolute top-full left-0 mt-4 w-72 sm:w-80 rounded-[2.5rem] border ${theme.dropdownMenu} p-3 z-50`}>
+                    <div className="px-4 py-2 border-b border-white/5 mb-2 flex items-center gap-2 text-slate-500">
+                      <Layers size={12} />
+                      <span className="text-[9px] font-black uppercase tracking-wider">Switch Matrix Context</span>
+                    </div>
                     <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-1 pr-1">
                       {sessionData.map((ev) => (
                         <button 
@@ -268,15 +287,36 @@ export default function ManagerDashboard() {
                         </button>
                       ))}
                     </div>
+                    <div className="mt-2 pt-2 border-t border-slate-200/10 dark:border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingNew(true);
+                          setIsEditing(false);
+                          setIsManagingVolunteers(false);
+                          setIsDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all hover:scale-[1.02] shadow-sm ${
+                          isDark ? 'bg-blue-600/10 border border-blue-500/20 text-blue-400 hover:bg-blue-600/20' : 'bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100/80'
+                        }`}
+                      >
+                        <Plus size={12} className="stroke-[3]" />
+                        Add New Event
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
 
+            {/* HEADER RIGHT SIDE: PINNED SYNC STATUS BAR + DESKTOP UTILITIES */}
             <div className="flex items-center gap-3 shrink-0">
+              {/* ALWAYS VISIBLE: PINNED SYNC STATUS */}
               <SyncStatusBar />
+
+              {/* DESKTOP-ONLY UTILITIES ROW */}
               <div className="hidden lg:flex items-center gap-3">
-                {activeEvent && !showActiveScreen && (
+                {activeEvent && !showEditorScreen && (
                   <button 
                     onClick={() => setIsScanning(true)}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-widest transition-all hover:scale-105 shadow-md ${
@@ -287,12 +327,77 @@ export default function ManagerDashboard() {
                     Camera Desk
                   </button>
                 )}
+                {(activeEvent || sessionData.length > 0) && (
+                  <button 
+                    onClick={() => {
+                      if (isCreatingNew) {
+                        setIsCreatingNew(false);
+                        setIsEditing(false);
+                      } else {
+                        setIsEditing(!isEditing);
+                      }
+                    }} 
+                    className={`p-2.5 rounded-xl border transition-all ${showEditorScreen ? 'bg-red-500 text-white' : `${theme.inputBg} text-slate-400`}`}
+                    title="Edit Event Configuration"
+                  >
+                    {showEditorScreen ? <X size={18} /> : <Pencil size={18} />}
+                  </button>
+                )}
+
+                <button 
+                  type="button"
+                  onClick={() => setIsDark(!isDark)} 
+                  className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
+                >
+                  <div className={`transition-all duration-500 transform ${isDark ? 'translate-y-0' : 'translate-y-10 opacity-0'}`}>
+                    <Sun size={18} className="text-blue-400 fill-blue-400/10" />
+                  </div>
+                  <div className={`absolute transition-all duration-500 transform ${!isDark ? 'translate-y-0' : '-translate-y-10 opacity-0'}`}>
+                    <Moon size={18} className="text-amber-500 fill-amber-500/20" />
+                  </div>
+                </button>
+
+                {/* 🟢 TOP DESKTOP MANAGER PROFILE QUICK BUTTON */}
+                <Link
+                  href="/dashboard-eventManagers/profile"
+                  className={`w-10 h-10 rounded-xl border flex items-center justify-center font-black text-xs transition-all ${theme.inputBg} hover:border-blue-500 text-blue-500`}
+                  title="Open Manager Profile"
+                >
+                  {managerSession.name.charAt(0).toUpperCase()}
+                </Link>
+
+                <div className="relative">
+                  <button 
+                    onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                    className={`w-10 h-10 rounded-xl border flex items-center justify-center relative transition-all ${theme.inputBg}`}
+                  >
+                    <Bell size={18} className={isNotificationsOpen ? theme.accent : 'text-slate-400'} />
+                    {recentCheckIns.length > 0 && (
+                      <div className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-red-500 rounded-full border border-inherit" />
+                    )}
+                  </button>
+
+                  {isNotificationsOpen && (
+                    <div className={`absolute top-full right-0 mt-4 w-80 rounded-[2.5rem] border ${theme.dropdownMenu} p-4 z-50 animate-in fade-in zoom-in-95`}>
+                      <div className="flex justify-between items-center mb-4 px-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Live Notifications</span>
+                      </div>
+                      <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                        {recentCheckIns.slice(0, 3).map((g: any) => (
+                          <div key={g.id} className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] flex flex-col gap-1">
+                            <p className="font-bold">🎉 <span className={theme.accent}>{g.name}</span> verified entry.</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </header>
         )}
 
-        {/* ACTIVE SCREEN ROUTER */}
+        {/* WORKSPACE LAYER TOGGLE ROUTER */}
         {isManagingVolunteers ? (
           <div className="flex-1 flex items-center justify-center py-6">
             <VolunteerManager 
@@ -334,7 +439,10 @@ export default function ManagerDashboard() {
           </div>
         ) : (
           <>
+            {/* 🟢 PAIRED PROGRESS CARDS (GATE ATTENDANCE & MEAL CATERING) */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
+              
+              {/* GATE ATTENDANCE CARD */}
               <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
                 <div className="flex justify-between items-center mb-3">
                   <div className="flex items-center gap-2.5">
@@ -359,6 +467,7 @@ export default function ManagerDashboard() {
                   </div>
                 </div>
 
+                {/* PROGRESS BAR */}
                 <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
@@ -367,6 +476,7 @@ export default function ManagerDashboard() {
                 </div>
               </div>
 
+              {/* MEAL CATERING CARD */}
               <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
                 <div className="flex justify-between items-center mb-3">
                   <div className="flex items-center gap-2.5">
@@ -391,6 +501,7 @@ export default function ManagerDashboard() {
                   </div>
                 </div>
 
+                {/* PROGRESS BAR */}
                 <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-amber-500 rounded-full transition-all duration-500" 
@@ -398,8 +509,10 @@ export default function ManagerDashboard() {
                   />
                 </div>
               </div>
+
             </section>
 
+            {/* REAL-TIME COLLAPSED ACTIVITY REGISTRY */}
             <section className={`border p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] animate-in slide-in-from-bottom-6 duration-500 ${theme.card}`}>
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-base sm:text-lg font-black italic">Recent Entry Streams</h3>
@@ -427,7 +540,7 @@ export default function ManagerDashboard() {
       </main>
 
       {isScanning && activeEvent && (
-        <EntryDeskCameraScanner 
+        <EventScanner 
           currentEventId={activeEvent.id!} 
           variant={activeEvent.type === 'celebration' ? 'emerald' : 'blue'}
           isDark={isDark}

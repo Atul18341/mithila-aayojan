@@ -119,10 +119,10 @@ export default function Sidebar({
               key={item.label} 
               onClick={() => { 
                 if (item.label === 'Manager Profile') {
-                  router.push('/dashboard/eventManagers/profile');
+                  router.push('/dashboard/profile');
                 } else if (item.label === 'Guest List') {
                   const targetQuery = activeEvent?.id ? `?eventId=${activeEvent.id}` : '';
-                  router.push(`/dashboard/eventManagers/guests${targetQuery}`);
+                  router.push(`/dashboard/guests${targetQuery}`);
                 } else if (item.label === 'Volunteers') {
                   setIsManagingVolunteers(true);
                   setIsEditing(false);

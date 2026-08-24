@@ -1,3 +1,4 @@
+// src/lib/sync/hydrateDeviceFromCloud.ts
 import { db } from '@/lib/db';
 
 export async function hydrateDeviceFromCloud(managerEmail: string) {
@@ -10,7 +11,6 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
     const result = await response.json();
     if (!result.success) throw new Error(result.error || 'Unknown sync error');
 
-    // 🟢 Extract eventRegistrations alongside events, guests, managerEvents, and users
     const { 
       events = [], 
       guests = [], 
@@ -21,24 +21,21 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
 
     const normalizedManagerEmail = managerEmail.toLowerCase();
 
-    // 🚀 ATOMIC CLIENT HYDRATION TRANSACTION (Added db.eventRegistrations)
+    // 🚀 ATOMIC CLIENT HYDRATION TRANSACTION
     await db.transaction('rw', [db.events, db.guests, db.eventRegistrations, db.managerEvents, db.users], async () => {
       
-      // 1. Clear out staging tables that don't hold persistent session state
+      // 1. Clear staging tables
       await db.events.clear();
       await db.guests.clear();
-      await db.eventRegistrations.clear(); // 🟢 Clear stale event registrations
+      await db.eventRegistrations.clear();
       await db.managerEvents.clear();
 
-      // 🟢 2. PRESERVE ACTIVE MANAGER SESSION & PRUNE STALE VOLUNTEERS
+      // 2. Clear stale local users except primary session manager
       await db.users
-        .filter(u => {
-          const uEmail = (u.identifier || '').toLowerCase();
-          return uEmail !== normalizedManagerEmail;
-        })
+        .filter(u => (u.identifier || '').toLowerCase() !== normalizedManagerEmail)
         .delete();
 
-      // 3. Hydrate Local Events Store
+      // 3. Hydrate Events with full configuration fields
       for (const ev of events) {
         await db.events.put({
           id: Number(ev.id),
@@ -50,7 +47,7 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
           date: ev.date || '',
           startTime: ev.startTime || '',
           endTime: ev.endTime || '',
-          registrationEndDate: ev.registrationEndDate || ev.registration_end_date || '',
+          registrationEndDate: ev.registrationEndDate || '',
           location: ev.location || '',
           tagline: ev.tagline || '',
           description: ev.description || '',
@@ -58,36 +55,19 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
           hypeThreshold: Number(ev.hypeThreshold || 0),
           isMultiCompetition: Boolean(ev.isMultiCompetition),
           competitions: Array.isArray(ev.competitions) ? ev.competitions : [],
-          visibility: ev.visibility || {
-            map: true,
-            rsvp: true,
-            schedule: true,
-            gallery: false,
-          },
-          foodConfig: ev.foodConfig || {
-            enabled: false,
-            strategy: 'complimentary',
-            vendorDetails: '',
-            availableForAll: 'yes',
-            allowedCategories: []
-          },
-          pricingConfig: ev.pricingConfig || {
-            isRequired: false,
-            baseFee: 0,
-            gstApplicable: false,
-            applicableForAll: 'yes',
-            categoryFees: {}
-          },
+          visibility: ev.visibility || { map: true, rsvp: true, schedule: true, gallery: false },
+          foodConfig: ev.foodConfig || { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
+          pricingConfig: ev.pricingConfig || { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: {} },
           coverBlob: null,
           posterBlob: null,
-          coverImageUrl: ev.cover_image || ev.coverImageUrl || null,
-          posterImageUrl: ev.poster_image || ev.posterImageUrl || null,
+          coverImageUrl: ev.coverImageUrl || null,
+          posterImageUrl: ev.posterImageUrl || null,
           createdAt: ev.createdAt || Date.now(),
           syncStatus: 'synced',
         } as any);
       }
 
-      // 4. Hydrate Local Manager Events Junction Links
+      // 4. Hydrate Manager Events Junction Links
       for (const link of managerEvents) {
         await db.managerEvents.add({
           managerIdentifier: (link.managerIdentifier || link.manager_identifier || '').toLowerCase(),
@@ -98,19 +78,23 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
         });
       }
 
-      // 5. HYDRATE VOLUNTEERS & USERS STORE ALONGSIDE MANAGER ROW
+      // 5. Hydrate Users & Volunteers Table Explicitly
       for (const usr of users) {
         const userEmail = (usr.email || usr.identifier || '').toLowerCase();
         if (!userEmail) continue;
 
         const existingUser = await db.users
-          .filter(u => (u.identifier === userEmail))
+          .filter(u => (u.identifier || '').toLowerCase() === userEmail)
           .first();
+
+        const credentialPass = usr.passkey || usr.passwordHash || usr.password_hash || '';
 
         if (existingUser && existingUser.id) {
           await db.users.update(existingUser.id, {
             name: usr.name || existingUser.name,
             role: usr.role || existingUser.role,
+            passkey: credentialPass || existingUser.passkey,
+            passwordHash: credentialPass,
             activeEventId: usr.activeEventId ? Number(usr.activeEventId) : existingUser.activeEventId,
             syncStatus: 'synced'
           } as any);
@@ -119,13 +103,15 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
             name: usr.name || userEmail.split('@')[0],
             identifier: userEmail,
             role: usr.role || 'volunteer',
+            passkey: credentialPass,
+            passwordHash: credentialPass,
             activeEventId: usr.activeEventId ? Number(usr.activeEventId) : undefined,
             syncStatus: 'synced'
           } as any);
         }
       }
 
-      // 6. Hydrate Local Guests Store
+      // 6. Hydrate Guests with full check-in and food tracking flags
       for (const gst of guests) {
         await db.guests.put({
           id: Number(gst.id),
@@ -151,41 +137,34 @@ export async function hydrateDeviceFromCloud(managerEmail: string) {
         } as any);
       }
 
-      // 🟢 7. Hydrate Local Event Registrations Store
+      // 7. Hydrate Event Registrations with financial ledgers & verification attributes
       for (const reg of eventRegistrations) {
         await db.eventRegistrations.put({
           id: Number(reg.id),
           registrationId: reg.registrationId || `REG-${reg.id}`,
           eventId: Number(reg.eventId),
-          name: reg.name || reg.attendeeName || '',
+          name: reg.name || '',
           email: reg.email || '',
           phone: reg.phone || '',
-          category: reg.category || reg.ticketType || 'general-public',
-          
-          // Competition & Age Group Identification
+          category: reg.category || 'general-public',
           competitionId: reg.competitionId || null,
           competitionTitle: reg.competitionTitle || null,
           ageGroupId: reg.ageGroupId || null,
           ageGroupLabel: reg.ageGroupLabel || null,
-          
-          // Verified Age Metadata
           isAgeVerified: Boolean(reg.isAgeVerified),
           verifiedAge: reg.verifiedAge !== null && reg.verifiedAge !== undefined ? Number(reg.verifiedAge) : null,
-
           customAnswers: typeof reg.customAnswers === 'string' ? JSON.parse(reg.customAnswers) : (reg.customAnswers || {}),
           basePrice: parseFloat(reg.basePrice || 0),
           gstAmount: parseFloat(reg.gstAmount || 0),
-          totalPrice: parseFloat(reg.totalPrice || reg.amountPaid || 0),
-          paymentId: reg.paymentId || 'FREE_ENTRY',
-          orderId: reg.orderId || null,
+          totalPrice: parseFloat(reg.totalPrice || 0),
           status: reg.status || 'CONFIRMED',
           syncStatus: 'synced',
-          registrationTimestamp: reg.registrationTimestamp || reg.registeredAt || Date.now()
+          registrationTimestamp: reg.registrationTimestamp || Date.now()
         } as any);
       }
     });
 
-    console.log('✅ Workspace state local hydration execution successfully complete (events, guests, registrations, manager sessions & volunteers populated).');
+    console.log('✅ Local hydration complete: Events, Guests, Registrations, Manager Events & Users/Volunteers table fully populated[cite: 11].');
     return true;
 
   } catch (error) {
