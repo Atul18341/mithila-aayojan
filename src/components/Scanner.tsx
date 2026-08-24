@@ -1,13 +1,23 @@
 // src/components/Scanner.tsx
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, X, Keyboard, Loader2, LogIn, Utensils } from 'lucide-react';
+import React, { useState } from 'react';
+import { Scanner } from '@yudiel/react-qr-scanner';
+import { 
+  Camera, X, CheckCircle2, AlertTriangle, Loader2, Keyboard, 
+  LogIn, Utensils 
+} from 'lucide-react';
 import SyncStatusBar from '@/components/SyncStatusBar';
+import { db } from '../lib/db';
 
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
 export type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
+
+interface ScanResultState {
+  status: ScanStatus;
+  message: string;
+  title?: string;
+}
 
 interface ReusableScannerProps {
   currentEventId: number;
@@ -15,10 +25,10 @@ interface ReusableScannerProps {
   isDark?: boolean;
   scanMode?: ScanMode;
   onClose: () => void;
-  onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message?: string; name?: string }>;
+  onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message: string; name?: string }>;
 }
 
-export default function EventScanner({ 
+export default function EntryDeskCameraScanner({ 
   currentEventId, 
   variant = 'blue', 
   isDark = true,
@@ -26,13 +36,44 @@ export default function EventScanner({
   onClose, 
   onScanExecute 
 }: ReusableScannerProps) {
+  const [scanResult, setScanResult] = useState<ScanResultState>({ status: 'idle', message: '' });
   const [isProcessing, setIsProcessing] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
-  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
-  const isScanningRef = useRef(false);
+  /**
+   * Helper function to extract qrToken & attendee parameters from JSON payload or raw text
+   */
+  const parseQrContent = (rawText: string) => {
+    const trimmedText = rawText.trim();
+    try {
+      const parsed = JSON.parse(trimmedText);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          qrToken: parsed.qrToken || parsed.token || parsed.uid || trimmedText,
+          userId: parsed.uid ? String(parsed.uid) : null,
+          eventId: parsed.eid ? Number(parsed.eid) : null,
+          category: parsed.cat || null,
+          hasFood: Boolean(parsed.food),
+          rawToken: trimmedText
+        };
+      }
+    } catch (e) {
+      // Fallback for plain text qrToken (e.g. MI26-9122)
+    }
+    return {
+      qrToken: trimmedText,
+      userId: trimmedText,
+      eventId: null,
+      category: null,
+      hasFood: false,
+      rawToken: trimmedText
+    };
+  };
 
+  /**
+   * Core execution pipeline: Instant UI Feedback + Background DB Mutation & Sync
+   */
   const executePipeline = async (scannedText: string) => {
     const rawInput = scannedText.trim();
     if (!rawInput || isProcessing) return;
@@ -40,66 +81,179 @@ export default function EventScanner({
     setIsProcessing(true);
 
     try {
+      // Step A: Parse scanned payload to extract exact qrToken
+      const qrData = parseQrContent(rawInput);
+      const targetQrToken = qrData.qrToken;
+
+      console.log(`🔍 Scanning pass for qrToken: "${targetQrToken}" under Mode: ${scanMode}`);
+
+      // Delegate to custom execution handler if provided
       if (onScanExecute) {
-        await onScanExecute(rawInput, scanMode);
+        const customResult = await onScanExecute(targetQrToken, scanMode);
+        setScanResult({
+          status: customResult.status,
+          message: customResult.message,
+          title: customResult.name
+        });
+        return;
       }
+
+      // Step B: Locate guest record in Dexie IndexedDB using targetQrToken
+      if (!db.isOpen()) await db.open();
+
+      let guest = await db.guests
+        .where('qrToken')
+        .equals(targetQrToken)
+        .first();
+
+      if (!guest) {
+        guest = await db.guests
+          .where('qr_token')
+          .equals(targetQrToken)
+          .first();
+      }
+
+      if (!guest && qrData.rawToken !== targetQrToken) {
+        guest = await db.guests
+          .where('qrToken')
+          .equals(qrData.rawToken)
+          .first();
+      }
+
+      if (!guest) {
+        setScanResult({
+          status: 'error',
+          message: `Access Denied: Ticket pass (${targetQrToken}) not found in roster.`
+        });
+        return;
+      }
+
+      // Verify event ID venue match
+      if (
+        guest.eventId && 
+        Number(guest.eventId) !== Number(currentEventId) && 
+        qrData.eventId && 
+        Number(qrData.eventId) !== Number(currentEventId)
+      ) {
+        setScanResult({
+          status: 'error',
+          message: 'Access Denied: Invalid pass for this venue/event. / प्रवेश अस्वीकृत: इस स्थान/कार्यक्रम के लिए अमान्य पास।'
+        });
+        return;
+      }
+
+      const now = Date.now();
+      let mutationPayload: Record<string, any> = {};
+      let immediateStatus: ScanStatus = 'success';
+      let immediateMessage = '';
+
+      // Step C: Validate conditions & prepare responses
+      if (scanMode === 'CHECK_IN') {
+        const isAlreadyCheckedIn = 
+          Boolean(guest.checkInTime) || 
+          guest.isCheckedIn === true ;
+
+        if (isAlreadyCheckedIn) {
+          setScanResult({
+            status: 'warning',
+            title: guest.name,
+            message: `${guest.name} has already checked in. / ${guest.name} पहले ही चेक-इन कर चुके हैं।`
+          });
+          return;
+        }
+
+        mutationPayload = {
+          checkInTime: now,
+          isCheckedIn: true,
+          isCheckIn: 1,
+          syncStatus: 'pending'
+        };
+
+        immediateMessage = `✓ Pass Verified (${guest.category || 'General'}). Gate check-in complete./ पास सत्यापित। गेट चेक-इन पूरा हो गया - ${guest.name}`;
+
+      } else if (scanMode === 'FOOD_CLAIM') {
+        const isFoodEligible = 
+          Boolean(guest.hasFoodAccess) || 
+          qrData.hasFood === true;
+
+        if (!isFoodEligible) {
+          setScanResult({
+            status: 'error',
+            title: guest.name,
+            message: 'Denied: Food not included with this pass type. / अस्वीकृत: इस पास के साथ भोजन शामिल नहीं है।'
+          });
+          return;
+        }
+
+        const isFoodAlreadyClaimed = guest.hasFoodClaimed === true;
+
+        if (isFoodAlreadyClaimed) {
+          setScanResult({
+            status: 'warning',
+            title: guest.name,
+            message: `Pass already claimed/redeemed for ${guest.name}. / ${guest.name} के लिए भोजन पहले ही प्राप्त किया जा चुका है।`
+          });
+          return;
+        }
+
+        mutationPayload = {
+          hasFoodClaimed: true,
+          isFoodClaimed: true,
+          foodClaimedTime: now,
+          syncStatus: 'pending'
+        };
+
+        immediateMessage = `🍱 Meal Allocation Approved. Voucher successfully redeemed./भोजन थाली स्वीकृत। वाउचर सफलतापूर्वक भुना लिया गया।- ${guest.name}`;
+      }
+
+      // ⚡ INSTANT OPTIMISTIC UI UPDATE (Fires immediately with zero perceived latency)
+      setScanResult({
+        status: 'success',
+        title: guest.name,
+        message: immediateMessage
+      });
+
+      // Step D & E: Run heavy DB writes and network syncs asynchronously behind the scenes
+      const guestId = guest.id!;
+      const updatedGuestRecord = { ...guest, ...mutationPayload };
+
+      (async () => {
+        try {
+          await db.guests.update(guestId, mutationPayload);
+          console.log(`💾 Local IndexedDB updated for pass (${targetQrToken}):`, mutationPayload);
+
+          if (navigator.onLine) {
+            const syncResponse = await fetch('/api/sync/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ guests: [updatedGuestRecord] }),
+            });
+
+            if (syncResponse.ok) {
+              await db.guests.update(guestId, { syncStatus: 'synced' });
+              console.log(`⚡ Online DB sync committed for pass (${targetQrToken})`);
+            }
+          }
+        } catch (bgErr) {
+          console.warn("Background sync/mutation error:", bgErr);
+        }
+      })();
+
     } catch (err: any) {
       console.error("Fatal scan execution error:", err);
+      setScanResult({ status: 'error', message: 'Terminal camera processing error.' });
     } finally {
-      setIsProcessing(false);
       setManualToken('');
+
+      // Auto-resume camera decoding feed after 2.5 seconds
+      setTimeout(() => {
+        setScanResult({ status: 'idle', message: '' });
+        setIsProcessing(false);
+      }, 2500);
     }
   };
 
-  useEffect(() => {
-    if (showManualInput) return;
-
-    const qrCodeInstance = new Html5Qrcode("qr-reader-container");
-    html5QrCodeRef.current = qrCodeInstance;
-
-    const startBackCamera = async () => {
-      try {
-        isScanningRef.current = true;
-        await qrCodeInstance.start(
-          { facingMode: { exact: "environment" } }, 
-          {
-            fps: 15,
-            qrbox: { width: 230, height: 230 }
-          },
-          (decodedText) => {
-            executePipeline(decodedText);
-          },
-          () => {}
-        );
-      } catch (err) {
-        try {
-          if (isScanningRef.current) {
-            await qrCodeInstance.start(
-              { facingMode: "environment" },
-              {
-                fps: 15,
-                qrbox: { width: 230, height: 230 }
-              },
-              (decodedText) => executePipeline(decodedText),
-              () => {}
-            );
-          }
-        } catch (fallbackErr) {
-          console.error("Failed to start back camera stream:", fallbackErr);
-        }
-      }
-    };
-
-    startBackCamera();
-
-    return () => {
-      isScanningRef.current = false;
-      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-        html5QrCodeRef.current.stop().catch(err => console.warn("Camera stop error:", err));
-      }
-    };
-  }, [currentEventId, showManualInput, scanMode]);
-
+  // Dynamic color accents matching active scan mode
   const activeVariant = scanMode === 'CHECK_IN' ? (variant === 'amber' ? 'purple' : variant) : 'amber';
 
   const accentText = {
@@ -127,7 +281,7 @@ export default function EventScanner({
           <div className="flex items-center gap-2 shrink-0">
             <Camera size={16} className={accentText} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              Event Scanner
+              Terminal Desk
             </span>
           </div>
 
@@ -166,6 +320,7 @@ export default function EventScanner({
         {/* CAMERA / MANUAL ENTRY FRAME */}
         <div className="relative rounded-3xl overflow-hidden bg-black min-h-[260px] flex flex-col justify-center items-center border border-white/5">
           {showManualInput ? (
+            /* MANUAL INPUT FALLBACK */
             <div className="w-full p-6 space-y-4 animate-in zoom-in-95 duration-200">
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Manual QR Token</label>
@@ -186,7 +341,41 @@ export default function EventScanner({
               </button>
             </div>
           ) : (
-            <div id="qr-reader-container" className="w-full [&_video]:object-cover" />
+            /* CLEAN REACT-QR-SCANNER VIEWPORT */
+            <div className="w-full h-full min-h-[260px] relative">
+              <Scanner
+                onScan={(detectedCodes) => {
+                  if (!isProcessing && detectedCodes && detectedCodes.length > 0) {
+                    executePipeline(detectedCodes[0].rawValue);
+                  }
+                }}
+                onError={(error) => {
+                  console.warn("QR Scanner error:", error);
+                }}
+                constraints={{ facingMode: 'environment' }}
+                styles={{
+                  container: { width: '100%', height: '100%', minHeight: '260px' },
+                  video: { width: '100%', height: '100%', objectFit: 'cover' }
+                }}
+              />
+            </div>
+          )}
+
+          {/* OVERLAY FEEDBACK STATUS */}
+          {scanResult.status !== 'idle' && (
+            <div className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-20 ${
+              scanResult.status === 'success' ? 'bg-emerald-950/95 text-emerald-400' :
+              scanResult.status === 'warning' ? 'bg-amber-950/95 text-amber-400' : 'bg-red-950/95 text-red-400'
+            }`}>
+              {scanResult.status === 'success' && <CheckCircle2 size={48} className="mb-3 animate-bounce" />}
+              {scanResult.status === 'warning' && <AlertTriangle size={48} className="mb-3" />}
+              {scanResult.status === 'error' && <X size={48} className="mb-3" />}
+
+              {scanResult.title && (
+                <h4 className="text-base font-black text-white tracking-tight mb-1">{scanResult.title}</h4>
+              )}
+              <p className="text-xs font-bold text-slate-200 max-w-xs">{scanResult.message}</p>
+            </div>
           )}
         </div>
 
@@ -196,6 +385,7 @@ export default function EventScanner({
             : `Align Ticket QR code inside frame boundary (${scanMode})`}
         </p>
 
+        {/* CLOSE BUTTON */}
         <button
           onClick={onClose}
           className={`w-full mt-4 py-3 rounded-2xl border text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${

@@ -11,7 +11,7 @@ const withPWA = withPWAInit({
 const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
-  allowedDevOrigins: ['192.168.1.8'],
+  allowedDevOrigins: ['192.168.1.8','sedate-monday-estimate.ngrok-free.dev'],
   turbopack: {}, 
 
 };
