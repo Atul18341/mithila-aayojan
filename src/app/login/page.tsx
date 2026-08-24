@@ -24,10 +24,10 @@ export default function UnifiedLoginPage() {
   const navigateByRole = (role: string) => {
     const normalizedRole = role.toLowerCase().trim();
     if (normalizedRole === 'manager') {
-      router.push('/dashboard-eventManagers');
+      router.push('/dashboard');
       return true;
     } else if (normalizedRole === 'volunteer') {
-      router.push('/dashboard-eventVolunteers');
+      router.push('/dashboard/eventVolunteers');
       return true;
     }
     return false;

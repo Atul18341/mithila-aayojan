@@ -1,3 +1,4 @@
+// src/components/admin/VolunteerManager.tsx
 'use client';
 
 import React, { useState } from 'react';
@@ -5,7 +6,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { UserCheck, X, Check, Edit2, Users, PlusCircle, Shield } from 'lucide-react';
 import { db } from '../../../lib/db';
 
-type DeskScope = 'CHECK_IN' | 'FOOD_CLAIM' | 'ALL';
+type DeskScope = 'CHECK_IN' | 'REGISTRATION' | 'FOOD_CLAIM' | 'ALL'; // 🟢 Added REGISTRATION desk scope
 
 interface VolunteerManagerProps {
   isDark: boolean;
@@ -14,7 +15,6 @@ interface VolunteerManagerProps {
 }
 
 export default function VolunteerManager({ isDark, events, onClose }: VolunteerManagerProps) {
-  // 🟢 ACTIVE ROSTER IS NOW THE DEFAULT TAB ON OPENING
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');
   
   // Form State
@@ -66,7 +66,6 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
     setSelectedEventIds([]);
   };
 
-  // Populate form for editing existing volunteer and switch to create/edit tab
   const handleEditVolunteer = (vol: any) => {
     setEditingUserId(vol.id);
     setVolunteerName(vol.name || '');
@@ -86,7 +85,6 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
 
     if (!cleanIdentifier || !cleanPassword || !cleanName) return;
 
-    // Resolve target event IDs strictly
     const targetEvents = assignAll
       ? events.map((e) => Number(e.id)).filter((id) => !isNaN(id) && id > 0)
       : selectedEventIds.map((id) => Number(id)).filter((id) => !isNaN(id) && id > 0);
@@ -99,7 +97,6 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
     setIsSaving(true);
     try {
       await db.transaction('rw', [db.users, db.managerEvents], async () => {
-        // Step A: Upsert User Record
         const existingUser = await db.users
           .where('identifier')
           .equals(cleanIdentifier)
@@ -124,7 +121,6 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
           } as any);
         }
 
-        // Step B: Update Event Links & Assigned Desk
         for (const evId of targetEvents) {
           const now = Date.now();
           const userLinks = await db.managerEvents
@@ -162,7 +158,7 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
       setTimeout(() => {
         setSuccessMsg('');
         resetForm();
-        setActiveTab('list'); // Return to Active Roster after saving
+        setActiveTab('list');
       }, 1500);
     } catch (err: any) {
       console.error('❌ Failed to save volunteer account:', err);
@@ -198,7 +194,7 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
         </button>
       </div>
 
-      {/* VIEW / EDIT NAVIGATION TABS */}
+      {/* NAVIGATION TABS */}
       <div className="flex items-center gap-2 border-b border-inherit pb-2">
         <button
           type="button"
@@ -237,7 +233,7 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
         </div>
       )}
 
-      {/* TAB 1: ACTIVE VOLUNTEERS ROSTER LIST (DEFAULT OPEN VIEW) */}
+      {/* TAB 1: ACTIVE VOLUNTEERS ROSTER LIST */}
       {activeTab === 'list' && (
         <div className="space-y-3">
           {volunteersList.length === 0 ? (
@@ -348,7 +344,7 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
             <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">
               Assigned Gate Station Desk
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <button
                 type="button"
                 onClick={() => setSelectedDesk('CHECK_IN')}
@@ -358,7 +354,19 @@ export default function VolunteerManager({ isDark, events, onClose }: VolunteerM
                     : `${inputClass} opacity-60`
                 }`}
               >
-                Gate Check-In
+                Check-In
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDesk('REGISTRATION')}
+                className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${
+                  selectedDesk === 'REGISTRATION'
+                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                    : `${inputClass} opacity-60`
+                }`}
+              >
+                Registration
               </button>
 
               <button

@@ -174,7 +174,7 @@ export interface ManagerEvents {
   managerIdentifier: string;
   eventId: number;
   assignedAt: number;
-  assignedDesk?: 'CHECK_IN' | 'FOOD_CLAIM' | 'ALL';
+  assignedDesk?:'REGISTRATION' | 'CHECK_IN' | 'FOOD_CLAIM' | 'ALL';
   syncStatus: 'synced' | 'pending';
 }
 

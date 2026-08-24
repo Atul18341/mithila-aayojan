@@ -8,8 +8,8 @@ import {
   LogOut, Calendar, Sparkles, LogIn, Utensils, RefreshCw, Lock,
   MoreVertical, X
 } from 'lucide-react';
-import { db } from '../../lib/db';
-import EntryDeskCameraScanner from '../../components/Scanner';
+import { db } from '../../../lib/db';
+import EntryDeskCameraScanner from '../../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
 
