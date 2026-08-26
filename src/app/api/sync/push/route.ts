@@ -361,31 +361,68 @@ export async function POST(request: Request) {
       if (!targetEventId || !gst.qrToken) continue; 
 
       const guestType = gst.category || gst.type || 'general-public';
-      const checkInStatus = (gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1) ? true : false;
+      const checkInStatus = Boolean(gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1);
       const rawCheckInTime = gst.checkInTime ? toEpochMillis(gst.checkInTime) : null;
       const hasFoodAccess = Boolean(gst.hasFoodAccess || gst.isFoodAccess || gst.foodIncluded);
+      
+      // Explicitly extract food claim flags and timestamps supporting all payload variants
+      const hasFoodClaimed = Boolean(gst.hasFoodClaimed || gst.isFoodClaimed || gst.foodClaimed);
+      const rawFoodClaimedTime = (gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) 
+        ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) 
+        : null;
+      
       const amountPaid = toNumeric(gst.amountPaid || gst.amount_paid);
 
       const guestUpsertQuery = `
-        INSERT INTO guests (
-          event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
-          has_food_access, check_in_time, server_updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
-        ON CONFLICT (qr_token) 
-        DO UPDATE SET 
-          name = COALESCE(EXCLUDED.name, guests.name), 
-          type = COALESCE(EXCLUDED.type, guests.type), 
-          email = COALESCE(EXCLUDED.email, guests.email), 
-          phone = COALESCE(EXCLUDED.phone, guests.phone), 
-          is_check_in = EXCLUDED.is_check_in OR guests.is_check_in, 
-          amount_paid = COALESCE(EXCLUDED.amount_paid, guests.amount_paid), 
-          has_food_access = COALESCE(EXCLUDED.has_food_access, guests.has_food_access), 
-          check_in_time = COALESCE(guests.check_in_time, EXCLUDED.check_in_time), 
-          server_updated_at = timezone('utc', now())
-        RETURNING id;
-      `; 
-
+       INSERT INTO guests (
+  event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
+  has_food_access, has_food_claimed, check_in_time, food_claimed_time, server_updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('utc', now()))
+ON CONFLICT (qr_token) 
+DO UPDATE SET 
+  name = COALESCE(EXCLUDED.name, guests.name), 
+  type = COALESCE(EXCLUDED.type, guests.type), 
+  email = COALESCE(EXCLUDED.email, guests.email), 
+  phone = COALESCE(EXCLUDED.phone, guests.phone), 
+  
+  -- 🟢 Safely combine check-in state (true stays true)
+  is_check_in = EXCLUDED.is_check_in OR guests.is_check_in, 
+  
+  amount_paid = COALESCE(EXCLUDED.amount_paid, guests.amount_paid), 
+  has_food_access = COALESCE(EXCLUDED.has_food_access, guests.has_food_access), 
+  
+  -- 🟢 Safely combine food claim state (true stays true)
+  has_food_claimed = EXCLUDED.has_food_claimed OR guests.has_food_claimed,
+  
+  -- 🟢 Earliest check-in time preservation
+  check_in_time = CASE 
+    WHEN guests.check_in_time IS NULL THEN EXCLUDED.check_in_time 
+    ELSE LEAST(guests.check_in_time, EXCLUDED.check_in_time) 
+  END,
+  
+  -- 🟢 Corrected: Take the new timestamp if existing is null, otherwise preserve the first recorded claim time
+  food_claimed_time = CASE 
+    WHEN guests.food_claimed_time IS NULL THEN EXCLUDED.food_claimed_time
+    ELSE LEAST(guests.food_claimed_time, EXCLUDED.food_claimed_time)
+  END,
+  
+  server_updated_at = timezone('utc', now())
+RETURNING id`; 
+      console.log("Data:",[
+        Number(targetEventId), 
+        gst.name || 'Event Attendee', 
+        guestType, 
+        gst.qrToken, 
+        gst.email || null, 
+        gst.phone || null, 
+        checkInStatus, 
+        amountPaid, 
+        hasFoodAccess, 
+        hasFoodClaimed,
+        rawCheckInTime,
+        rawFoodClaimedTime
+      ]) 
       const result = await client.query(guestUpsertQuery, [
         Number(targetEventId), 
         gst.name || 'Event Attendee', 
@@ -396,14 +433,16 @@ export async function POST(request: Request) {
         checkInStatus, 
         amountPaid, 
         hasFoodAccess, 
-        rawCheckInTime
+        hasFoodClaimed,
+        rawCheckInTime,
+        rawFoodClaimedTime
       ]); 
-
+      console.log("Result:",result)
       const serverGuestId = result.rows[0].id;
-      await logSyncAction('guests', checkInStatus ? 'CHECK_IN' : 'UPDATE', serverGuestId, gst.clientTimestamp);
+      const actionType = hasFoodClaimed ? 'FOOD_CLAIM' : (checkInStatus ? 'CHECK_IN' : 'UPDATE');
+      await logSyncAction('guests', actionType, serverGuestId, gst.clientTimestamp);
       syncedGuestsCount++;  
     }
-
     // ==========================================
     // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
     // ==========================================

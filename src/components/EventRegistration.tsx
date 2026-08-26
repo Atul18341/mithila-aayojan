@@ -711,12 +711,12 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
 
               setIsSubmitting(false);
               setFormSubmitted(true);
-              router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
+              router.push(`/ticket?eventId=${encodeURIComponent(eventId)}&phone=${encodeURIComponent(formData.phone)}`);
             } catch (dbErr: any) {
               console.error("Database write failed after payment:", dbErr);
               setIsSubmitting(false);
               if (dbErr.message !== 'DUPLICATE_REGISTRATION') {
-                router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}`);
+              router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}&phone=${encodeURIComponent(formData.phone)}`);
               }
             }
           },
@@ -750,7 +750,7 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
         const eventId = await saveRegistrationRecord();
         setIsSubmitting(false);
         setFormSubmitted(true);
-        router.push(`/ticket?eventId=${encodeURIComponent(eventId)}`);
+        router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}&phone=${encodeURIComponent(formData.phone)}`);
       } catch (dbErr: any) {
         console.error("Database write failure on free tier:", dbErr);
         setIsSubmitting(false);

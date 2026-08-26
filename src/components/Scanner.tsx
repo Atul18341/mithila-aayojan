@@ -11,7 +11,7 @@ import SyncStatusBar from '@/components/SyncStatusBar';
 import { db } from '../lib/db';
 
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
-export type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
+export type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM' | 'REGISTRATION';
 
 interface ScanResultState {
   status: ScanStatus;
@@ -185,7 +185,9 @@ export default function EntryDeskCameraScanner({
           return;
         }
 
-        const isFoodAlreadyClaimed = guest.hasFoodClaimed === true;
+        const isFoodAlreadyClaimed = 
+          Boolean(guest.foodClaimedTime) || 
+          guest.hasFoodClaimed === true;
 
         if (isFoodAlreadyClaimed) {
           setScanResult({
@@ -198,7 +200,6 @@ export default function EntryDeskCameraScanner({
 
         mutationPayload = {
           hasFoodClaimed: true,
-          isFoodClaimed: true,
           foodClaimedTime: now,
           syncStatus: 'pending'
         };
@@ -215,7 +216,12 @@ export default function EntryDeskCameraScanner({
 
       // Step D & E: Run heavy DB writes and network syncs asynchronously behind the scenes
       const guestId = guest.id!;
-      const updatedGuestRecord = { ...guest, ...mutationPayload };
+      const updatedGuestRecord = { 
+        ...guest, 
+        ...mutationPayload, 
+        hasFoodClaimed: mutationPayload.hasFoodClaimed ?? guest.hasFoodClaimed ?? false,
+        foodClaimedTime: mutationPayload.foodClaimedTime ?? guest.foodClaimedTime ?? null,
+      };
 
       (async () => {
         try {
@@ -249,7 +255,7 @@ export default function EntryDeskCameraScanner({
       setTimeout(() => {
         setScanResult({ status: 'idle', message: '' });
         setIsProcessing(false);
-      }, 2500);
+      }, 1000);
     }
   };
 
@@ -281,7 +287,7 @@ export default function EntryDeskCameraScanner({
           <div className="flex items-center gap-2 shrink-0">
             <Camera size={16} className={accentText} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              Terminal Desk
+              Event Scanner
             </span>
           </div>
 

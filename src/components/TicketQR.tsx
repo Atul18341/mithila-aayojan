@@ -5,8 +5,6 @@ import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db } from '@/lib/db'; // Integrated Dexie IndexedDB instance
 
-const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'EVENT-PARTICIPANT', 'OPS-TEAM'];
-
 interface EventDetails {
   eventName: string;
   date: string;
@@ -22,6 +20,7 @@ interface TicketQRProps {
   userCategory: string;
   competitionTitle?: string; // 🏆 Optional competition title
   ageGroupLabel?: string;    // 🟢 Optional Age Group / Category Label
+  hasFoodAccess?: boolean;   // 🟢 Added prop to override category defaults
   eventId: number;
   eventDetails?: EventDetails;
 }
@@ -41,6 +40,7 @@ export default function TicketQR({
   userCategory,
   competitionTitle,
   ageGroupLabel, // 🟢 Received prop
+  hasFoodAccess, // 🟢 Received new hasFoodAccess prop
   eventId,
   eventDetails: propsEventDetails,
 }: TicketQRProps) {
@@ -56,7 +56,12 @@ export default function TicketQR({
 
   // Normalize category for food access check
   const normalizedCategory = userCategory ? userCategory.trim().toUpperCase() : 'GENERAL';
-  const isFoodIncluded = FOOD_ELIGIBLE_CATEGORIES.includes(normalizedCategory);
+  
+  // 🟢 Use explicit `hasFoodAccess` prop if provided; otherwise fallback to category eligibility check
+  const FOOD_ELIGIBLE_CATEGORIES = ['VIP', 'DELEGATE', 'SPEAKER', 'EXHIBITOR', 'PRESS', 'PATRON', 'DIGNITARY', 'EVENT-PARTICIPANT', 'OPS-TEAM'];
+  const isFoodIncluded = hasFoodAccess !== undefined 
+    ? Boolean(hasFoodAccess) 
+    : FOOD_ELIGIBLE_CATEGORIES.includes(normalizedCategory);
 
   // 🟢 Synchronize props changes when parent passes coverImageUrl / coverBlob
   useEffect(() => {
@@ -195,7 +200,7 @@ export default function TicketQR({
     };
   }, [eventId]);
 
-  // 🟢 QR Payload data structure incorporating activeQrToken, competition & age group
+  // 🟢 QR Payload data structure incorporating activeQrToken, competition, age group & food access flag
   const qrPayload = JSON.stringify({
     qrToken: activeQrToken,
     eid: eventId,

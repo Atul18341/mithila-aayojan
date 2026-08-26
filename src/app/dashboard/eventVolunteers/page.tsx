@@ -13,8 +13,9 @@ import { db } from '../../../lib/db';
 import EventScanner from '../../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
+import UniversalRegistrationForm from '@/components/EventRegistration';
 
-type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM';
+type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM' | 'REGISTRATION';
 
 export default function VolunteerCheckInPanel() {
   const [isDark, setIsDark] = useState(false);
@@ -82,6 +83,8 @@ export default function VolunteerCheckInPanel() {
       setScanMode('CHECK_IN');
     } else if (assignedDesk === 'FOOD_CLAIM') {
       setScanMode('FOOD_CLAIM');
+    } else if (assignedDesk === 'REGISTRATION') {
+      setScanMode('REGISTRATION');
     }
   }, [assignedDesk]);
 
@@ -118,8 +121,8 @@ export default function VolunteerCheckInPanel() {
   ) || { totalRegistered: 0, totalCheckedIn: 0, totalFoodEligible: 0, totalFoodClaimed: 0 };
 
   // Calculate percentage progress for active mode
-  const currentCount = scanMode === 'CHECK_IN' ? deskMetrics.totalCheckedIn : deskMetrics.totalFoodClaimed;
-  const currentTotal = scanMode === 'CHECK_IN' ? deskMetrics.totalRegistered : deskMetrics.totalFoodEligible;
+  const currentCount = scanMode === 'CHECK_IN' ? deskMetrics.totalCheckedIn : scanMode === 'FOOD_CLAIM' ? deskMetrics.totalFoodClaimed : deskMetrics.totalRegistered;
+  const currentTotal = scanMode === 'CHECK_IN' ? deskMetrics.totalRegistered : scanMode === 'FOOD_CLAIM' ? deskMetrics.totalFoodEligible : deskMetrics.totalRegistered;
   const progressPercent = currentTotal > 0 ? Math.min(100, Math.round((currentCount / currentTotal) * 100)) : 0;
 
   // 4. HYDRATION ENGINE: FETCH FROM POSTGRESQL AND STORE assignedDesk IN INDEXEDDB
@@ -378,60 +381,80 @@ export default function VolunteerCheckInPanel() {
       {/* CORE CONTROL COUNTER SUB-PANEL */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
         
-        {/* RESTRICTED MODE SELECTOR BRIDGE */}
-        <div className={`grid grid-cols-2 gap-2 p-1 rounded-xl border w-full max-w-xs ${theme.card}`}>
+        {/* RESTRICTED 3-WAY MODE SELECTOR BRIDGE */}
+        <div className={`grid grid-cols-3 gap-1.5 p-1 rounded-xl border w-full max-w-sm ${theme.card}`}>
           <button
             disabled={assignedDesk !== 'ALL' && assignedDesk !== 'CHECK_IN'}
             onClick={() => setScanMode('CHECK_IN')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               scanMode === 'CHECK_IN' 
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20' 
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <LogIn size={14} />
-            Gate Check-In
+            <LogIn size={13} />
+            Check-In
           </button>
           <button
             disabled={assignedDesk !== 'ALL' && assignedDesk !== 'FOOD_CLAIM'}
             onClick={() => setScanMode('FOOD_CLAIM')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               scanMode === 'FOOD_CLAIM' 
                 ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20' 
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Utensils size={14} />
-            Food Counter
+            <Utensils size={13} />
+            Food
+          </button>
+          <button
+            disabled={assignedDesk !== 'ALL' && assignedDesk !== 'REGISTRATION'}
+            onClick={() => setScanMode('REGISTRATION')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              scanMode === 'REGISTRATION' 
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Sparkles size={13} />
+            Registration
           </button>
         </div>
 
-        {/* CONTEXTUAL RATIO STAT CARD (ADAPTS TO CHECK_IN VS FOOD_CLAIM) */}
+        {/* CONTEXTUAL RATIO STAT CARD (ADAPTS TO CHECK_IN VS FOOD_CLAIM VS REGISTRATION) */}
         <div className={`w-full max-w-xs p-5 rounded-2xl border flex flex-col gap-3 ${theme.card}`}>
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-              <span className={`p-2 rounded-xl text-white ${scanMode === 'CHECK_IN' ? 'bg-purple-600' : 'bg-amber-600'}`}>
-                {scanMode === 'CHECK_IN' ? <LogIn size={16} /> : <Utensils size={16} />}
+              <span className={`p-2 rounded-xl text-white ${
+                scanMode === 'CHECK_IN' ? 'bg-purple-600' : 
+                scanMode === 'FOOD_CLAIM' ? 'bg-amber-600' : 'bg-emerald-600'
+              }`}>
+                {scanMode === 'CHECK_IN' ? <LogIn size={16} /> : 
+                 scanMode === 'FOOD_CLAIM' ? <Utensils size={16} /> : <Sparkles size={16} />}
               </span>
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                {scanMode === 'CHECK_IN' ? 'Gate Stream Count' : 'Meals Served'}
+                {scanMode === 'CHECK_IN' ? 'Gate Stream Count' : 
+                 scanMode === 'FOOD_CLAIM' ? 'Meals Served' : 'Registrations'}
               </p>
             </div>
             
             <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border ${
-              scanMode === 'CHECK_IN' 
-                ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
-                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+              scanMode === 'CHECK_IN' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
+              scanMode === 'FOOD_CLAIM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
+              'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
             }`}>
-              {progressPercent}%
+              {scanMode === 'REGISTRATION' ? deskMetrics.totalRegistered : `${progressPercent}%`}
             </span>
           </div>
 
           <div className="flex items-baseline justify-between">
-            <h3 className={`text-2xl font-black tracking-tight ${scanMode === 'CHECK_IN' ? 'text-purple-500' : 'text-amber-500'}`}>
-              {currentCount} 
+            <h3 className={`text-2xl font-black tracking-tight ${
+              scanMode === 'CHECK_IN' ? 'text-purple-500' : 
+              scanMode === 'FOOD_CLAIM' ? 'text-amber-500' : 'text-emerald-500'
+            }`}>
+              {scanMode === 'REGISTRATION' ? deskMetrics.totalRegistered : currentCount} 
               <span className="text-xs font-bold text-slate-500 uppercase ml-1">
-                / {currentTotal} {scanMode === 'CHECK_IN' ? 'Verified' : 'Claimed'}
+                / {scanMode === 'REGISTRATION' ? 'Total' : `${currentTotal} ${scanMode === 'CHECK_IN' ? 'Verified' : 'Claimed'}`}
               </span>
             </h3>
             
@@ -445,37 +468,69 @@ export default function VolunteerCheckInPanel() {
           {/* STREAM PROGRESS BAR */}
           <div className="w-full h-2 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
             <div 
-              className={`h-full rounded-full transition-all duration-500 ${scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'}`} 
-              style={{ width: `${progressPercent}%` }} 
+              className={`h-full rounded-full transition-all duration-500 ${
+                scanMode === 'CHECK_IN' ? 'bg-purple-500' : 
+                scanMode === 'FOOD_CLAIM' ? 'bg-amber-500' : 'bg-emerald-500'
+              }`} 
+              style={{ width: scanMode === 'REGISTRATION' ? '100%' : `${progressPercent}%` }} 
             />
           </div>
         </div>
       </div>
 
-      {/* TARGETED SCAN TOUCH ZONE (ENLARGED TOUCH TARGET WITH PULSE EFFECT) */}
-      <div className="flex-1 flex flex-col justify-center items-center p-6 my-auto">
-        <div className="relative flex items-center justify-center">
-          
-          {/* OUTER RADAR PULSE GLOW */}
-          <div className={`absolute -inset-4 rounded-full opacity-30 animate-ping ${
-            scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'
-          }`} />
+      {/* TARGETED CENTRAL ZONE: SHOWS SCAN BUTTON OR SPOT-REGISTRATION BOXED FORM */}
+      <div className="flex-1 flex flex-col justify-center items-center p-6 my-auto w-full max-w-xl mx-auto">
+        {scanMode === 'REGISTRATION' ? (
+          <div className={`w-full rounded-[2.5rem] p-6 sm:p-8 border shadow-2xl animate-in fade-in zoom-in-95 duration-200 ${theme.card}`}>
+            <div className="flex items-center justify-between pb-4 mb-6 border-b border-inherit">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/30">
+                  <Sparkles size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black uppercase tracking-wider">Spot-Registration</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Issue New Pass on-spot on event day and during event.</p>
+                </div>
+              </div>
+            </div>
 
-          {/* MAIN ENLARGED BUTTON */}
-          <button 
-            onClick={() => setIsScanning(true)}
-            className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 ${
-              scanMode === 'CHECK_IN' 
-                ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-600/40 ring-8 ring-purple-500/20' 
-                : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/40 ring-8 ring-amber-500/20'
-            }`}
-          >
-            <QrCode size={56} className="group-hover:scale-110 transition-transform text-white drop-shadow-md" />
-            <span className="text-xs font-black uppercase tracking-[0.2em] text-white/90 drop-shadow">
-              Scan QR Code
-            </span>
-          </button>
-        </div>
+            {activeEvent ? (
+              <UniversalRegistrationForm 
+                event={{ 
+                  ...activeEvent, 
+                  id: String(activeEvent.id),
+                  type: (activeEvent.type as any) || 'event'
+                }} 
+              />
+            ) : (
+              <div className="p-6 text-center">
+                <p className="text-xs font-bold text-slate-400">Loading event details for registration...</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="relative flex items-center justify-center">
+            {/* OUTER RADAR PULSE GLOW */}
+            <div className={`absolute -inset-4 rounded-full opacity-30 animate-ping ${
+              scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'
+            }`} />
+
+            {/* MAIN ENLARGED SCAN BUTTON */}
+            <button 
+              onClick={() => setIsScanning(true)}
+              className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 ${
+                scanMode === 'CHECK_IN' 
+                  ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-600/40 ring-8 ring-purple-500/20' 
+                  : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/40 ring-8 ring-amber-500/20'
+              }`}
+            >
+              <QrCode size={56} className="group-hover:scale-110 transition-transform text-white drop-shadow-md" />
+              <span className="text-xs font-black uppercase tracking-[0.2em] text-white/90 drop-shadow">
+                Scan QR Code
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* FOOTER BAR */}
@@ -484,7 +539,7 @@ export default function VolunteerCheckInPanel() {
       </footer>
 
       {/* DETACHED CAMERA SCANNER ENGINE PORTAL */}
-      {isScanning && resolvedEventId && (
+      {isScanning && resolvedEventId && scanMode !== 'REGISTRATION' && (
         <EventScanner 
           currentEventId={resolvedEventId}
           variant={scanMode === 'CHECK_IN' ? 'purple' : 'amber'}
