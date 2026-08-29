@@ -137,7 +137,7 @@ export default function TicketQR({
             fallbackDetails.coverBlob;
 
           setEventDetails({
-            eventName: localEvent.name || localEvent.eventName || fallbackDetails.eventName,
+            eventName: localEvent.name || localEvent.eventName,
             date: localEvent.date || fallbackDetails.date,
             venue: localEvent.venue || localEvent.location || fallbackDetails.venue,
             coverImageUrl: typeof extractedCover === 'string' ? extractedCover : fallbackDetails.coverImageUrl,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { CloudSync, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { db } from '../lib/db';
@@ -55,8 +55,40 @@ export default function SyncStatusBar() {
     totalCount: 0 
   };
 
-  const handleGlobalSync = async () => {
-    // Enforce mutual exclusion lock structures immediately
+  // PULL OPERATION: Fetch latest updates from online database
+  const executePullSync = useCallback(async () => {
+    if (!navigator.onLine || isSyncing || isSyncMutexLocked) return;
+
+    try {
+      const userIdentifier = telemetryData.managerEmail;
+      if (!userIdentifier || userIdentifier === 'unknown_offline_worker') return;
+
+      const lastSyncTime = localStorage.getItem('last_pull_timestamp') || '0';
+      
+      const res = await fetch(
+        `/api/sync/pull?volunteerIdentifier=${encodeURIComponent(userIdentifier)}&since=${lastSyncTime}`
+      );
+      const result = await res.json();
+
+      if (result.success && result.data) {
+        await db.transaction('rw', [db.events, db.guests, db.eventRegistrations, db.managerEvents, db.users], async () => {
+          if (result.data.events) await db.events.bulkPut(result.data.events);
+          if (result.data.guests) await db.guests.bulkPut(result.data.guests);
+          if (result.data.eventRegistrations) await db.eventRegistrations.bulkPut(result.data.eventRegistrations);
+          if (result.data.managerEvents) await db.managerEvents.bulkPut(result.data.managerEvents);
+          if (result.data.users) await db.users.bulkPut(result.data.users);
+        });
+
+        localStorage.setItem('last_pull_timestamp', String(result.timestamp || Date.now()));
+        console.log("⚡ Pull sync: Local database updated successfully.");
+      }
+    } catch (err) {
+      console.warn("⚠️ Pull sync failed:", err);
+    }
+  }, [telemetryData.managerEmail, isSyncing]);
+
+  // PUSH OPERATION: Send pending local mutations to online database
+  const handleGlobalSync = useCallback(async () => {
     if (isSyncing || isSyncMutexLocked || telemetryData.totalCount === 0) return;
     
     setIsSyncing(true);
@@ -75,11 +107,8 @@ export default function SyncStatusBar() {
         for (const ev of pendingEventsOnly) {
           const eventPayload: any = {
             ...ev,
-            // Preserve Multi-Competition payload IF defined, avoiding forcing empty defaults
             ...(ev.isMultiCompetition !== undefined ? { isMultiCompetition: Boolean(ev.isMultiCompetition) } : {}),
             ...(Array.isArray(ev.competitions) ? { competitions: ev.competitions } : {}),
-
-            // Organizer Metadata: Only send IF value exists locally, avoiding forcing null
             ...(ev.organizerId ? { organizerId: ev.organizerId } : (telemetryData.userId ? { organizerId: telemetryData.userId } : {})),
             ...(ev.organizerName ? { organizerName: ev.organizerName } : {}),
             ...(ev.organizerEmail ? { organizerEmail: ev.organizerEmail } : (telemetryData.managerEmail ? { organizerEmail: telemetryData.managerEmail } : {})),
@@ -109,31 +138,23 @@ export default function SyncStatusBar() {
         }
       }
 
-      // Explicitly map all check-in and food claim fields without wiping existing text fields
       const sanitizedGuests = telemetryData.guests
         .filter(gst => gst.syncStatus === 'pending')
         .map(gst => ({
           ...gst,
-          // Preserve text fields conditionally
           name: gst.name || undefined,
           email: gst.email || undefined,
           phone: gst.phone || undefined,
-
-          // Check-In fields
           checkInTime: gst.checkInTime || undefined,
           isCheckedIn: Boolean(gst.isCheckedIn || gst.checkInTime),
           isCheckIn: (gst.checkInTime || gst.isCheckedIn) ? 1 : 0,
-
-          // Food Access & Voucher Claim fields
           hasFoodAccess: Boolean(gst.hasFoodAccess || (gst as any).isFoodAccess || (gst as any).foodIncluded),
           hasFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
           isFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
           foodClaimedTime: (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || undefined,
-
           clientTimestamp: gst.checkInTime || (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || Date.now()
         }));
 
-      // Sanitize and map pending eventRegistrations without forcing null on sub-competitions
       const sanitizedRegistrations = telemetryData.registrations
         .filter(reg => reg.syncStatus === 'pending')
         .map(reg => ({
@@ -214,22 +235,54 @@ export default function SyncStatusBar() {
       setIsSyncing(false);
       isSyncMutexLocked = false; 
     }
+  }, [telemetryData, isSyncing]);
+
+  // 🟢 COMBINED MANUAL ACTION: Push pending items (if any) then immediately pull latest updates
+  const handleManualSyncClick = async () => {
+    if (isSyncing || isSyncMutexLocked) return;
+
+    if (telemetryData.totalCount > 0) {
+      await handleGlobalSync();
+    } else {
+      // If no items are pending to push, manually trigger a pull right away
+      setIsSyncing(true);
+      isSyncMutexLocked = true;
+      setSyncError(null);
+      try {
+        await executePullSync();
+      } catch (err: any) {
+        setSyncError(err?.message || "Pull sync failed.");
+      } finally {
+        setIsSyncing(false);
+        isSyncMutexLocked = false;
+      }
+    }
   };
 
-  // AUTOMATIC BACKGROUND SYNCHRONIZATION ENGINE
+  // AUTOMATIC SYNCHRONIZATION ENGINE (Push on pending/online & Pull every 30 minutes)
   useEffect(() => {
-    const triggerAutoSync = async () => {
+    const triggerAutoPush = async () => {
       if (navigator.onLine && telemetryData.totalCount > 0 && !isSyncing) {
         await handleGlobalSync();
       }
     };
-    window.addEventListener('online', triggerAutoSync);
-    triggerAutoSync();
+
+    window.addEventListener('online', triggerAutoPush);
+    triggerAutoPush();
+
+    // Set up 30-minute periodic pull interval
+    const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+    const pullIntervalId = setInterval(() => {
+      if (navigator.onLine) {
+        executePullSync();
+      }
+    }, THIRTY_MINUTES_MS);
 
     return () => {
-      window.removeEventListener('online', triggerAutoSync);
+      window.removeEventListener('online', triggerAutoPush);
+      clearInterval(pullIntervalId);
     };
-  }, [telemetryData.totalCount, isSyncing]);
+  }, [telemetryData.totalCount, isSyncing, handleGlobalSync, executePullSync]);
 
   const getColorScheme = () => {
     if (isSyncing) return 'bg-blue-500/10 border-blue-500/30 text-blue-400 cursor-not-allowed';
@@ -243,7 +296,7 @@ export default function SyncStatusBar() {
   return (
     <button
       type="button"
-      onClick={handleGlobalSync}
+      onClick={handleManualSyncClick}
       disabled={isSyncing}
       className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all w-full h-full ${getColorScheme()}`}
       title={syncError || undefined}
@@ -269,7 +322,7 @@ export default function SyncStatusBar() {
           <span>
             {lastSyncCounts && lastSyncCounts.total > 0 
               ? `Synced +${lastSyncCounts.total} Rows` 
-              : 'Data Synced'}
+              : 'Sync Data'}
           </span>
         </>
       )}
