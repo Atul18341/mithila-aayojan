@@ -26,23 +26,14 @@ export async function GET(request: Request) {
     client = await pool.connect();
     if (!client) throw new Error('Failed to acquire database connection.');
 
-    // 1. Fetch events assigned to, created by, or matching the user workspace
+    // 1. Fetch all events assigned to or created by this manager/volunteer[cite: 10]
     const eventsQuery = `
       SELECT DISTINCT e.*, me.assigned_desk FROM events e
-      LEFT JOIN manager_events me ON e.id = me.event_id
-      WHERE LOWER(me.manager_identifier) = LOWER($1)
-         OR LOWER(e.organizer_email) = LOWER($1)
-         OR e.organizer_id::text = $1;
+      JOIN manager_events me ON e.id = me.event_id
+      WHERE LOWER(me.manager_identifier) = LOWER($1);
     `;
-    let eventsResult = await client.query(eventsQuery, [userIdentifier]);
-    let rawEvents = eventsResult.rows;
-
-    // Fallback: If no direct event mappings are found, pull all active/published events for complete workspace initialization
-    if (rawEvents.length === 0) {
-      const allEventsResult = await client.query(`SELECT * FROM events;`);
-      rawEvents = allEventsResult.rows;
-    }
-
+    const eventsResult = await client.query(eventsQuery, [userIdentifier]);
+    const rawEvents = eventsResult.rows;
     const eventIds = rawEvents.map(e => Number(e.id)).filter(id => !isNaN(id) && id > 0);
 
     let rawGuests: any[] = [];
@@ -50,12 +41,13 @@ export async function GET(request: Request) {
     let rawLinks: any[] = [];
     let rawUsers: any[] = [];
 
-    // 2. Fetch complete active guest and registration rosters (with fallback to all records if eventIds is empty)
     if (eventIds.length > 0) {
-      const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1) OR event_id IS NULL;`;
+      // 2. Fetch guests[cite: 10]
+      const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1);`;
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
+      // 3. Fetch registrations with full schema support[cite: 10]
       const registrationsQuery = `
         SELECT 
           id,
@@ -78,53 +70,49 @@ export async function GET(request: Request) {
           is_age_verified,
           verified_age
         FROM event_registrations 
-        WHERE event_id = ANY($1) OR event_id IS NULL;
+        WHERE event_id = ANY($1);
       `;
       
       const registrationsResult = await client.query(registrationsQuery, [eventIds]).catch(async () => {
         if (!client) return { rows: [] };
-        return await client.query(`SELECT * FROM event_registrations;`);
+        return await client.query(`SELECT * FROM event_registrations WHERE event_id = ANY($1);`, [eventIds]).catch(() => ({ rows: [] }));
       });
       rawRegistrations = registrationsResult.rows;
-    } else {
-      const guestsResult = await client.query(`SELECT * FROM guests;`);
-      rawGuests = guestsResult.rows;
 
-      const registrationsResult = await client.query(`SELECT * FROM event_registrations;`).catch(() => ({ rows: [] }));
-      rawRegistrations = registrationsResult.rows;
+      // 4. Fetch manager_events link rows[cite: 10]
+      const linksQuery = `
+        SELECT DISTINCT me.* FROM manager_events me
+        WHERE me.event_id = ANY($1) OR LOWER(me.manager_identifier) = LOWER($2);
+      `;
+      const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
+      rawLinks = linksResult.rows;
+
+      // 5. Robust volunteer & user query: Pull all users linked via manager_events OR sharing the event workspace[cite: 10]
+      const usersQuery = `
+        SELECT DISTINCT 
+          u.id,
+          u.name,
+          u.email,
+          u.phone,
+          u.role,
+          u.passkey,
+          u.password_hash,
+          me.assigned_desk,
+          me.event_id AS assigned_event_id
+        FROM users u
+        INNER JOIN manager_events me ON 
+          LOWER(me.manager_identifier) = LOWER(u.email) OR 
+          LOWER(me.manager_identifier) = LOWER(u.identifier)
+        WHERE me.event_id = ANY($1) 
+          OR LOWER(u.email) = LOWER($2) 
+          OR LOWER(u.identifier) = LOWER($2);
+      `;
+      
+      const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]).catch(async () => {
+        return await client!.query(`SELECT * FROM users;`);
+      });
+      rawUsers = usersResult.rows;
     }
-
-    // 3. Fetch manager_events link rows
-    const linksQuery = `
-      SELECT DISTINCT me.* FROM manager_events me
-      ${eventIds.length > 0 ? 'WHERE me.event_id = ANY($1) OR LOWER(me.manager_identifier) = LOWER($2)' : 'WHERE LOWER(me.manager_identifier) = LOWER($2)'};
-    `;
-    const linksResult = await client.query(linksQuery, eventIds.length > 0 ? [eventIds, userIdentifier] : [userIdentifier]).catch(() => ({ rows: [] }));
-    rawLinks = linksResult.rows;
-
-    // 4. Robust user & volunteer query: Pull workspace members
-    const usersQuery = `
-      SELECT DISTINCT 
-        u.id,
-        u.name,
-        u.email,
-        u.phone,
-        u.role,
-        u.passkey,
-        u.password_hash,
-        me.assigned_desk,
-        me.event_id AS assigned_event_id
-      FROM users u
-      LEFT JOIN manager_events me ON 
-        LOWER(me.manager_identifier) = LOWER(u.email) OR 
-        LOWER(me.manager_identifier) = LOWER(u.identifier)
-      ${eventIds.length > 0 ? 'WHERE me.event_id = ANY($1) OR LOWER(u.email) = LOWER($2) OR LOWER(u.identifier) = LOWER($2)' : 'WHERE LOWER(u.email) = LOWER($2) OR LOWER(u.identifier) = LOWER($2)'};
-    `;
-    
-    const usersResult = await client.query(usersQuery, eventIds.length > 0 ? [eventIds, userIdentifier] : [userIdentifier]).catch(async () => {
-      return await client!.query(`SELECT * FROM users;`);
-    });
-    rawUsers = usersResult.rows;
 
     // Format events with full multi-competition and configuration mapping
     const formattedEvents = rawEvents.map(e => {
@@ -165,7 +153,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format guests with full metadata mapping
+    // Format guests with full metadata mapping[cite: 10]
     const formattedGuests = rawGuests.map(g => ({
       id: Number(g.id),
       guestId: g.guest_id || `GUEST-${g.id}`,
@@ -189,7 +177,7 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // Format event registrations with custom answers and age verifications
+    // Format event registrations with custom answers and age verifications[cite: 10]
     const formattedRegistrations = rawRegistrations.map(r => {
       let parsedCustomAnswers = {};
       if (r.custom_answers) {
@@ -224,7 +212,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format manager_events junction links
+    // Format manager_events junction links[cite: 10]
     const formattedLinks = rawLinks.map(l => ({
       id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
@@ -234,7 +222,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Format users & volunteers
+    // Format users & volunteers[cite: 10]
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
       name: u.name || (u.email ? u.email.split('@')[0] : 'User'),
