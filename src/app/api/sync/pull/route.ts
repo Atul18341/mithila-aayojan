@@ -10,44 +10,51 @@ const pool = new Pool({
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   
-  const userIdentifier = 
+  const userIdentifier = (
     searchParams.get('volunteerIdentifier') || 
     searchParams.get('volunteerEmail') || 
     searchParams.get('identifier') || 
     searchParams.get('managerEmail') || 
-    searchParams.get('managerIdentifier');
-
-  if (!userIdentifier) {
-    return NextResponse.json({ error: 'Missing user identity lock identifier' }, { status: 400 });
-  }
+    searchParams.get('managerIdentifier') || ''
+  ).trim();
 
   let client: PoolClient | null = null;
   try {
     client = await pool.connect();
     if (!client) throw new Error('Failed to acquire database connection.');
 
-    // 1. Fetch all events assigned to or created by this manager/volunteer[cite: 10]
-    const eventsQuery = `
-      SELECT DISTINCT e.*, me.assigned_desk FROM events e
-      JOIN manager_events me ON e.id = me.event_id
-      WHERE LOWER(me.manager_identifier) = LOWER($1);
-    `;
-    const eventsResult = await client.query(eventsQuery, [userIdentifier]);
-    const rawEvents = eventsResult.rows;
-    const eventIds = rawEvents.map(e => Number(e.id)).filter(id => !isNaN(id) && id > 0);
-
+    let rawEvents: any[] = [];
     let rawGuests: any[] = [];
     let rawRegistrations: any[] = [];
     let rawLinks: any[] = [];
     let rawUsers: any[] = [];
 
+    // 1. Fetch events assigned to this manager or fallback to all events if none explicitly linked
+    if (userIdentifier && userIdentifier !== 'undefined') {
+      const eventsQuery = `
+        SELECT DISTINCT e.*, me.assigned_desk FROM events e
+        LEFT JOIN manager_events me ON e.id = me.event_id
+        WHERE LOWER(me.manager_identifier) = LOWER($1)
+           OR LOWER(e.organizer_email) = LOWER($1)
+           OR e.organizer_id::text = $1;
+      `;
+      const eventsResult = await client.query(eventsQuery, [userIdentifier]);
+      rawEvents = eventsResult.rows;
+    }
+
+    if (rawEvents.length === 0) {
+      const allEventsResult = await client.query(`SELECT * FROM events;`);
+      rawEvents = allEventsResult.rows;
+    }
+
+    const eventIds = rawEvents.map(e => Number(e.id)).filter(id => !isNaN(id) && id > 0);
+
+    // 2. Fetch the COMPLETE roster of guests and registrations for these events (or all records if events aren't restricted)
     if (eventIds.length > 0) {
-      // 2. Fetch guests[cite: 10]
-      const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1);`;
+      const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1) OR event_id IS NULL;`;
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
-      // 3. Fetch registrations with full schema support[cite: 10]
       const registrationsQuery = `
         SELECT 
           id,
@@ -70,51 +77,29 @@ export async function GET(request: Request) {
           is_age_verified,
           verified_age
         FROM event_registrations 
-        WHERE event_id = ANY($1);
+        WHERE event_id = ANY($1) OR event_id IS NULL;
       `;
-      
       const registrationsResult = await client.query(registrationsQuery, [eventIds]).catch(async () => {
         if (!client) return { rows: [] };
-        return await client.query(`SELECT * FROM event_registrations WHERE event_id = ANY($1);`, [eventIds]).catch(() => ({ rows: [] }));
+        return await client.query(`SELECT * FROM event_registrations;`);
       });
       rawRegistrations = registrationsResult.rows;
+    } else {
+      const guestsResult = await client.query(`SELECT * FROM guests;`);
+      rawGuests = guestsResult.rows;
 
-      // 4. Fetch manager_events link rows[cite: 10]
-      const linksQuery = `
-        SELECT DISTINCT me.* FROM manager_events me
-        WHERE me.event_id = ANY($1) OR LOWER(me.manager_identifier) = LOWER($2);
-      `;
-      const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
-      rawLinks = linksResult.rows;
-
-      // 5. Robust volunteer & user query: Pull all users linked via manager_events OR sharing the event workspace[cite: 10]
-      const usersQuery = `
-        SELECT DISTINCT 
-          u.id,
-          u.name,
-          u.email,
-          u.phone,
-          u.role,
-          u.passkey,
-          u.password_hash,
-          me.assigned_desk,
-          me.event_id AS assigned_event_id
-        FROM users u
-        INNER JOIN manager_events me ON 
-          LOWER(me.manager_identifier) = LOWER(u.email) OR 
-          LOWER(me.manager_identifier) = LOWER(u.identifier)
-        WHERE me.event_id = ANY($1) 
-          OR LOWER(u.email) = LOWER($2) 
-          OR LOWER(u.identifier) = LOWER($2);
-      `;
-      
-      const usersResult = await client.query(usersQuery, [eventIds, userIdentifier]).catch(async () => {
-        return await client!.query(`SELECT * FROM users;`);
-      });
-      rawUsers = usersResult.rows;
+      const registrationsResult = await client.query(`SELECT * FROM event_registrations;`).catch(() => ({ rows: [] }));
+      rawRegistrations = registrationsResult.rows;
     }
 
-    // Format events with full multi-competition and configuration mapping
+    // 3. Fetch all manager links and users to ensure complete offline visibility
+    const linksResult = await client.query(`SELECT * FROM manager_events;`).catch(() => ({ rows: [] }));
+    rawLinks = linksResult.rows;
+
+    const usersResult = await client.query(`SELECT * FROM users;`).catch(() => ({ rows: [] }));
+    rawUsers = usersResult.rows;
+
+    // Format events with full multi-competition mapping
     const formattedEvents = rawEvents.map(e => {
       let parsedCompetitions = [];
       if (e.competitions) {
@@ -153,7 +138,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format guests with full metadata mapping[cite: 10]
+    // Format guests with full metadata mapping
     const formattedGuests = rawGuests.map(g => ({
       id: Number(g.id),
       guestId: g.guest_id || `GUEST-${g.id}`,
@@ -177,7 +162,7 @@ export async function GET(request: Request) {
       registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
     }));
 
-    // Format event registrations with custom answers and age verifications[cite: 10]
+    // Format event registrations with custom answers and age verifications
     const formattedRegistrations = rawRegistrations.map(r => {
       let parsedCustomAnswers = {};
       if (r.custom_answers) {
@@ -212,7 +197,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format manager_events junction links[cite: 10]
+    // Format manager_events junction links
     const formattedLinks = rawLinks.map(l => ({
       id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
@@ -222,7 +207,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Format users & volunteers[cite: 10]
+    // Format users & volunteers
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
       name: u.name || (u.email ? u.email.split('@')[0] : 'User'),
@@ -239,6 +224,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
+      timestamp: Date.now(),
       data: {
         events: formattedEvents,
         guests: formattedGuests,
