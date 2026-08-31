@@ -8,7 +8,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: true },
 });
 
-// Helper to convert base64 image data to buffer for Cloudflare R2[cite: 8]
+// Helper to convert base64 image data to buffer for Cloudflare R2
 function base64ToBuffer(base64Data: string): { buffer: Buffer; contentType: string } | null {
   if (!base64Data) return null;
   const matches = base64Data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     };
 
     // ==========================================
-    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST[cite: 8]
+    // 1. SYNCHRONIZE USERS & ACCESS RIGHTS FIRST
     // ==========================================
     for (const usr of users) {
       const rawIdentifier = usr.email || usr.identifier;
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2[cite: 8]
+    // 2. SYNCHRONIZE EVENTS & UPLOAD MEDIA TO R2
     // ==========================================
     const realEventIdMap: Record<string | number, number> = {};
     const bucketName = 'mithila-aayojan';
@@ -153,7 +153,6 @@ export async function POST(request: Request) {
         }
       }
 
-      // Updated query with whatsapp_number and helpline_number columns
       const eventUpsertQuery = `
         INSERT INTO events (
           name, type, protocol, status, date, start_time, end_time, registration_end_date,
@@ -291,7 +290,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS[cite: 8]
+    // 3. SYNCHRONIZE MANAGER / VOLUNTEER LINKS
     // ==========================================
     for (const link of managerEvents) {
       let rawTargetEventId = link.eventId;
@@ -348,7 +347,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 4. SYNCHRONIZE GUESTS TABLE[cite: 8]
+    // 4. SYNCHRONIZE GUESTS TABLE (Separated Clean Queries without Cases/Conditions)
     // ==========================================
     for (const gst of guests) {
       let rawTargetEventId = gst.eventId; 
@@ -362,87 +361,82 @@ export async function POST(request: Request) {
 
       const guestType = gst.category || gst.type || 'general-public';
       const checkInStatus = Boolean(gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1);
-      const rawCheckInTime = gst.checkInTime ? toEpochMillis(gst.checkInTime) : null;
+      const rawCheckInTime = checkInStatus 
+        ? toEpochMillis(gst.checkInTime || Date.now()) 
+        : (gst.checkInTime ? toEpochMillis(gst.checkInTime) : null);
+        
       const hasFoodAccess = Boolean(gst.hasFoodAccess || gst.isFoodAccess || gst.foodIncluded);
-      
-      // Explicitly extract food claim flags and timestamps supporting all payload variants
       const hasFoodClaimed = Boolean(gst.hasFoodClaimed || gst.isFoodClaimed || gst.foodClaimed);
-      const rawFoodClaimedTime = (gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) 
-        ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) 
-        : null;
+      
+      const rawFoodClaimedTime = hasFoodClaimed
+        ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt || Date.now())
+        : (gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) : null);
       
       const amountPaid = toNumeric(gst.amountPaid || gst.amount_paid);
 
-      const guestUpsertQuery = `
-       INSERT INTO guests (
-  event_id, name, type, qr_token, email, phone, is_check_in, amount_paid, 
-  has_food_access, has_food_claimed, check_in_time, food_claimed_time, server_updated_at
-)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('utc', now()))
-ON CONFLICT (qr_token) 
-DO UPDATE SET 
-  name = COALESCE(EXCLUDED.name, guests.name), 
-  type = COALESCE(EXCLUDED.type, guests.type), 
-  email = COALESCE(EXCLUDED.email, guests.email), 
-  phone = COALESCE(EXCLUDED.phone, guests.phone), 
-  
-  -- 🟢 Safely combine check-in state (true stays true)
-  is_check_in = EXCLUDED.is_check_in OR guests.is_check_in, 
-  
-  amount_paid = COALESCE(EXCLUDED.amount_paid, guests.amount_paid), 
-  has_food_access = COALESCE(EXCLUDED.has_food_access, guests.has_food_access), 
-  
-  -- 🟢 Safely combine food claim state (true stays true)
-  has_food_claimed = EXCLUDED.has_food_claimed OR guests.has_food_claimed,
-  
-  -- 🟢 Earliest check-in time preservation
-  check_in_time = CASE 
-    WHEN guests.check_in_time IS NULL THEN EXCLUDED.check_in_time 
-    ELSE LEAST(guests.check_in_time, EXCLUDED.check_in_time) 
-  END,
-  
-  -- 🟢 Corrected: Take the new timestamp if existing is null, otherwise preserve the first recorded claim time
-  food_claimed_time = CASE 
-    WHEN guests.food_claimed_time IS NULL THEN EXCLUDED.food_claimed_time
-    ELSE LEAST(guests.food_claimed_time, EXCLUDED.food_claimed_time)
-  END,
-  
-  server_updated_at = timezone('utc', now())
-RETURNING id`; 
-      console.log("Data:",[
+      // Query 1: Clean Guest Insert / Base Data Query
+      const guestInsertQuery = `
+        INSERT INTO guests (
+          event_id, name, type, qr_token, email, phone, amount_paid, 
+          has_food_access, server_updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, timezone('utc', now()))
+        ON CONFLICT (qr_token) 
+        DO UPDATE SET 
+          name = EXCLUDED.name, 
+          type = EXCLUDED.type, 
+          email = EXCLUDED.email, 
+          phone = EXCLUDED.phone, 
+          amount_paid = EXCLUDED.amount_paid, 
+          has_food_access = EXCLUDED.has_food_access,
+          server_updated_at = timezone('utc', now())
+        RETURNING id;
+      `; 
+
+      const insertResult = await client.query(guestInsertQuery, [
         Number(targetEventId), 
         gst.name || 'Event Attendee', 
         guestType, 
         gst.qrToken, 
         gst.email || null, 
         gst.phone || null, 
-        checkInStatus, 
         amountPaid, 
-        hasFoodAccess, 
-        hasFoodClaimed,
-        rawCheckInTime,
-        rawFoodClaimedTime
-      ]) 
-      const result = await client.query(guestUpsertQuery, [
-        Number(targetEventId), 
-        gst.name || 'Event Attendee', 
-        guestType, 
-        gst.qrToken, 
-        gst.email || null, 
-        gst.phone || null, 
-        checkInStatus, 
-        amountPaid, 
-        hasFoodAccess, 
-        hasFoodClaimed,
-        rawCheckInTime,
-        rawFoodClaimedTime
+        hasFoodAccess
       ]); 
-      console.log("Result:",result)
-      const serverGuestId = result.rows[0].id;
+
+      const serverGuestId = insertResult.rows[0].id;
+
+      // Query 2: Clean Check-in Update Query
+      if (checkInStatus) {
+        const checkInUpdateQuery = `
+          UPDATE guests 
+          SET 
+            is_check_in = TRUE,
+            check_in_time = COALESCE(check_in_time, $1),
+            server_updated_at = timezone('utc', now())
+          WHERE id = $2;
+        `;
+        await client.query(checkInUpdateQuery, [rawCheckInTime || Date.now(), serverGuestId]);
+      }
+
+      // Query 3: Clean Food Claim Update Query
+      if (hasFoodClaimed) {
+        const foodClaimUpdateQuery = `
+          UPDATE guests 
+          SET 
+            has_food_claimed = TRUE,
+            food_claimed_time = COALESCE(food_claimed_time, $1),
+            server_updated_at = timezone('utc', now())
+          WHERE id = $2;
+        `;
+        await client.query(foodClaimUpdateQuery, [rawFoodClaimedTime || Date.now(), serverGuestId]);
+      }
+
       const actionType = hasFoodClaimed ? 'FOOD_CLAIM' : (checkInStatus ? 'CHECK_IN' : 'UPDATE');
       await logSyncAction('guests', actionType, serverGuestId, gst.clientTimestamp);
       syncedGuestsCount++;  
     }
+
     // ==========================================
     // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
     // ==========================================
