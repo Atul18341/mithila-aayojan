@@ -38,7 +38,7 @@ export default function Footer() {
             {/* 🌟 SOCIAL ICONS CONTAINER */}
             <div className="flex items-center gap-3">
               <a 
-                href="https://linkedin.com/company/lysstechnology" 
+                href="https://linkedin.com/company/lyss-technology" 
                 target="_blank" rel="noopener noreferrer"
                 className="group relative flex items-center justify-center w-11 h-11 rounded-xl bg-white/5 border border-white/10 hover:bg-[#0077b5] hover:border-[#0077b5]/50 transition-all duration-300"
               >
