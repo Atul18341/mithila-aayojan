@@ -1,8 +1,11 @@
+// src/components/Footer.tsx
 'use client';
 
 import React from 'react';
-import { Mail, MapPin, Phone, Globe, ExternalLink, ShieldCheck } from 'lucide-react';
-import { LinkedinIcon,WhatsappIcon } from '../lib/SocialIcons';
+import { Mail, MapPin, Phone, ExternalLink, ShieldCheck } from 'lucide-react';
+import { LinkedinIcon, WhatsappIcon, InstagramIcon } from '../lib/SocialIcons';
+import Image from 'next/image';
+import VisitorCounter from '../components/VisitorCount';
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
@@ -17,9 +20,14 @@ export default function Footer() {
           
           {/* COLUMN 1: BRAND IDENTITY */}
           <div className="space-y-6">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center font-black text-xl shadow-lg shadow-blue-600/20">
-                L
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden shadow-lg shadow-blue-600/20 relative">
+                <Image 
+                  src="/icons/lyss.webp" 
+                  alt="Lyss Technology Logo" 
+                  fill
+                  className="object-cover"
+                />
               </div>
               <span className="text-xl font-black tracking-tighter uppercase">Lyss Technology</span>
             </div>
@@ -27,27 +35,31 @@ export default function Footer() {
               Pioneering "Offline-First" software architectures and digital transformation for India's emerging markets. 
               A DPIIT Recognized Startup building from the heart of Mithila.
             </p>
-            <div className="flex gap-4">
-            {/* Professional / Corporate */}
-            <a 
+            {/* 🌟 SOCIAL ICONS CONTAINER */}
+            <div className="flex items-center gap-3">
+              <a 
                 href="https://linkedin.com/company/lysstechnology" 
                 target="_blank" rel="noopener noreferrer"
                 className="group relative flex items-center justify-center w-11 h-11 rounded-xl bg-white/5 border border-white/10 hover:bg-[#0077b5] hover:border-[#0077b5]/50 transition-all duration-300"
               >
-              <LinkedinIcon/>
-            </a>
-            {/*<a href="https://x.com/lysstech" className="hover:text-sky-400 transition-colors">
-              <Twitter size={20} />
-            </a>
-
-            {/* Technical / Development 
-            <a href="https://github.com/lysstechnology" className="hover:text-white transition-colors">
-              <Github size={20} />
-            </a>
-
-            {/* Local / Direct Communication */}
-           <WhatsappIcon/>
-          </div>
+                <LinkedinIcon/>
+              </a>
+               <a 
+                href="https://instagram.com/lyss.technology" 
+                target="_blank" rel="noopener noreferrer"
+                className="group relative flex items-center justify-center w-11 h-11 rounded-xl bg-white/5 border border-white/10 hover:bg-[#e1306c] hover:border-[#e1306c]/50 transition-all duration-300"
+              >
+                <InstagramIcon/>
+              </a>
+               <a 
+                href="https://wa.me/919122461780?text=*Hello,%20Lyss%20Technology%20Team*,%0A%20I%20would%20like%20to%20connect%20regarding%20your%20services%20and%20products." 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="group relative flex items-center justify-center w-11 h-11 rounded-xl bg-white/5 border border-white/10 hover:bg-[#25D366] hover:border-[#25D366]/50 transition-all duration-300"
+              >
+                <WhatsappIcon />
+              </a>
+            </div>
           </div>
 
           {/* COLUMN 2: ECOSYSTEM PRODUCTS */}
@@ -55,22 +67,28 @@ export default function Footer() {
             <h4 className="text-xs font-black uppercase tracking-[0.2em] text-blue-500">The Ecosystem</h4>
             <ul className="space-y-4">
                <li>
-                <a href="https://atplc.in" className="group flex flex-col">
+                <div className="group flex flex-col cursor-pointer" onClick={() => window.open("https://atplc.in", "_blank")}>
                   <span className="text-sm font-bold group-hover:text-blue-400 transition-colors">ATPLC</span>
                   <span className="text-[10px] text-slate-500 uppercase tracking-widest">Our practical-oriented training platform</span>
-                </a>
+                </div>
               </li>
               <li>
-                <a href="https://stockman.lyss.in" className="group flex flex-col">
-                  <span className="text-sm font-bold group-hover:text-blue-400 transition-colors">Stockman</span>
-                  <span className="text-[10px] text-slate-500 uppercase tracking-widest">Inventory & GST Billing</span>
-                </a>
-              </li>
-              <li>
-                <a href="#" className="group flex flex-col">
+                <div className="group flex flex-col cursor-pointer">
                   <span className="text-sm font-bold group-hover:text-blue-400 transition-colors">Mithila Aayojan</span>
                   <span className="text-[10px] text-slate-500 uppercase tracking-widest">Event Management SaaS</span>
-                </a>
+                </div>
+              </li>
+              <li>
+                <div className="group flex flex-col cursor-pointer" onClick={() => window.open("https://certibanao.lyss.in", "_blank")}>
+                  <span className="text-sm font-bold group-hover:text-blue-400 transition-colors">CertiBanao</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest">Blockchain-secured Certificate Generation Platform</span>
+                </div>
+              </li>
+              <li>
+                <div className="group flex flex-col cursor-pointer" onClick={() => window.open("https://examvia.lyss.in", "_blank")}>
+                  <span className="text-sm font-bold group-hover:text-blue-400 transition-colors">Examvia</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest">One Platform, Any Exam.</span>
+                </div>
               </li>
             </ul>
           </div>
@@ -103,9 +121,9 @@ export default function Footer() {
                 <Mail size={18} className="group-hover:text-blue-500" />
                 <span className="text-sm font-medium tracking-tight">support@lyss.in</span>
               </a>
-              <a href="tel:+91XXXXXXXXXX" className="flex items-center gap-3 text-slate-400 hover:text-white transition-colors group">
+              <a href="tel:+919122461780" className="flex items-center gap-3 text-slate-400 hover:text-white transition-colors group">
                 <Phone size={18} className="group-hover:text-blue-500" />
-                <span className="text-sm font-medium tracking-tight">+91 91224 61780 </span>
+                <span className="text-sm font-medium tracking-tight">+91 91224 61780</span>
               </a>
               <div className="pt-4">
                 <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
@@ -132,6 +150,9 @@ export default function Footer() {
             </p>
           </div>
           
+          {/* 🌟 MODULAR VISITOR COUNTER COMPONENT */}
+          <VisitorCounter />
+
           <div className="flex gap-8">
             <a 
               href="https://www.lyss.in/privacy-page" 

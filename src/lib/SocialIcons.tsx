@@ -61,11 +61,7 @@ export const YoutubeIcon = ({ size = 24, strokeWidth = 2, className = "" }) => (
 );
 export const WhatsappIcon = () => {
  return(
-  <a 
-      href="https://wa.me/91XXXXXXXXXX" 
-      target="_blank" rel="noopener noreferrer"
-      className="group relative flex items-center justify-center w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-600 transition-all duration-300 shadow-lg shadow-emerald-500/5"
-    >
+
       <svg 
         viewBox="0 0 24 24" 
         className="w-6 h-6 transition-all duration-300"
@@ -82,7 +78,5 @@ export const WhatsappIcon = () => {
           d="M16.521 15.38c-.285-.143-1.688-.833-1.947-.928-.261-.094-.45-.142-.64.143-.189.285-.735.928-.901 1.117-.166.19-.333.214-.618.071a7.788 7.788 0 01-2.292-1.413c-.874-.778-1.464-1.74-1.635-2.025-.172-.285-.019-.439.124-.581.129-.127.285-.333.428-.5.143-.166.19-.285.285-.476.095-.19.048-.357-.024-.5-.071-.143-.64-1.543-.876-2.114-.231-.557-.463-.481-.64-.49l-.547-.008c-.19 0-.5.071-.762.357-.261.285-1 0.976-1 2.38 0 1.404 1.023 2.76 1.166 2.951.143.19 2.014 3.076 4.88 4.318.682.296 1.214.472 1.629.604.685.218 1.308.187 1.801.114.549-.082 1.688-.69 1.925-1.357.238-.666.238-1.238.167-1.357-.071-.12-.261-.189-.546-.332z" 
         />
       </svg>
-    </a>
-
  );
 }
