@@ -1,3 +1,4 @@
+// src/app/api/sync/push/route.ts
 import { NextResponse } from 'next/server';
 import { Pool, PoolClient } from 'pg';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -360,13 +361,32 @@ export async function POST(request: Request) {
       if (!targetEventId || !gst.qrToken) continue; 
 
       const guestType = gst.category || gst.type || 'general-public';
-      const checkInStatus = Boolean(gst.checkInTime || gst.isCheckedIn === true || gst.isCheckIn === 1);
+      
+      const checkInStatus = Boolean(
+        gst.checkInTime || 
+        gst.check_in_time || 
+        gst.isCheckedIn === true || 
+        gst.is_check_in === true || 
+        gst.isCheckIn === 1
+      );
+      
       const rawCheckInTime = checkInStatus 
-        ? toEpochMillis(gst.checkInTime || Date.now()) 
-        : (gst.checkInTime ? toEpochMillis(gst.checkInTime) : null);
+        ? toEpochMillis(gst.checkInTime || gst.check_in_time || Date.now()) 
+        : (gst.checkInTime || gst.check_in_time ? toEpochMillis(gst.checkInTime || gst.check_in_time) : null);
         
-      const hasFoodAccess = Boolean(gst.hasFoodAccess || gst.isFoodAccess || gst.foodIncluded);
-      const hasFoodClaimed = Boolean(gst.hasFoodClaimed || gst.isFoodClaimed || gst.foodClaimed);
+      const hasFoodAccess = Boolean(
+        gst.hasFoodAccess || 
+        gst.isFoodAccess || 
+        gst.foodIncluded || 
+        gst.has_food_access
+      );
+      
+      const hasFoodClaimed = Boolean(
+        gst.hasFoodClaimed || 
+        gst.isFoodClaimed || 
+        gst.foodClaimed || 
+        gst.has_food_claimed
+      );
       
       const rawFoodClaimedTime = hasFoodClaimed
         ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt || Date.now())
@@ -421,6 +441,7 @@ export async function POST(request: Request) {
 
       // Query 3: Clean Food Claim Update Query
       if (hasFoodClaimed) {
+        console.log("Inside Food claim")
         const foodClaimUpdateQuery = `
           UPDATE guests 
           SET 

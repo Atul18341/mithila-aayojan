@@ -1,3 +1,4 @@
+// src/components/SyncStatusBar.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -138,22 +139,64 @@ export default function SyncStatusBar() {
         }
       }
 
+      // Robust extraction and normalization of food claim & check-in parameters from IndexedDB records
       const sanitizedGuests = telemetryData.guests
         .filter(gst => gst.syncStatus === 'pending')
-        .map(gst => ({
-          ...gst,
-          name: gst.name || undefined,
-          email: gst.email || undefined,
-          phone: gst.phone || undefined,
-          checkInTime: gst.checkInTime || undefined,
-          isCheckedIn: Boolean(gst.isCheckedIn || gst.checkInTime),
-          isCheckIn: (gst.checkInTime || gst.isCheckedIn) ? 1 : 0,
-          hasFoodAccess: Boolean(gst.hasFoodAccess || (gst as any).isFoodAccess || (gst as any).foodIncluded),
-          hasFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
-          isFoodClaimed: Boolean(gst.hasFoodClaimed || (gst as any).isFoodClaimed || (gst as any).foodClaimed),
-          foodClaimedTime: (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || undefined,
-          clientTimestamp: gst.checkInTime || (gst as any).foodClaimedTime || (gst as any).foodClaimedAt || Date.now()
-        }));
+        .map(gst => {
+          const foodClaimed = Boolean(
+            gst.hasFoodClaimed || 
+            (gst as any).has_food_claimed || 
+            (gst as any).isFoodClaimed || 
+            (gst as any).foodClaimed
+          );
+
+          const foodClaimedTimeVal = 
+            (gst as any).foodClaimedTime || 
+            (gst as any).food_claimed_time || 
+            (gst as any).foodClaimedAt || 
+            undefined;
+
+          const checkInTimeVal = 
+            gst.checkInTime || 
+            (gst as any).check_in_time || 
+            undefined;
+
+          const isCheckedInVal = Boolean(
+            gst.isCheckedIn || 
+            (gst as any).is_check_in || 
+            checkInTimeVal
+          );
+
+          const foodAccessVal = Boolean(
+            gst.hasFoodAccess || 
+            (gst as any).has_food_access || 
+            (gst as any).isFoodAccess || 
+            (gst as any).foodIncluded
+          );
+
+          return {
+            ...gst,
+            name: gst.name || undefined,
+            email: gst.email || undefined,
+            phone: gst.phone || undefined,
+            
+            checkInTime: checkInTimeVal,
+            isCheckedIn: isCheckedInVal,
+            is_check_in: isCheckedInVal,
+            isCheckIn: isCheckedInVal ? 1 : 0,
+            
+            hasFoodAccess: foodAccessVal,
+            has_food_access: foodAccessVal,
+            
+            hasFoodClaimed: foodClaimed,
+            has_food_claimed: foodClaimed,
+            
+            foodClaimedTime: foodClaimedTimeVal,
+            food_claimed_time: foodClaimedTimeVal,
+
+            clientTimestamp: checkInTimeVal || foodClaimedTimeVal || Date.now()
+          };
+        });
 
       const sanitizedRegistrations = telemetryData.registrations
         .filter(reg => reg.syncStatus === 'pending')
@@ -244,7 +287,6 @@ export default function SyncStatusBar() {
     if (telemetryData.totalCount > 0) {
       await handleGlobalSync();
     } else {
-      // If no items are pending to push, manually trigger a pull right away
       setIsSyncing(true);
       isSyncMutexLocked = true;
       setSyncError(null);
@@ -270,7 +312,6 @@ export default function SyncStatusBar() {
     window.addEventListener('online', triggerAutoPush);
     triggerAutoPush();
 
-    // Set up 30-minute periodic pull interval
     const THIRTY_MINUTES_MS = 30 * 60 * 1000;
     const pullIntervalId = setInterval(() => {
       if (navigator.onLine) {

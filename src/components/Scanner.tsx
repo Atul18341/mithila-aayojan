@@ -151,7 +151,7 @@ export default function EntryDeskCameraScanner({
       if (scanMode === 'CHECK_IN') {
         const isAlreadyCheckedIn = 
           Boolean(guest.checkInTime) || 
-          guest.isCheckedIn === true ;
+          guest.isCheckedIn === true
 
         if (isAlreadyCheckedIn) {
           setScanResult({
@@ -164,7 +164,9 @@ export default function EntryDeskCameraScanner({
 
         mutationPayload = {
           checkInTime: now,
+          check_in_time: now,
           isCheckedIn: true,
+          is_check_in: true,
           isCheckIn: 1,
           syncStatus: 'pending'
         };
@@ -187,7 +189,7 @@ export default function EntryDeskCameraScanner({
 
         const isFoodAlreadyClaimed = 
           Boolean(guest.foodClaimedTime) || 
-          guest.hasFoodClaimed === true;
+          guest.hasFoodClaimed === true 
 
         if (isFoodAlreadyClaimed) {
           setScanResult({
@@ -198,13 +200,26 @@ export default function EntryDeskCameraScanner({
           return;
         }
 
+        const isAlreadyCheckedIn = 
+          Boolean(guest.checkInTime) || 
+          guest.isCheckedIn === true
+
         mutationPayload = {
           hasFoodClaimed: true,
+          has_food_claimed: true,
           foodClaimedTime: now,
-          syncStatus: 'pending'
+          food_claimed_time: now,
+          syncStatus: 'pending',
+          ...(!isAlreadyCheckedIn && {
+            checkInTime: now,
+            check_in_time: now,
+            isCheckedIn: true,
+            is_check_in: true,
+            isCheckIn: 1
+          })
         };
 
-        immediateMessage = `🍱 Meal Allocation Approved. Voucher successfully redeemed./भोजन थाली स्वीकृत। वाउचर सफलतापूर्वक भुना लिया गया।- ${guest.name}`;
+        immediateMessage = `🍱 Meal Allocation Approved. Voucher successfully redeemed${!isAlreadyCheckedIn ? ' & Check-in recorded' : ''}./भोजन थाली स्वीकृत। वाउचर सफलतापूर्वक भुना लिया गया${!isAlreadyCheckedIn ? ' और चेक-इन दर्ज किया गया' : ''} - ${guest.name}`;
       }
 
       // ⚡ INSTANT OPTIMISTIC UI UPDATE (Fires immediately with zero perceived latency)
@@ -220,7 +235,9 @@ export default function EntryDeskCameraScanner({
         ...guest, 
         ...mutationPayload, 
         hasFoodClaimed: mutationPayload.hasFoodClaimed ?? guest.hasFoodClaimed ?? false,
+        has_food_claimed: mutationPayload.has_food_claimed  ?? guest.hasFoodClaimed ?? false,
         foodClaimedTime: mutationPayload.foodClaimedTime ?? guest.foodClaimedTime ?? null,
+        food_claimed_time: mutationPayload.food_claimed_time ?? guest.foodClaimedTime ?? null,
       };
 
       (async () => {

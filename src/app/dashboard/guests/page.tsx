@@ -29,6 +29,7 @@ interface GuestRecord {
   eventName?: string | null;
   isCheckedIn?: boolean;
   checkInTime?: number | null;
+  syncStatus?: string;
 }
 
 export default function GuestManagementPage() {
@@ -207,10 +208,17 @@ export default function GuestManagementPage() {
       if (!target) return;
 
       const { id: _, guestId: __, ...fieldsToUpdate } = editForm;
-      const updatedRecord = { ...target, ...fieldsToUpdate };
+      const updatedRecord = { 
+        ...target, 
+        ...fieldsToUpdate, 
+        syncStatus: 'pending' 
+      };
 
       if (target.id && typeof target.id === 'number') {
-        await db.eventRegistrations.update(target.id, fieldsToUpdate as any);
+        await db.eventRegistrations.update(target.id, {
+          ...fieldsToUpdate,
+          syncStatus: 'pending'
+        } as any);
       } else {
         await db.eventRegistrations.put(updatedRecord as any);
       }
