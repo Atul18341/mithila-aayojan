@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (coverFile) {
       const coverBuffer = Buffer.from(await coverFile.arrayBuffer());
       // Re-architected key mapping directly into your event-banner folder path
-      const coverKey = `event-banner/event-${eventId}-cover-${Date.now()}.webp`;
+      const coverKey = `event-cover-image/event-${eventId}-cover-${Date.now()}.webp`;
       
       await r2Client.send(
         new PutObjectCommand({
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (posterFile) {
       const posterBuffer = Buffer.from(await posterFile.arrayBuffer());
       // Re-architected key mapping directly into your event-cover-image folder path
-      const posterKey = `event-cover-image/event-${eventId}-poster-${Date.now()}.webp`;
+      const posterKey = `event-banner/event-${eventId}-poster-${Date.now()}.webp`;
       
       await r2Client.send(
         new PutObjectCommand({
