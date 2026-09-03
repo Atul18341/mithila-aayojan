@@ -8,7 +8,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   LayoutDashboard, Users, QrCode, Loader2,
   Settings, UserCheck, User, Crown, ChevronRight, 
-  Search, Edit3, Save, X, Menu, Sun, Moon, MessageSquareShare
+  Search, Edit3, Save, X, Menu, Sun, Moon, MessageSquareShare, FileDown
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import SyncStatusBar from '@/components/SyncStatusBar';
@@ -42,6 +42,7 @@ export default function GuestManagementPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [guests, setGuests] = useState<GuestRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -193,6 +194,85 @@ export default function GuestManagementPage() {
 
     const encodedMessage = encodeURIComponent(message);
     window.open(`https://api.whatsapp.com/send?text=${encodedMessage}`, '_blank');
+  };
+
+  // 📄 PDF Export Handler using standard browser print capability for zero dependency weight
+  const handleDownloadPdf = () => {
+    setIsGeneratingPdf(true);
+    try {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert('Please allow popups to download the PDF report.');
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Guest List Report - Mithila Aayojan</title>
+            <style>
+              body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 20px; margin: 0; }
+              h1 { font-size: 20px; font-weight: 800; margin-bottom: 4px; text-transform: uppercase; color: #0f172a; }
+              p { font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 20px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 10px; }
+              th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+              th { background-color: #f1f5f9; font-weight: 700; text-transform: uppercase; color: #334155; }
+              tr:nth-child(even) { background-color: #f8fafc; }
+              .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: bold; background: #e2e8f0; color: #334155; }
+              .footer { margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; pt: 10px; }
+            </style>
+          </head>
+          <body>
+            <h1>Mithila Aayojan - Guest Directory Report</h1>
+            <p>Generated on: ${new Date().toLocaleString()} | Total Records: ${filteredGuests.length}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Attendee Name</th>
+                  <th>Mobile</th>
+                  <th>Token / Event</th>
+                  <th>Category / Competition</th>
+                  <th>Age Group</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredGuests.map((g, idx) => `
+                  <tr>
+                    <td>${idx + 1}</td>
+                    <td><strong>${g.name}</strong></td>
+                    <td>${g.phone || 'N/A'}</td>
+                    <td>${g.qrToken || g.qr_token || 'N/A'} (Ev: ${g.eventId})</td>
+                    <td>${g.category || 'General'} ${g.competitionTitle ? `<br><span style="color:#64748b">${g.competitionTitle}</span>` : ''}</td>
+                    <td>${g.ageGroupLabel || 'N/A'}</td>
+                    <td>${g.isCheckedIn || g.checkInTime ? 'Checked-In' : 'Registered'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            <div class="footer">
+              Powered by Lyss Technology Pvt Ltd | Mithila Aayojan Ecosystem
+            </div>
+            <script>
+              window.onload = function() {
+                window.print();
+                window.setTimeout(function() { window.close(); }, 500);
+              };
+            </script>
+          </body>
+        </html>
+      `;
+
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handleStartEdit = (guest: GuestRecord) => {
@@ -366,7 +446,7 @@ export default function GuestManagementPage() {
           </div>
         </header>
 
-        {/* TOTAL COUNT & WHATSAPP REGISTRATION METRICS BAR */}
+        {/* TOTAL COUNT, PDF DOWNLOAD & WHATSAPP METRICS BAR */}
         <div className="flex flex-col sm:flex-row items-center sm:items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
@@ -376,13 +456,24 @@ export default function GuestManagementPage() {
             </span>
           </div>
 
-          <button
-            onClick={handleSendRegistrationMetricsToWhatsApp}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20"
-          >
-            <MessageSquareShare size={15} />
-            Send Metrics to WhatsApp
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isGeneratingPdf || filteredGuests.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-blue-600/20 disabled:opacity-50"
+            >
+              {isGeneratingPdf ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
+              Download PDF Report
+            </button>
+
+            <button
+              onClick={handleSendRegistrationMetricsToWhatsApp}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20"
+            >
+              <MessageSquareShare size={15} />
+              Send Metrics to WhatsApp
+            </button>
+          </div>
         </div>
 
         {/* SEARCH & FILTERS PANEL */}
