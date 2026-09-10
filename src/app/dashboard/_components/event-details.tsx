@@ -9,7 +9,7 @@ import {
   Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
   Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
   Utensils, IndianRupee, Trophy, Trash2, UserCheck, FileText,
-  Edit2, RotateCcw, Users, MessageCircle, PhoneCall
+  Edit2, RotateCcw, Users, MessageCircle, PhoneCall, Camera, Share2
 } from 'lucide-react';
 import { type AttendeeCategory, db } from '../../../lib/db';
 
@@ -58,6 +58,8 @@ export interface EventData {
   helplineNumber?: string;
   isMultiCompetition?: boolean;
   competitions?: SubCompetition[];
+  collectPhoto?: boolean;
+  referralAllowed?: boolean;
   tagline?: string;
   description?: string;
   venueName?: string;
@@ -109,6 +111,7 @@ interface CategoryConfig {
 }
 
 const COMPREHENSIVE_CATEGORIES: CategoryConfig[] = [
+  { id: 'exam', label: 'Exam / Scholarship Test', group: 'Educational & Training', icon: Award, defaultProtocol: 'ticketed' },
   { id: 'conference', label: 'Conference / Summit', group: 'Corporate & Business', icon: Briefcase, defaultProtocol: 'ticketed' },
   { id: 'trade-show', label: 'Trade Show / Expo', group: 'Corporate & Business', icon: Layers, defaultProtocol: 'open-registration' },
   { id: 'workshop', label: 'Workshop / Seminar', group: 'Educational & Training', icon: BookOpen, defaultProtocol: 'open-registration' },
@@ -229,9 +232,11 @@ export default function EventDetailEditor({
     whatsappNumber: '',
     helplineNumber: '',
     isMultiCompetition: false,
+    collectPhoto: true,
+    referralAllowed: false,
     competitions: [] as SubCompetition[],
     hypeThreshold: 0,
-    type: 'conference', 
+    type: 'exam', 
     protocol: 'ticketed' as 'ticketed' | 'open-registration' | 'invite-only',
     visibility: { map: true, rsvp: true, schedule: true, gallery: false },
     foodConfig: {
@@ -291,13 +296,15 @@ export default function EventDetailEditor({
         registrationEndDate: event.registrationEndDate || '',
         whatsappNumber: event.whatsappNumber || event.whatsapp_number || '',
         helplineNumber: event.helplineNumber || event.helpline_number || '',
-        isMultiCompetition: event.isMultiCompetition ?? false,
+        isMultiCompetition: event.isMultiCompetition ?? (event.type === 'exam' ? true : false),
+        collectPhoto: event.collectPhoto ?? true,
+        referralAllowed: event.referralAllowed ?? false,
         competitions: (event.competitions || []).map(c => ({
           ...c,
           ageGroups: Array.isArray(c.ageGroups) ? c.ageGroups : []
         })),
         hypeThreshold: event.hypeThreshold || 0,
-        type: event.type || 'conference',
+        type: event.type || 'exam',
         protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
         visibility: event.visibility || { map: true, rsvp: true, schedule: true, gallery: false },
         foodConfig: {
@@ -350,7 +357,7 @@ export default function EventDetailEditor({
 
   const handleResetToCreation = () => {
     setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: false, competitions: [], hypeThreshold: 0, type: 'conference', protocol: 'ticketed',
+      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: true, collectPhoto: true, referralAllowed: false, competitions: [], hypeThreshold: 0, type: 'exam', protocol: 'ticketed',
       visibility: { map: true, rsvp: true, schedule: true, gallery: false },
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
@@ -474,7 +481,8 @@ export default function EventDetailEditor({
       return {
         ...prev,
         type: selectedType,
-        protocol: targetConfig ? targetConfig.defaultProtocol : prev.protocol
+        protocol: targetConfig ? targetConfig.defaultProtocol : prev.protocol,
+        isMultiCompetition: selectedType === 'exam' ? true : prev.isMultiCompetition
       };
     });
   };
@@ -542,6 +550,8 @@ export default function EventDetailEditor({
 
     const generatedSlug = details.title.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '');
 
+    const isMultiActive = details.isMultiCompetition || details.type === 'exam';
+
     const compiledData = {
       name: details.title,
       tagline: details.tagline,
@@ -556,8 +566,10 @@ export default function EventDetailEditor({
       whatsapp_number: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
       helplineNumber: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
       helpline_number: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
-      isMultiCompetition: details.isMultiCompetition,
-      competitions: details.isMultiCompetition ? details.competitions : [],
+      isMultiCompetition: isMultiActive,
+      collectPhoto: details.collectPhoto,
+      referralAllowed: details.referralAllowed,
+      competitions: isMultiActive ? details.competitions : [],
       organizerId: organizerInfo.id || event?.organizerId || null,
       organizerName: organizerInfo.name,
       organizerEmail: organizerInfo.email,
@@ -569,27 +581,20 @@ export default function EventDetailEditor({
       visibility: details.visibility,
       foodConfig: details.foodConfig,
       pricingConfig: details.pricingConfig,
-      coverBlob: coverBlob,    
-      posterBlob: posterBlob,  
+      coverBlob: coverBlob !== null ? coverBlob : (event?.coverBlob || null),    
+      posterBlob: posterBlob !== null ? posterBlob : (event?.posterBlob || null),  
       createdAt: event?.createdAt || Date.now(),
       syncStatus: 'pending' as const 
     };
 
     try {
-      if (isCreateMode || !event) {
+      if (isCreateMode || !event || !event.id) {
         const newId = await db.events.add(compiledData as any);
         setSaveStatus('success');
         setIsCreateMode(false);
         if (onCreationSuccess) await onCreationSuccess(newId as number);
       } else {
-        if (event.id) {
-          await db.events.update(event.id, compiledData);
-        } else if (event.slug) {
-          const existingEvent = await db.events.where('slug').equals(event.slug).first();
-          if (existingEvent?.id) {
-            await db.events.update(existingEvent.id, compiledData);
-          }
-        }
+        await db.events.update(event.id, compiledData);
         setSaveStatus('success');
         if (forcedStatus) setCurrentStatus(forcedStatus);
       }
@@ -618,7 +623,7 @@ export default function EventDetailEditor({
     return acc;
   }, {} as Record<string, typeof COMPREHENSIVE_CATEGORIES>);
 
-  const accentColor = details.type === 'celebration' ? 'emerald' : 'blue';
+  const accentColor = details.type === 'celebration' ? 'emerald' : details.type === 'exam' ? 'blue' : 'blue';
 
   const formatAgeRangeBadge = (min?: number, max?: number) => {
     if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
@@ -637,7 +642,7 @@ export default function EventDetailEditor({
             <span className="text-[10px] font-black uppercase tracking-[0.3em]">{isCreateMode ? 'Instantiation Engine' : 'Configure Experience'}</span>
           </div>
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-black italic tracking-tight">{isCreateMode ? (details.title || "Initialize New Event") : details.title}</h2>
+            <h2 className="text-xl font-black italic tracking-tight">{isCreateMode ? (details.title || "Initialize New Event / Exam") : details.title}</h2>
             {!isCreateMode && (
               <span className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border ${currentStatus === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>{currentStatus}</span>
             )}
@@ -647,7 +652,7 @@ export default function EventDetailEditor({
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
           <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30 cursor-pointer`}>
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Event Details')}
+            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event / Exam') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Details')}
           </button>
           <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20 cursor-pointer"><X size={18} /></button>
         </div>
@@ -681,7 +686,7 @@ export default function EventDetailEditor({
               <div className="flex items-center gap-3">
                 <UserCheck size={18} className="text-blue-500" />
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Event Organizer (Authenticated)</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Organizer (Authenticated)</span>
                   <p className="text-xs font-bold leading-tight">{organizerInfo.name} {organizerInfo.email ? `(${organizerInfo.email})` : ''}</p>
                 </div>
               </div>
@@ -691,15 +696,15 @@ export default function EventDetailEditor({
             <div>
               <div className={styles.sectionHeader}>Identity Details</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input type="text" name="title" required value={details.title} onChange={handleChange} placeholder="Event Title" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                <input type="text" name="tagline" value={details.tagline} onChange={handleChange} placeholder="Thematic Tagline" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                <input type="text" name="title" required value={details.title} onChange={handleChange} placeholder="Event / Exam Title (e.g. Pratibha Khoj 2026)" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                <input type="text" name="tagline" value={details.tagline} onChange={handleChange} placeholder="Thematic Tagline / Subtitle" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
               </div>
             </div>
 
             <div>
               <div className={styles.sectionHeader}>Venue & Timeline</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input name="venueName" type="text" placeholder="Venue Designation" value={details.venueName} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                <input name="venueName" type="text" placeholder="Exam Center / Venue Designation" value={details.venueName} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
                 <div className="relative">
                   <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
                   <input name="primaryDate" required type="date" value={details.primaryDate} onChange={handleChange} className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
@@ -722,7 +727,7 @@ export default function EventDetailEditor({
                 ))}
               </select>
             </div>
-            <textarea rows={4} name="description" value={details.description} onChange={handleChange} placeholder="Logistics Logs..." className={`w-full p-4 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`} />
+            <textarea rows={4} name="description" value={details.description} onChange={handleChange} placeholder="Exam description, guidelines, syllabus overview..." className={`w-full p-4 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`} />
           </div>
         )}
 
@@ -785,7 +790,7 @@ export default function EventDetailEditor({
           </div>
         )}
 
-        {/* MODULE 3: CONTROLS, LOGISTICS & MULTI-COMPETITION */}
+        {/* MODULE 3: CONTROLS, LOGISTICS & EXAM TRACKS */}
         {activeModule === 'protocols' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div>
@@ -807,6 +812,56 @@ export default function EventDetailEditor({
               </div>
             </div>
 
+            {/* 📸 REGISTRATION CONFIGURATION TOGGLES (PHOTO COLLECTION & REFERRALS) */}
+            <div>
+              <div className={styles.sectionHeader}>Registration Form Configuration</div>
+              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                
+                {/* Collect Participant Photo Toggle */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Camera size={18} className={details.collectPhoto ? `text-${accentColor}-500` : 'text-slate-400'} />
+                    <div>
+                      <span className="text-xs font-bold block">Collect Participant Photo</span>
+                      <span className="text-[10px] text-slate-500">Require candidates to upload or capture a passport-size photo during registration</span>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setDetails(prev => ({ ...prev, collectPhoto: !prev.collectPhoto }));
+                      if (saveStatus === 'success') setSaveStatus('idle');
+                    }} 
+                    className={`w-12 h-6 rounded-full transition-all relative ${details.collectPhoto ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.collectPhoto ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                {/* Referral Allowed Toggle */}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-200/50 dark:border-white/5">
+                  <div className="flex items-center gap-3">
+                    <Share2 size={18} className={details.referralAllowed ? `text-${accentColor}-500` : 'text-slate-400'} />
+                    <div>
+                      <span className="text-xs font-bold block">Allow Referrals / Counselor Tracking</span>
+                      <span className="text-[10px] text-slate-500">Enable referral code input or ambassador tracking fields on the registration form</span>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setDetails(prev => ({ ...prev, referralAllowed: !prev.referralAllowed }));
+                      if (saveStatus === 'success') setSaveStatus('idle');
+                    }} 
+                    className={`w-12 h-6 rounded-full transition-all relative ${details.referralAllowed ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.referralAllowed ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+
+              </div>
+            </div>
+
             {/* 🟢 WHATSAPP & OFFLINE REGISTRATION HELPLINE CONFIGURATION */}
             <div>
               <div className={styles.sectionHeader}>WhatsApp & Offline Registration Helpline</div>
@@ -818,7 +873,7 @@ export default function EventDetailEditor({
                   <div>
                     <span className="text-xs font-bold block">Assisted WhatsApp Submission Number</span>
                     <span className="text-[10px] text-slate-500">
-                      Attendees who download the offline PDF form will submit filled form photos directly to this WhatsApp number.
+                      Candidates who download offline exam registration forms will submit filled form photos directly to this WhatsApp number.
                     </span>
                   </div>
                 </div>
@@ -870,23 +925,23 @@ export default function EventDetailEditor({
                       />
                     </div>
                     <span className="text-[9.5px] text-slate-400 block ml-1">
-                      Secondary contact displayed on physical printouts & helpline inquiries.
+                      Secondary contact displayed on physical admit cards & exam inquiries.
                     </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* 🏆 MULTI-COMPETITION EVENT TOGGLE & NESTED AGE GROUPS BUILDER */}
+            {/* 🏆 MULTI-COMPETITION / EXAM TRACKS & NESTED AGE GROUPS BUILDER */}
             <div>
-              <div className={styles.sectionHeader}>Multi-Competition Event Control</div>
+              <div className={styles.sectionHeader}>{details.type === 'exam' ? 'Exam Papers & Subject Tracks Control' : 'Multi-Competition Event Control'}</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <Trophy size={18} className={details.isMultiCompetition ? `text-${accentColor}-500` : 'text-slate-400'} />
+                    <Trophy size={18} className={details.isMultiCompetition || details.type === 'exam' ? `text-${accentColor}-500` : 'text-slate-400'} />
                     <div>
-                      <span className="text-xs font-bold block">Multi-Competition Event</span>
-                      <span className="text-[10px] text-slate-500">Enable this if this event hosts multiple sub-competitions, categories, or age brackets</span>
+                      <span className="text-xs font-bold block">{details.type === 'exam' ? 'Enable Multi-Paper / Multi-Stream Exam' : 'Multi-Competition Event'}</span>
+                      <span className="text-[10px] text-slate-500">Enable this if this exam/event hosts multiple papers, streams, or standard brackets</span>
                     </div>
                   </div>
                   <button 
@@ -895,17 +950,17 @@ export default function EventDetailEditor({
                       setDetails(prev => ({ ...prev, isMultiCompetition: !prev.isMultiCompetition }));
                       if (saveStatus === 'success') setSaveStatus('idle');
                     }} 
-                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiCompetition ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiCompetition || details.type === 'exam' ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
                   >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiCompetition ? 'left-7' : 'left-1'}`} />
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiCompetition || details.type === 'exam' ? 'left-7' : 'left-1'}`} />
                   </button>
                 </div>
 
-                {details.isMultiCompetition && (
+                {(details.isMultiCompetition || details.type === 'exam') && (
                   <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
                     <div className="flex items-center justify-between">
                       <label className={styles.label}>
-                        {editingCompId ? 'Edit Sub-Competition Track' : `Manage Sub-Competitions (${details.competitions.length})`}
+                        {editingCompId ? 'Edit Exam Track / Paper' : `Manage Exam Papers / Tracks (${details.competitions.length})`}
                       </label>
                       {editingCompId && (
                         <button
@@ -919,7 +974,7 @@ export default function EventDetailEditor({
                       )}
                     </div>
 
-                    {/* Sub-Competition Form */}
+                    {/* Sub-Competition / Exam Track Form */}
                     <div 
                       ref={compFormRef}
                       className={`p-4 rounded-2xl border space-y-4 transition-all ${
@@ -932,33 +987,33 @@ export default function EventDetailEditor({
                       <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                         <input
                           type="text"
-                          placeholder="Competition Title (e.g. State Chess Championship)"
+                          placeholder={details.type === 'exam' ? "Exam Paper Title (e.g. Science & Mathematics)" : "Competition Title"}
                           value={newComp.title}
                           onChange={(e) => setNewComp(prev => ({ ...prev, title: e.target.value }))}
                           className={`sm:col-span-5 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
                         />
                         <input
                           type="text"
-                          placeholder="Base Code (e.g. CHESS-2026)"
+                          placeholder="Base Code (e.g. PK-SCI)"
                           value={newComp.code}
                           onChange={(e) => setNewComp(prev => ({ ...prev, code: e.target.value }))}
                           className={`sm:col-span-3 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
                         />
                         <input
                           type="text"
-                          placeholder="Discipline / Category"
+                          placeholder="Category / Stream"
                           value={newComp.category}
                           onChange={(e) => setNewComp(prev => ({ ...prev, category: e.target.value }))}
                           className={`sm:col-span-4 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
                         />
                       </div>
 
-                      {/* Nested Age Groups Builder */}
+                      {/* Nested Age Groups / Academic Standard Builder */}
                       <div className="p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 bg-white/60 dark:bg-white/[0.01] space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                             <Users size={12} className="text-blue-500" />
-                            <span>Configure Multiple Age Groups for this Track ({newComp.ageGroups.length})</span>
+                            <span>Configure Academic Standards / Age Brackets ({newComp.ageGroups.length})</span>
                           </label>
                         </div>
 
@@ -966,14 +1021,14 @@ export default function EventDetailEditor({
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                           <input
                             type="text"
-                            placeholder="Age Group Label (e.g. Under-14 / Junior)"
+                            placeholder="Standard Label (e.g. Class 10th / Junior)"
                             value={tempAgeGroup.label}
                             onChange={(e) => setTempAgeGroup(prev => ({ ...prev, label: e.target.value }))}
                             className={`sm:col-span-4 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
                           />
                           <input
                             type="text"
-                            placeholder="Code (e.g. U14)"
+                            placeholder="Code (e.g. C10)"
                             value={tempAgeGroup.code}
                             onChange={(e) => setTempAgeGroup(prev => ({ ...prev, code: e.target.value }))}
                             className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
@@ -1031,7 +1086,7 @@ export default function EventDetailEditor({
                             ))}
                           </div>
                         ) : (
-                          <p className="text-[10px] text-slate-400 italic">No age brackets configured (Track will default to Open for all ages).</p>
+                          <p className="text-[10px] text-slate-400 italic">No academic brackets configured (Track will default to Open for all standards).</p>
                         )}
                       </div>
 
@@ -1039,11 +1094,11 @@ export default function EventDetailEditor({
                       <div className="space-y-1">
                         <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
                           <FileText size={11} className="text-blue-500" />
-                          <span>Rules, Guidelines & Eligibility Criteria</span>
+                          <span>Exam Syllabus, Instructions & Rules</span>
                         </label>
                         <textarea
                           rows={2}
-                          placeholder="Provide specific guidelines, time limits, or submission details for this competition..."
+                          placeholder="Provide exam duration, passing criteria, negative marking notes..."
                           value={newComp.rules}
                           onChange={(e) => setNewComp(prev => ({ ...prev, rules: e.target.value }))}
                           className={`w-full p-2.5 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`}
@@ -1067,7 +1122,7 @@ export default function EventDetailEditor({
                           className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all shadow-sm cursor-pointer`}
                         >
                           {editingCompId ? <Save size={14} /> : <Plus size={14} />}
-                          <span>{editingCompId ? 'Update Track' : 'Add Competition Track'}</span>
+                          <span>{editingCompId ? 'Update Track' : 'Add Exam Track'}</span>
                         </button>
                       </div>
                     </div>
@@ -1119,7 +1174,7 @@ export default function EventDetailEditor({
 
                               {comp.ageGroups && comp.ageGroups.length > 0 && (
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 mr-1">Age Groups:</span>
+                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 mr-1">Standards:</span>
                                   {comp.ageGroups.map(grp => (
                                     <span 
                                       key={grp.id} 
@@ -1133,7 +1188,7 @@ export default function EventDetailEditor({
 
                               {comp.rules && (
                                 <div className="p-2.5 rounded-xl border bg-black/5 dark:bg-white/[0.02] border-slate-200/50 dark:border-white/5">
-                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 block mb-0.5">Rules & Regulations:</span>
+                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 block mb-0.5">Syllabus / Instructions:</span>
                                   <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{comp.rules}</p>
                                 </div>
                               )}
@@ -1143,7 +1198,7 @@ export default function EventDetailEditor({
                       </div>
                     ) : (
                       <div className="p-4 text-center border border-dashed rounded-2xl border-slate-200 dark:border-white/10">
-                        <p className="text-xs text-slate-400">No sub-competitions added yet. Use the fields above to configure one.</p>
+                        <p className="text-xs text-slate-400">No exam tracks added yet. Use the fields above to configure exam papers.</p>
                       </div>
                     )}
                   </div>
@@ -1153,7 +1208,7 @@ export default function EventDetailEditor({
 
             {/* REGISTRATION DEADLINE CUTOFF CONTROL */}
             <div>
-              <div className={styles.sectionHeader}>Registration Deadline & Access Rules</div>
+              <div className={styles.sectionHeader}>Exam Registration Deadline & Access Rules</div>
               <div className={`p-5 rounded-3xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="space-y-1.5">
                   <label className={styles.label}>Registration End Date (Cutoff)</label>
@@ -1168,7 +1223,7 @@ export default function EventDetailEditor({
                     />
                   </div>
                   <span className="text-[10px] text-slate-500 block ml-1">
-                    Public registration forms will automatically lock after this date. Leave blank for continuous open registration until event day.
+                    Candidate registration forms will automatically lock after this date. Leave blank for continuous open registration until exam day.
                   </span>
                 </div>
               </div>
@@ -1176,14 +1231,14 @@ export default function EventDetailEditor({
 
             {/* FOOD MODULE MATRIX CONFIGURATION */}
             <div>
-              <div className={styles.sectionHeader}>Food Module Configuration</div>
+              <div className={styles.sectionHeader}>Food / Refreshment Module (Optional)</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <Utensils size={18} className={details.foodConfig.enabled ? `text-${accentColor}-500` : 'text-slate-400'} />
                     <div>
-                      <span className="text-xs font-bold block">Food provided during event</span>
-                      <span className="text-[10px] text-slate-500">Enable food tracking codes on access tickets</span>
+                      <span className="text-xs font-bold block">Refreshments provided during exam</span>
+                      <span className="text-[10px] text-slate-500">Enable food tracking codes on admit passes</span>
                     </div>
                   </div>
                   <button type="button" onClick={() => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, enabled: !prev.foodConfig.enabled } }))} className={`w-12 h-6 rounded-full transition-all relative ${details.foodConfig.enabled ? `bg-${accentColor}-600` : 'bg-slate-700'}`}>
@@ -1205,14 +1260,14 @@ export default function EventDetailEditor({
                       </div>
                       
                       <div className="space-y-1.5">
-                        <label className={styles.label}>Is food/snacks available for all?</label>
+                        <label className={styles.label}>Is refreshment available for all?</label>
                         <select 
                           name="availableForAll" 
                           value={details.foodConfig.availableForAll} 
                           onChange={(e) => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, availableForAll: e.target.value as 'yes' | 'no' } }))} 
                           className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
                         >
-                          <option value="yes">Yes (All Attendees)</option>
+                          <option value="yes">Yes (All Candidates)</option>
                           <option value="no">No (Restricted Categories)</option>
                         </select>
                       </div>
@@ -1220,10 +1275,10 @@ export default function EventDetailEditor({
 
                     {details.foodConfig.availableForAll === 'no' && (
                       <div className="space-y-2 border border-white/5 dark:border-slate-800 p-4 rounded-2xl bg-black/5 animate-in slide-in-from-top-2 duration-200">
-                        <label className={styles.label}>Select Eligible Attendee Categories</label>
+                        <label className={styles.label}>Select Eligible Categories</label>
                         <div className="flex flex-wrap gap-2 mb-3">
                           {details.foodConfig.allowedCategories.length === 0 ? (
-                            <span className="text-[11px] text-slate-500 italic">No category selected. Food will be restricted completely.</span>
+                            <span className="text-[11px] text-slate-500 italic">No category selected.</span>
                           ) : (
                             details.foodConfig.allowedCategories.map(catId => {
                               const match = ATTENDEE_CATEGORIES.find(c => c.id === catId);
@@ -1268,16 +1323,16 @@ export default function EventDetailEditor({
               </div>
             </div>
 
-            {/* REGISTRATION FEE MANAGEMENT */}
+            {/* REGISTRATION & EXAM FEE MANAGEMENT */}
             <div>
-              <div className={styles.sectionHeader}>Registration Fee Management</div>
+              <div className={styles.sectionHeader}>Exam Registration Fee Management</div>
               <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <IndianRupee size={18} className={details.pricingConfig.isRequired ? 'text-emerald-500' : 'text-slate-400'} />
                     <div>
-                      <span className="text-xs font-bold block">Registration Fee collected for the event</span>
-                      <span className="text-[10px] text-slate-500">Require transaction validations for ticket instantiation</span>
+                      <span className="text-xs font-bold block">Exam Fee collected for registration</span>
+                      <span className="text-[10px] text-slate-500">Require Razorpay transaction validation for admit card generation</span>
                     </div>
                   </div>
                   <button type="button" onClick={() => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, isRequired: !prev.pricingConfig.isRequired } }))} className={`w-12 h-6 rounded-full transition-all relative ${details.pricingConfig.isRequired ? 'bg-emerald-600' : 'bg-slate-700'}`}>
@@ -1296,14 +1351,14 @@ export default function EventDetailEditor({
                           onChange={(e) => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, applicableForAll: e.target.value as 'yes' | 'no' } }))} 
                           className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
                         >
-                          <option value="yes">Yes (Flat Fee Structure)</option>
+                          <option value="yes">Yes (Flat Exam Fee)</option>
                           <option value="no">No (Category-Specific Fee Structure)</option>
                         </select>
                       </div>
 
                       {details.pricingConfig.applicableForAll === 'yes' && (
                         <div className="space-y-1.5">
-                          <label className={styles.label}>Base Registration Fee (₹)</label>
+                          <label className={styles.label}>Base Exam Fee (₹)</label>
                           <input type="number" min="0" placeholder="0.00" value={details.pricingConfig.baseFee || ''} onChange={(e) => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, baseFee: parseFloat(e.target.value) || 0 } }))} className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
                         </div>
                       )}
@@ -1384,7 +1439,7 @@ export default function EventDetailEditor({
       <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-t-white/5' : 'border-t-slate-100'} flex items-center justify-center gap-2 relative z-10 shrink-0`}>
         <Sparkles size={12} className="text-amber-500" />
         <p className="text-[9px] font-black text-slate-500 tracking-widest">
-          {isCreateMode ? 'Storage Target: ' : 'Event Page Link: '}
+          {isCreateMode ? 'Storage Target: ' : 'Exam Portal Link: '}
           <span className={`text-${accentColor}-400 italic`}>
              {isCreateMode ? 'IndexedDB.AayojanDB.events' : `/events/${event?.slug || details.title.toLowerCase().replace(/\s+/g, '-')}`}
           </span>
