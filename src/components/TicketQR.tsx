@@ -214,7 +214,7 @@ export default function TicketQR({
   return (
     <div className="flex flex-col items-center bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-2xl max-w-sm mx-auto overflow-hidden transition-all duration-300">
       
-      {/* 🖼️ EVENT BANNER HEADER (Supports coverImageUrl & coverBlob) */}
+      {/* 🖼️ EVENT BANNER HEADER (Supports coverImageUrl & coverBlob) *
       {bannerSrc ? (
         <div className="w-full h-32 bg-slate-100 overflow-hidden relative border-b border-slate-200">
           <img
@@ -224,7 +224,7 @@ export default function TicketQR({
             className="w-full h-full object-cover"
           />
         </div>
-      ) : null}
+      ) : null}*/}
 
       <div className="p-6 w-full flex flex-col items-center">
         {/* EVENT DETAILS */}
