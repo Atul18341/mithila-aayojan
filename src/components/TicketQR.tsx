@@ -219,6 +219,7 @@ export default function TicketQR({
         <div className="w-full h-32 bg-slate-100 overflow-hidden relative border-b border-slate-200">
           <img
             src={bannerSrc}
+            crossOrigin="anonymous"
             alt={eventDetails.eventName || "Event Cover"}
             className="w-full h-full object-cover"
           />
