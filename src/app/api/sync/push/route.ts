@@ -367,7 +367,9 @@ export async function POST(request: Request) {
         gst.check_in_time || 
         gst.isCheckedIn === true || 
         gst.is_check_in === true || 
-        gst.isCheckIn === 1
+        gst.isCheckIn === 1 ||
+        String(gst.isCheckedIn).toLowerCase() === 'true' ||
+        String(gst.is_check_in).toLowerCase() === 'true'
       );
       
       const rawCheckInTime = checkInStatus 
@@ -378,29 +380,38 @@ export async function POST(request: Request) {
         gst.hasFoodAccess || 
         gst.isFoodAccess || 
         gst.foodIncluded || 
-        gst.has_food_access
+        gst.has_food_access ||
+        String(gst.hasFoodAccess).toLowerCase() === 'true' ||
+        String(gst.has_food_access).toLowerCase() === 'true'
       );
       
+      // Robust food claim check: evaluates both booleans and timestamps
       const hasFoodClaimed = Boolean(
-        gst.hasFoodClaimed || 
-        gst.isFoodClaimed || 
-        gst.foodClaimed || 
-        gst.has_food_claimed
+        gst.foodClaimedTime ||
+        gst.food_claimed_time ||
+        gst.foodClaimedAt ||
+        gst.hasFoodClaimed === true || 
+        gst.isFoodClaimed === true || 
+        gst.foodClaimed === true || 
+        gst.has_food_claimed === true ||
+        String(gst.hasFoodClaimed).toLowerCase() === 'true' ||
+        String(gst.has_food_claimed).toLowerCase() === 'true' ||
+        String(gst.foodClaimed).toLowerCase() === 'true'
       );
       
       const rawFoodClaimedTime = hasFoodClaimed
         ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt || Date.now())
-        : (gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt ? toEpochMillis(gst.foodClaimedTime || gst.food_claimed_time || gst.foodClaimedAt) : null);
+        : null;
       
       const amountPaid = toNumeric(gst.amountPaid || gst.amount_paid);
 
-      // Query 1: Clean Guest Insert / Base Data Query
+      // Query 1: Clean Guest Insert / Base Data Query with Food Claim columns included
       const guestInsertQuery = `
         INSERT INTO guests (
           event_id, name, type, qr_token, email, phone, amount_paid, 
-          has_food_access, server_updated_at
+          has_food_access, has_food_claimed, food_claimed_time, server_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, timezone('utc', now()))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
         ON CONFLICT (qr_token) 
         DO UPDATE SET 
           name = EXCLUDED.name, 
@@ -409,6 +420,8 @@ export async function POST(request: Request) {
           phone = EXCLUDED.phone, 
           amount_paid = EXCLUDED.amount_paid, 
           has_food_access = EXCLUDED.has_food_access,
+          has_food_claimed = CASE WHEN EXCLUDED.has_food_claimed THEN TRUE ELSE guests.has_food_claimed END,
+          food_claimed_time = COALESCE(guests.food_claimed_time, EXCLUDED.food_claimed_time),
           server_updated_at = timezone('utc', now())
         RETURNING id;
       `; 
@@ -421,7 +434,9 @@ export async function POST(request: Request) {
         gst.email || null, 
         gst.phone || null, 
         amountPaid, 
-        hasFoodAccess
+        hasFoodAccess,
+        hasFoodClaimed,
+        rawFoodClaimedTime
       ]); 
 
       const serverGuestId = insertResult.rows[0].id;
@@ -441,7 +456,6 @@ export async function POST(request: Request) {
 
       // Query 3: Clean Food Claim Update Query
       if (hasFoodClaimed) {
-        console.log("Inside Food claim")
         const foodClaimUpdateQuery = `
           UPDATE guests 
           SET 
@@ -457,7 +471,6 @@ export async function POST(request: Request) {
       await logSyncAction('guests', actionType, serverGuestId, gst.clientTimestamp);
       syncedGuestsCount++;  
     }
-
     // ==========================================
     // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
     // ==========================================

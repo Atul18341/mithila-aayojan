@@ -3,6 +3,7 @@ import { Metadata, Viewport } from 'next';
 import "./globals.css";
 import React from 'react';
 import ClientLayoutShell from './layout-client-bridge'; // 🚀 Direct import!
+import PWAInstallBanner from '@/components/PWAInstallBanner';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,6 +45,7 @@ export default function RootLayout({
     >
       <ClientLayoutShell>
           {children}
+          <PWAInstallBanner />
         </ClientLayoutShell>
     </html>
   );

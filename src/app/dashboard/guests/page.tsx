@@ -8,7 +8,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   LayoutDashboard, Users, QrCode, Loader2,
   Settings, UserCheck, User, Crown, ChevronRight, 
-  Search, Edit3, Save, X, Menu, Sun, Moon, MessageSquareShare, FileDown
+  Search, Edit3, Save, X, Menu, Sun, Moon, MessageSquareShare, FileDown, ChevronDown
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import SyncStatusBar from '@/components/SyncStatusBar';
@@ -43,6 +43,7 @@ export default function GuestManagementPage() {
   const [guests, setGuests] = useState<GuestRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [showReportDropdown, setShowReportDropdown] = useState<boolean>(false);
   
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -108,6 +109,23 @@ export default function GuestManagementPage() {
 
     fetchGuests();
   }, []);
+
+  // Query selected event details to check if multi-competition is active
+  const selectedEvent = useLiveQuery(async () => {
+    if (!selectedEventId) return null;
+    const numId = Number(selectedEventId);
+    if (!isNaN(numId)) {
+      return await db.events.get(numId);
+    }
+    return await db.events.where('slug').equals(selectedEventId).first();
+  }, [selectedEventId]);
+
+  const isMultiCompEvent = Boolean(
+    selectedEvent?.isMultiCompetition || 
+    selectedEvent?.type === 'exam' || 
+    (selectedEvent?.competitions && selectedEvent.competitions.length > 0) ||
+    (selectedEvent?.competitions && Array.isArray(selectedEvent.competitions) && selectedEvent.competitions.length > 0)
+  );
 
   // Extract unique filter options dynamically from records
   const filterOptions = useMemo(() => {
@@ -196,8 +214,9 @@ export default function GuestManagementPage() {
     window.open(`https://api.whatsapp.com/send?text=${encodedMessage}`, '_blank');
   };
 
-  // 📄 PDF Export Handler using standard browser print capability for zero dependency weight
-  const handleDownloadPdf = () => {
+  // 📄 PDF Export Handler supporting complete, competition-wise, and age category-wise reports
+  const handleDownloadPdf = (reportType: 'all' | 'competition' | 'ageGroup', targetVal?: string) => {
+    setShowReportDropdown(false);
     setIsGeneratingPdf(true);
     try {
       const printWindow = window.open('', '_blank');
@@ -207,26 +226,40 @@ export default function GuestManagementPage() {
         return;
       }
 
+      const reportGuests = guests.filter((g) => {
+        if (selectedEventId && String(g.eventId) !== selectedEventId) return false;
+        if (reportType === 'competition' && targetVal && g.competitionTitle !== targetVal) return false;
+        if (reportType === 'ageGroup' && targetVal && g.ageGroupLabel !== targetVal) return false;
+        return true;
+      });
+
+      const reportTitle = reportType === 'competition' 
+        ? `Competition Report: ${targetVal}` 
+        : reportType === 'ageGroup' 
+        ? `Age Category Report: ${targetVal}` 
+        : `Complete Guest Directory Report`;
+
       const htmlContent = `
         <!DOCTYPE html>
         <html>
           <head>
-            <title>Guest List Report - Mithila Aayojan</title>
+            <title>${reportTitle} - Mithila Aayojan</title>
             <style>
               body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 20px; margin: 0; }
-              h1 { font-size: 20px; font-weight: 800; margin-bottom: 4px; text-transform: uppercase; color: #0f172a; }
+              h1 { font-size: 18px; font-weight: 800; margin-bottom: 4px; text-transform: uppercase; color: #0f172a; }
+              .subtitle { font-size: 12px; font-weight: 600; color: #2563eb; margin-bottom: 2px; }
               p { font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 20px; }
               table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 10px; }
               th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
               th { background-color: #f1f5f9; font-weight: 700; text-transform: uppercase; color: #334155; }
               tr:nth-child(even) { background-color: #f8fafc; }
-              .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: bold; background: #e2e8f0; color: #334155; }
-              .footer { margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; pt: 10px; }
+              .footer { margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }
             </style>
           </head>
           <body>
-            <h1>Mithila Aayojan - Guest Directory Report</h1>
-            <p>Generated on: ${new Date().toLocaleString()} | Total Records: ${filteredGuests.length}</p>
+            <h1>Mithila Aayojan - Report</h1>
+            <div class="subtitle">${reportTitle}</div>
+            <p>Generated on: ${new Date().toLocaleString()} | Total Records: ${reportGuests.length}${selectedEventId ? ` | Event ID: ${selectedEventId}` : ''}</p>
             <table>
               <thead>
                 <tr>
@@ -240,12 +273,12 @@ export default function GuestManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                ${filteredGuests.map((g, idx) => `
+                ${reportGuests.map((g, idx) => `
                   <tr>
                     <td>${idx + 1}</td>
                     <td><strong>${g.name}</strong></td>
                     <td>${g.phone || 'N/A'}</td>
-                    <td>${g.qrToken || g.qr_token || 'N/A'} (Ev: ${g.eventId})</td>
+                    <td>${g.qrToken || g.qr_token || 'N/A'}</td>
                     <td>${g.category || 'General'} ${g.competitionTitle ? `<br><span style="color:#64748b">${g.competitionTitle}</span>` : ''}</td>
                     <td>${g.ageGroupLabel || 'N/A'}</td>
                     <td>${g.isCheckedIn || g.checkInTime ? 'Checked-In' : 'Registered'}</td>
@@ -446,7 +479,7 @@ export default function GuestManagementPage() {
           </div>
         </header>
 
-        {/* TOTAL COUNT, PDF DOWNLOAD & WHATSAPP METRICS BAR */}
+        {/* TOTAL COUNT, PDF DOWNLOAD DROPDOWN & WHATSAPP METRICS BAR */}
         <div className="flex flex-col sm:flex-row items-center sm:items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
@@ -457,18 +490,75 @@ export default function GuestManagementPage() {
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isGeneratingPdf || filteredGuests.length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-blue-600/20 disabled:opacity-50"
-            >
-              {isGeneratingPdf ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
-              Download PDF Report
-            </button>
+            {/* REPORT DROPDOWN BUTTON */}
+            <div className="relative">
+              <button
+                onClick={() => setShowReportDropdown(!showReportDropdown)}
+                disabled={isGeneratingPdf || filteredGuests.length === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-blue-600/20 disabled:opacity-50 cursor-pointer"
+              >
+                {isGeneratingPdf ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
+                Download Report
+                <ChevronDown size={14} />
+              </button>
+
+              {showReportDropdown && (
+                <div className={`absolute right-0 mt-2 w-64 rounded-2xl shadow-2xl border z-50 overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}>
+                  <div className="p-2 border-b border-inherit">
+                    <button
+                      onClick={() => handleDownloadPdf('all')}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold hover:bg-blue-600 hover:text-white transition cursor-pointer"
+                    >
+                      📄 Complete Guest List Report
+                    </button>
+                  </div>
+
+                  {isMultiCompEvent && (
+                    <div className="p-2 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                      {/* Competition-wise */}
+                      <div>
+                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Competition-wise</div>
+                        {filterOptions.competitions.length > 0 ? (
+                          filterOptions.competitions.map((comp) => (
+                            <button
+                              key={comp}
+                              onClick={() => handleDownloadPdf('competition', comp)}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-500/10 hover:text-blue-500 transition truncate cursor-pointer"
+                            >
+                              🎯 {comp}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-1 text-[11px] text-slate-400 italic">No competitions recorded</div>
+                        )}
+                      </div>
+
+                      {/* Age Category-wise */}
+                      <div className="pt-1 border-t border-inherit">
+                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Age Category-wise</div>
+                        {filterOptions.ageGroups.length > 0 ? (
+                          filterOptions.ageGroups.map((age) => (
+                            <button
+                              key={age}
+                              onClick={() => handleDownloadPdf('ageGroup', age)}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-500/10 hover:text-blue-500 transition truncate cursor-pointer"
+                            >
+                              👤 {age}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-1 text-[11px] text-slate-400 italic">No age groups recorded</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <button
               onClick={handleSendRegistrationMetricsToWhatsApp}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20"
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
             >
               <MessageSquareShare size={15} />
               Send Metrics to WhatsApp
@@ -648,14 +738,14 @@ export default function GuestManagementPage() {
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 onClick={() => handleSaveEdit(recordId!)}
-                                className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition"
+                                className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition cursor-pointer"
                                 title="Save"
                               >
                                 <Save className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => setEditingId(null)}
-                                className="p-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg transition"
+                                className="p-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl transition cursor-pointer"
                                 title="Cancel"
                               >
                                 <X className="w-3.5 h-3.5" />
@@ -664,7 +754,7 @@ export default function GuestManagementPage() {
                           ) : (
                             <button
                               onClick={() => handleStartEdit(guest)}
-                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-600 dark:text-slate-300 rounded-lg transition"
+                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-600 dark:text-slate-300 rounded-xl transition cursor-pointer"
                               title="Edit Record"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
