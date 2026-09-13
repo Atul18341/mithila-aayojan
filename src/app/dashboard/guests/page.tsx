@@ -214,7 +214,7 @@ export default function GuestManagementPage() {
     window.open(`https://api.whatsapp.com/send?text=${encodedMessage}`, '_blank');
   };
 
-  // 📄 PDF Export Handler supporting complete, competition-wise, and age category-wise reports
+  // 📄 PDF Export Handler supporting complete, competition-wise (with age-category sums), and age category-wise reports
   const handleDownloadPdf = (reportType: 'all' | 'competition' | 'ageGroup', targetVal?: string) => {
     setShowReportDropdown(false);
     setIsGeneratingPdf(true);
@@ -233,6 +233,28 @@ export default function GuestManagementPage() {
         return true;
       });
 
+      // Compute age-category sub-sums if this is a competition-wise report
+      let ageCategorySumsHtml = '';
+      if (reportType === 'competition' && targetVal) {
+        const ageSums: Record<string, number> = {};
+        reportGuests.forEach((g) => {
+          const ageLabel = g.ageGroupLabel || 'Unspecified';
+          ageSums[ageLabel] = (ageSums[ageLabel] || 0) + 1;
+        });
+
+        ageCategorySumsHtml = `
+          <div class="summary-box">
+            <div class="summary-title">Summary Breakdown</div>
+            <div class="summary-total">Total Registrations for this Competition: <strong>${reportGuests.length}</strong></div>
+            <div class="age-pills">
+              ${Object.entries(ageSums).map(([age, count]) => `
+                <span class="age-pill"><strong>${age}:</strong> ${count}</span>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
       const reportTitle = reportType === 'competition' 
         ? `Competition Report: ${targetVal}` 
         : reportType === 'ageGroup' 
@@ -248,7 +270,12 @@ export default function GuestManagementPage() {
               body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 20px; margin: 0; }
               h1 { font-size: 18px; font-weight: 800; margin-bottom: 4px; text-transform: uppercase; color: #0f172a; }
               .subtitle { font-size: 12px; font-weight: 600; color: #2563eb; margin-bottom: 2px; }
-              p { font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 20px; }
+              p { font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 15px; }
+              .summary-box { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
+              .summary-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #334155; margin-bottom: 6px; }
+              .summary-total { font-size: 12px; color: #0f172a; margin-bottom: 8px; }
+              .age-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+              .age-pill { background: #e2e8f0; color: #1e293b; font-size: 10px; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; }
               table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 10px; }
               th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
               th { background-color: #f1f5f9; font-weight: 700; text-transform: uppercase; color: #334155; }
@@ -259,7 +286,10 @@ export default function GuestManagementPage() {
           <body>
             <h1>Mithila Aayojan - Report</h1>
             <div class="subtitle">${reportTitle}</div>
-            <p>Generated on: ${new Date().toLocaleString()} | Total Records: ${reportGuests.length}${selectedEventId ? ` | Event ID: ${selectedEventId}` : ''}</p>
+            <p>Generated on: ${new Date().toLocaleString()}${selectedEventId ? ` | Event ID: ${selectedEventId}` : ''}</p>
+            
+            ${ageCategorySumsHtml}
+
             <table>
               <thead>
                 <tr>
@@ -517,7 +547,7 @@ export default function GuestManagementPage() {
                     <div className="p-2 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
                       {/* Competition-wise */}
                       <div>
-                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Competition-wise</div>
+                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Competition-wise (with Age Sums)</div>
                         {filterOptions.competitions.length > 0 ? (
                           filterOptions.competitions.map((comp) => (
                             <button

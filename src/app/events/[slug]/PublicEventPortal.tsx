@@ -7,10 +7,11 @@ import {
   Clock, Award, Users, CheckCircle2, ChevronDown, 
   Trophy, HelpCircle, Check, Hourglass, Sparkles, 
   AlertCircle, ArrowUpRight, FileText, ChevronUp, 
-  AlertTriangle, IdCard, MessageCircle
+  AlertTriangle, IdCard, MessageCircle, Lock, CalendarX, Ticket
 } from 'lucide-react';
 import UniversalRegistrationForm from '../../../components/EventRegistration';
 import WhatsAppRegistrationForm from '../../../components/WhatsAppRegistrationForm';
+import Link from 'next/link';
 import { LinkedinIcon } from '@/lib/SocialIcons';
 import { translations, Locale } from '@/lib/translations';
 
@@ -138,6 +139,17 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
     return () => clearInterval(interval);
   }, [event]);
 
+  // Check if registration deadline has passed
+  const cutoffDateStr = event?.registrationEndDate || event?.registration_end_date;
+  let isRegistrationClosed = false;
+
+  if (cutoffDateStr) {
+    const cutoffDate = new Date(`${cutoffDateStr}T23:59:59`);
+    if (!isNaN(cutoffDate.getTime()) && Date.now() > cutoffDate.getTime()) {
+      isRegistrationClosed = true;
+    }
+  }
+
   const handleShare = async () => {
     if (typeof window !== 'undefined' && navigator.share) {
       try {
@@ -231,7 +243,7 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
     <div className={`min-h-screen font-sans transition-colors duration-200 ${isDark ? 'bg-[#090D16] text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`}>
       
       {/* 🚀 TOP STICKY NOTIFICATION BANNER (<= 24 Hours) */}
-      {isFinalCountdown && (
+      {isFinalCountdown && !isRegistrationClosed && (
         <aside aria-label="Final registration countdown alert" className="sticky top-0 z-50 w-full backdrop-blur-md bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white shadow-xl border-b border-white/15 animate-in slide-in-from-top duration-300">
           <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2 text-xs font-semibold">
             <div className="flex items-center gap-2">
@@ -704,67 +716,100 @@ export default function PublicEventPortal({ event }: PublicEventPageProps) {
               </div>
             </div>
 
-            {/* REGISTRATION ACTION FORM */}
+            {/* REGISTRATION ACTION FORM OR CLOSED BANNER */}
             <div className={`p-6 rounded-3xl border shadow-xl relative overflow-hidden ${
               isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
             }`}>
-              <div className="mb-4">
-                <h3 className="text-lg font-bold tracking-tight">{t.portalReserveSpot}</h3>
-                <p className="text-xs text-slate-400 mt-1">{t.portalReserveSub}</p>
-              </div>
-
-              {/* MANDATORY ID NOTICE */}
-              <div className="mb-5 p-3 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
-                <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  <strong className="font-bold text-amber-800 dark:text-amber-300 block mb-0.5">{t.portalSidebarNoticeTitle}</strong>
-                  {t.portalSidebarNoticeBody}
-                </div>
-              </div>
-
-              {/* COUNTDOWN BADGE */}
-              {timeLeft && (
-                <div className={`mb-5 p-3 rounded-2xl border flex items-center justify-between ${
-                  isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
-                }`}>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Hourglass size={14} className={activeTheme.textAccent} />
-                    <span>{t.portalClosingIn}</span>
+              {isRegistrationClosed ? (
+                <div className="w-full text-center py-6 space-y-4 animate-in fade-in duration-300">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/25 border border-amber-500/40 flex items-center justify-center mx-auto text-amber-500">
+                    <Lock size={22} />
                   </div>
-                  <div className="font-mono text-xs font-bold flex items-center gap-1">
-                    <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{timeLeft.days}d</span>
-                    <span>:</span>
-                    <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{String(timeLeft.hours).padStart(2, '0')}h</span>
-                    <span>:</span>
-                    <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{String(timeLeft.minutes).padStart(2, '0')}m</span>
-                    <span>:</span>
-                    <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-blue-500">{String(timeLeft.seconds).padStart(2, '0')}s</span>
+
+                  <div className="space-y-1.5">
+                    <div className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-amber-500">
+                      <CalendarX size={14} />
+                      <span>{t.formClosedTitle}</span>
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {t.formClosedHeading}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                      {t.formClosedDesc} <strong className="text-slate-700 dark:text-slate-200">{cutoffDateStr}</strong>.
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-amber-500/10">
+                    <Link
+                      href="/find-ticket"
+                      className="inline-flex items-center justify-center gap-2 w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 active:scale-95"
+                    >
+                      <Ticket size={14} />
+                      <span>{t.formFindPassBtn}</span>
+                    </Link>
                   </div>
                 </div>
+              ) : (
+                <>
+                  <div className="mb-4">
+                    <h3 className="text-lg font-bold tracking-tight">{t.portalReserveSpot}</h3>
+                    <p className="text-xs text-slate-400 mt-1">{t.portalReserveSub}</p>
+                  </div>
+
+                  {/* MANDATORY ID NOTICE */}
+                  <div className="mb-5 p-3 rounded-2xl border bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed">
+                      <strong className="font-bold text-amber-800 dark:text-amber-300 block mb-0.5">{t.portalSidebarNoticeTitle}</strong>
+                      {t.portalSidebarNoticeBody}
+                    </div>
+                  </div>
+
+                  {/* COUNTDOWN BADGE */}
+                  {timeLeft && (
+                    <div className={`mb-5 p-3 rounded-2xl border flex items-center justify-between ${
+                      isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <div className="flex items-center gap-1.5 text-xs font-semibold">
+                        <Hourglass size={14} className={activeTheme.textAccent} />
+                        <span>{t.portalClosingIn}</span>
+                      </div>
+                      <div className="font-mono text-xs font-bold flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{timeLeft.days}d</span>
+                        <span>:</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{String(timeLeft.hours).padStart(2, '0')}h</span>
+                        <span>:</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{String(timeLeft.minutes).padStart(2, '0')}m</span>
+                        <span>:</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-blue-500">{String(timeLeft.seconds).padStart(2, '0')}s</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* EMBEDDED UNIVERSAL FORM */}
+                  <div className="universal-form-wrapper">
+                    {event && <UniversalRegistrationForm event={event} lang={lang} />}
+                  </div>
+
+                  {/* SECURITY NOTE */}
+                  <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-400">
+                    <ShieldCheck size={14} className="text-emerald-500 shrink-0" />
+                    <span>{t.portalInstantPass}</span>
+                  </div>
+
+                  {/* 🟢 TRIGGER BUTTON FOR WHATSAPP MODAL */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setIsWhatsAppModalOpen(true)}
+                      className="w-full py-2.5 px-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
+                    >
+                      <MessageCircle size={15} />
+                      <span>Facing issue? Register via WhatsApp</span>
+                    </button>
+                  </div>
+                </>
               )}
-
-              {/* EMBEDDED UNIVERSAL FORM */}
-              <div className="universal-form-wrapper">
-                {event && <UniversalRegistrationForm event={event} lang={lang} />}
-              </div>
-
-              {/* SECURITY NOTE */}
-              <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-400">
-                <ShieldCheck size={14} className="text-emerald-500 shrink-0" />
-                <span>{t.portalInstantPass}</span>
-              </div>
-
-              {/* 🟢 TRIGGER BUTTON FOR WHATSAPP MODAL */}
-              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 text-center">
-                <button
-                  type="button"
-                  onClick={() => setIsWhatsAppModalOpen(true)}
-                  className="w-full py-2.5 px-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
-                >
-                  <MessageCircle size={15} />
-                  <span>Facing issue? Register via WhatsApp</span>
-                </button>
-              </div>
             </div>
 
           </div>

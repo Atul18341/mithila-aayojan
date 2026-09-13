@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
   Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
-  Lock, CalendarX, Ticket, Trophy, AlertCircle, Layers,
+  Ticket, Trophy, AlertCircle, Layers,
   Camera, Upload, X, AlertTriangle, BookOpen, Building2, Award, Share2
 } from 'lucide-react';
 import { getApplicableCategoriesForType, db } from '@/lib/db';
@@ -187,16 +187,6 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
     gstAmount: 0,
     totalPrice: 0
   });
-
-  const cutoffDateStr = event.registrationEndDate || event.registration_end_date;
-  let isRegistrationClosed = false;
-
-  if (cutoffDateStr) {
-    const cutoffDate = new Date(`${cutoffDateStr}T23:59:59`);
-    if (!isNaN(cutoffDate.getTime()) && Date.now() > cutoffDate.getTime()) {
-      isRegistrationClosed = true;
-    }
-  }
 
   const validateField = (fieldName: string, value: any): string => {
     let warning = '';
@@ -688,11 +678,6 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
       return;
     }
 
-    if (isRegistrationClosed) {
-      setGlobalWarning(t.formClosedHeading);
-      return;
-    }
-
     setIsSubmitting(true);
 
     const eventIdParam = event.id || event.slug || 'default';
@@ -792,39 +777,6 @@ export default function UniversalRegistrationForm({ event, lang = 'en' }: Univer
       }
     }
   };
-
-  if (isRegistrationClosed) {
-    return (
-      <div className="w-full text-center p-6 bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 rounded-2xl space-y-4 animate-in fade-in duration-300">
-        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-500">
-          <Lock size={22} />
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-amber-500">
-            <CalendarX size={14} />
-            <span>{t.formClosedTitle}</span>
-          </div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            {t.formClosedHeading}
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
-            {t.formClosedDesc} <strong className="text-slate-700 dark:text-slate-200">{cutoffDateStr}</strong>.
-          </p>
-        </div>
-
-        <div className="pt-2 border-t border-amber-500/10">
-          <Link
-            href="/find-ticket"
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 active:scale-95"
-          >
-            <Ticket size={14} />
-            <span>{t.formFindPassBtn}</span>
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   if (formSubmitted) {
     return (
