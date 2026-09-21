@@ -91,7 +91,7 @@ export default function GuestManagementPage() {
         setLoading(true);
         if (!db.isOpen()) await db.open();
 
-        const allGuests = await db.eventRegistrations.toArray();
+        const allGuests = await db.guests.toArray();
         const normalizedGuests: GuestRecord[] = allGuests.map((g: any) => ({
           ...g,
           ageGroupLabel: g.ageGroupLabel || g.AgeGroupLabel || g.age_group_label || null,

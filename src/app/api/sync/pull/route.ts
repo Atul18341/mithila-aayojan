@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     client = await pool.connect();
     if (!client) throw new Error('Failed to acquire database connection.');
 
-    // 1. Fetch all events assigned to or created by this manager/volunteer[cite: 10]
+    // 1. Fetch all events assigned to or created by this manager/volunteer[cite: 6]
     const eventsQuery = `
       SELECT DISTINCT e.*, me.assigned_desk FROM events e
       JOIN manager_events me ON e.id = me.event_id
@@ -42,12 +42,12 @@ export async function GET(request: Request) {
     let rawUsers: any[] = [];
 
     if (eventIds.length > 0) {
-      // 2. Fetch guests[cite: 10]
+      // 2. Fetch all guests for these events[cite: 6]
       const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1);`;
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
 
-      // 3. Fetch registrations with full schema support[cite: 10]
+      // 3. Fetch all event registrations with competition and age group details[cite: 6]
       const registrationsQuery = `
         SELECT 
           id,
@@ -79,7 +79,7 @@ export async function GET(request: Request) {
       });
       rawRegistrations = registrationsResult.rows;
 
-      // 4. Fetch manager_events link rows[cite: 10]
+      // 4. Fetch manager_events link rows[cite: 6]
       const linksQuery = `
         SELECT DISTINCT me.* FROM manager_events me
         WHERE me.event_id = ANY($1) OR LOWER(me.manager_identifier) = LOWER($2);
@@ -87,7 +87,7 @@ export async function GET(request: Request) {
       const linksResult = await client.query(linksQuery, [eventIds, userIdentifier]);
       rawLinks = linksResult.rows;
 
-      // 5. Robust volunteer & user query: Pull all users linked via manager_events OR sharing the event workspace[cite: 10]
+      // 5. Robust volunteer & user query[cite: 6]
       const usersQuery = `
         SELECT DISTINCT 
           u.id,
@@ -114,7 +114,26 @@ export async function GET(request: Request) {
       rawUsers = usersResult.rows;
     }
 
-    // Format events with full multi-competition and configuration mapping
+    // Build robust memory lookup maps for event registrations normalized by phone and email[cite: 6]
+    const regMapByPhone = new Map();
+    const regMapByEmail = new Map();
+
+    rawRegistrations.forEach(r => {
+      if (r.phone) {
+        const cleanPhone = String(r.phone).replace(/\D/g, '').slice(-10);
+        if (cleanPhone) {
+          regMapByPhone.set(`${r.event_id}_${cleanPhone}`, r);
+        }
+      }
+      if (r.email) {
+        const cleanEmail = String(r.email).trim().toLowerCase();
+        if (cleanEmail) {
+          regMapByEmail.set(`${r.event_id}_${cleanEmail}`, r);
+        }
+      }
+    });
+
+    // Format events[cite: 6]
     const formattedEvents = rawEvents.map(e => {
       let parsedCompetitions = [];
       if (e.competitions) {
@@ -153,31 +172,52 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format guests with full metadata mapping[cite: 10]
-    const formattedGuests = rawGuests.map(g => ({
-      id: Number(g.id),
-      guestId: g.guest_id || `GUEST-${g.id}`,
-      registrationId: g.registration_id || `REG-${g.id}`,
-      eventId: Number(g.event_id),
-      name: g.name || g.attendee_name || '',
-      email: g.email || '',
-      phone: g.phone || '',
-      category: g.type || g.category || 'general-public',
-      type: g.type || g.category || 'general-public',
-      competitionTitle: g.competition_title || g.competitionTitle || null,
-      ageGroupLabel: g.age_group_label || g.ageGroupLabel || null,
-      qrToken: g.qr_token || g.ticket_id || '',
-      isCheckedIn: Boolean(g.is_check_in || g.is_checked_in || g.has_checked_in),
-      checkInTime: g.check_in_time ? Number(g.check_in_time) : undefined,
-      hasFoodAccess: Boolean(g.has_food_access || g.food_included),
-      hasFoodClaimed: Boolean(g.has_food_claimed || g.food_claimed),
-      foodClaimedTime: g.food_claimed_time ? Number(g.food_claimed_time) : undefined,
-      amountPaid: parseFloat(g.amount_paid || 0),
-      syncStatus: 'synced',
-      registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
-    }));
+    // Format guests with normalized lookup mapping for competitionTitle and ageGroupLabel[cite: 6]
+    const formattedGuests = rawGuests.map(g => {
+      const cleanPhone = g.phone ? String(g.phone).replace(/\D/g, '').slice(-10) : '';
+      const cleanEmail = g.email ? String(g.email).trim().toLowerCase() : '';
 
-    // Format event registrations with custom answers and age verifications[cite: 10]
+      const matchedReg = 
+        regMapByPhone.get(`${g.event_id}_${cleanPhone}`) || 
+        regMapByEmail.get(`${g.event_id}_${cleanEmail}`);
+
+      const resolvedCompetitionTitle = 
+        g.competition_title || 
+        g.competitionTitle || 
+        matchedReg?.competition_title || 
+        null;
+
+      const resolvedAgeGroupLabel = 
+        g.age_group_label || 
+        g.ageGroupLabel || 
+        matchedReg?.age_group_label || 
+        null;
+
+      return {
+        id: Number(g.id),
+        guestId: g.guest_id || `GUEST-${g.id}`,
+        registrationId: g.registration_id || `REG-${g.id}`,
+        eventId: Number(g.event_id),
+        name: g.name || g.attendee_name || '',
+        email: g.email || '',
+        phone: g.phone || '',
+        category: g.type || g.category || 'general-public',
+        type: g.type || g.category || 'general-public',
+        competitionTitle: resolvedCompetitionTitle,
+        ageGroupLabel: resolvedAgeGroupLabel,
+        qrToken: g.qr_token || g.ticket_id || '',
+        isCheckedIn: Boolean(g.is_check_in || g.is_checked_in || g.has_checked_in),
+        checkInTime: g.check_in_time ? Number(g.check_in_time) : undefined,
+        hasFoodAccess: Boolean(g.has_food_access || g.food_included),
+        hasFoodClaimed: Boolean(g.has_food_claimed || g.food_claimed),
+        foodClaimedTime: g.food_claimed_time ? Number(g.food_claimed_time) : undefined,
+        amountPaid: parseFloat(g.amount_paid || 0),
+        syncStatus: 'synced',
+        registeredAt: g.server_updated_at ? new Date(g.server_updated_at).getTime() : Date.now()
+      };
+    });
+
+    // Format event registrations[cite: 6]
     const formattedRegistrations = rawRegistrations.map(r => {
       let parsedCustomAnswers = {};
       if (r.custom_answers) {
@@ -212,7 +252,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Format manager_events junction links[cite: 10]
+    // Format manager_events links[cite: 6]
     const formattedLinks = rawLinks.map(l => ({
       id: l.id ? Number(l.id) : undefined,
       managerIdentifier: l.manager_identifier,
@@ -222,7 +262,7 @@ export async function GET(request: Request) {
       syncStatus: 'synced'
     }));
 
-    // Format users & volunteers[cite: 10]
+    // Format users[cite: 6]
     const formattedUsers = rawUsers.map(u => ({
       id: u.id ? Number(u.id) : undefined,
       name: u.name || (u.email ? u.email.split('@')[0] : 'User'),

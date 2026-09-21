@@ -10,13 +10,13 @@ import {
   Settings, Bell, Clock, Calendar, Sparkles, Plus,
   Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
   Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket,
-  User, Crown, ChevronRight
+  User, Crown, ChevronRight, Eye, Trophy
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
 import EventDetailEditor from './_components/event-details';
 import VolunteerManager from './_components/volunteer-manager';
-import Sidebar from './_components/sidebar'; // 🟢 Sidebar component import
+import Sidebar from './_components/sidebar';
 import EventScanner from '../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
@@ -46,8 +46,11 @@ export default function ManagerDashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [isManagingVolunteers, setIsManagingVolunteers] = useState(false);
+
+  // Modal State for Lists (Check-in List vs Food Claim List)
+  const [activeModalList, setActiveModalList] = useState<'checkin' | 'food' | null>(null);
   
-  // 🟢 Manager Profile Session State
+  // Manager Profile Session State
   const [managerSession, setManagerSession] = useState<{
     id?: number;
     name: string;
@@ -69,7 +72,7 @@ export default function ManagerDashboard() {
           });
         }
       } catch (err) {
-        console.error("❌ Failed to parse offline session identity indexes:", err);
+        console.error("Failed to parse offline session identity indexes:", err);
       }
     }
     resolveActiveSession();
@@ -96,7 +99,6 @@ export default function ManagerDashboard() {
     const targetEvent = await db.events.get(session.activeEventId);
     if (!targetEvent) return null;
 
-    // FETCH GUEST MANIFEST FOR ACTIVE EVENT FROM INDEXEDDB
     const targetGuests = await db.guests.where('eventId').equals(session.activeEventId).toArray();
     
     const recentCheckIns = await db.guests
@@ -106,11 +108,14 @@ export default function ManagerDashboard() {
       .limit(10)
       .toArray();
 
-    // COMPUTING REAL-TIME METRICS FROM INDEXEDDB DATA
     const totalRegistrations = targetGuests.length;
     const liveCheckIns = targetGuests.filter(g => Boolean(g.checkInTime || g.isCheckedIn)).length;
     const foodIssued = targetGuests.filter(g => Boolean(g.hasFoodAccess || (g as any).foodIncluded)).length;
     const foodScanned = targetGuests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed)).length;
+
+    // Full lists for inspection modals
+    const checkedInGuestsList = targetGuests.filter(g => Boolean(g.checkInTime || g.isCheckedIn));
+    const foodScannedGuestsList = targetGuests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed));
 
     return {
       event: targetEvent,
@@ -119,20 +124,22 @@ export default function ManagerDashboard() {
       liveCheckIns,
       foodIssued,
       foodScanned,
-      recentCheckIns
+      recentCheckIns,
+      checkedInGuestsList,
+      foodScannedGuestsList
     };
   }, [currentManagerEmail]);
 
   const activeEvent = currentWorkspace?.event || sessionData[0] || null;
   const recentCheckIns = currentWorkspace?.recentCheckIns || [];
+  const checkedInGuestsList = currentWorkspace?.checkedInGuestsList || [];
+  const foodScannedGuestsList = currentWorkspace?.foodScannedGuestsList || [];
   
-  // METRICS DIRECTLY SOURCED FROM INDEXEDDB
   const totalRegistrationCount = currentWorkspace?.totalRegistrations || 0;
   const totalCheckInCount = currentWorkspace?.liveCheckIns || 0;
   const foodIssuedCount = currentWorkspace?.foodIssued || 0;
   const foodScannedCount = currentWorkspace?.foodScanned || 0;
 
-  // PERCENTAGE COMPUTATIONS
   const gateCheckInPercent = totalRegistrationCount > 0 
     ? Math.min(100, Math.round((totalCheckInCount / totalRegistrationCount) * 100)) 
     : 0;
@@ -140,6 +147,12 @@ export default function ManagerDashboard() {
   const mealClaimPercent = foodIssuedCount > 0 
     ? Math.min(100, Math.round((foodScannedCount / foodIssuedCount) * 100)) 
     : 0;
+
+  const isMultiCompActive = Boolean(
+    activeEvent?.isMultiCompetition || 
+    activeEvent?.type === 'exam' || 
+    (activeEvent?.competitions && activeEvent.competitions.length > 0)
+  );
 
   const handleWorkspaceChange = async (nextId: number) => {
     if (!currentManagerEmail) return;
@@ -172,7 +185,7 @@ export default function ManagerDashboard() {
             setIsEditing(false);
             setIsManagingVolunteers(false);
           }} 
-          className="mt-6 px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase text-xs tracking-widest hover:scale-105 transition-all shadow-xl shadow-blue-600/10"
+          className="mt-6 px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase text-xs tracking-widest hover:scale-105 transition-all shadow-xl shadow-blue-600/10 cursor-pointer"
         >
           Create Your First Event
         </button>
@@ -214,7 +227,6 @@ export default function ManagerDashboard() {
         />
       )}
 
-      {/* 🟢 REPLACED INLINE SIDEBAR CODE WITH SIDEBAR COMPONENT CALL */}
       <Sidebar
         isDark={isDark}
         setIsDark={setIsDark}
@@ -242,7 +254,7 @@ export default function ManagerDashboard() {
             <div className="flex items-center gap-3 sm:gap-6">
               <button 
                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className={`lg:hidden p-2.5 rounded-xl border ${theme.inputBg} shrink-0`}
+                className={`lg:hidden p-2.5 rounded-xl border ${theme.inputBg} shrink-0 cursor-pointer`}
                 aria-label="Open Navigation Menu"
               >
                 <Menu size={18} />
@@ -250,7 +262,7 @@ export default function ManagerDashboard() {
 
               <div className="relative">
                 {activeEvent && !isCreatingNew ? (
-                  <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="group text-left space-y-1 focus:outline-none">
+                  <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="group text-left space-y-1 focus:outline-none cursor-pointer">
                     <h1 className={`text-lg sm:text-2xl font-black italic flex items-center gap-2 ${activeEvent.type === 'celebration' ? 'font-serif' : 'font-sans'}`}>
                       <span className="truncate max-w-[150px] sm:max-w-xs">{activeEvent.name}</span>
                       <ChevronDown size={18} className="text-slate-500 shrink-0" />
@@ -281,7 +293,7 @@ export default function ManagerDashboard() {
                         <button 
                           key={ev.id} 
                           onClick={() => handleWorkspaceChange(ev.id!)} 
-                          className={`w-full flex items-center justify-between p-4 rounded-2xl text-left ${activeEvent?.id === ev.id && !isCreatingNew ? 'bg-white/5 border border-white/10 text-blue-400' : 'hover:bg-white/5 text-slate-300'}`}
+                          className={`w-full flex items-center justify-between p-4 rounded-2xl text-left cursor-pointer ${activeEvent?.id === ev.id && !isCreatingNew ? 'bg-white/5 border border-white/10 text-blue-400' : 'hover:bg-white/5 text-slate-300'}`}
                         >
                           <span className="text-xs font-black">{ev.name}</span>
                         </button>
@@ -296,7 +308,7 @@ export default function ManagerDashboard() {
                           setIsManagingVolunteers(false);
                           setIsDropdownOpen(false);
                         }}
-                        className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all hover:scale-[1.02] shadow-sm ${
+                        className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all hover:scale-[1.02] shadow-sm cursor-pointer ${
                           isDark ? 'bg-blue-600/10 border border-blue-500/20 text-blue-400 hover:bg-blue-600/20' : 'bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100/80'
                         }`}
                       >
@@ -311,15 +323,13 @@ export default function ManagerDashboard() {
 
             {/* HEADER RIGHT SIDE: PINNED SYNC STATUS BAR + DESKTOP UTILITIES */}
             <div className="flex items-center gap-3 shrink-0">
-              {/* ALWAYS VISIBLE: PINNED SYNC STATUS */}
               <SyncStatusBar />
 
-              {/* DESKTOP-ONLY UTILITIES ROW */}
               <div className="hidden lg:flex items-center gap-3">
                 {activeEvent && !showEditorScreen && (
                   <button 
                     onClick={() => setIsScanning(true)}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-widest transition-all hover:scale-105 shadow-md ${
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-widest transition-all hover:scale-105 shadow-md cursor-pointer ${
                       isDark ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20' : 'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
                     }`}
                   >
@@ -337,7 +347,7 @@ export default function ManagerDashboard() {
                         setIsEditing(!isEditing);
                       }
                     }} 
-                    className={`p-2.5 rounded-xl border transition-all ${showEditorScreen ? 'bg-red-500 text-white' : `${theme.inputBg} text-slate-400`}`}
+                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${showEditorScreen ? 'bg-red-500 text-white' : `${theme.inputBg} text-slate-400`}`}
                     title="Edit Event Configuration"
                   >
                     {showEditorScreen ? <X size={18} /> : <Pencil size={18} />}
@@ -347,7 +357,7 @@ export default function ManagerDashboard() {
                 <button 
                   type="button"
                   onClick={() => setIsDark(!isDark)} 
-                  className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
+                  className={`w-10 h-10 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden ${theme.inputBg} cursor-pointer`}
                 >
                   <div className={`transition-all duration-500 transform ${isDark ? 'translate-y-0' : 'translate-y-10 opacity-0'}`}>
                     <Sun size={18} className="text-blue-400 fill-blue-400/10" />
@@ -357,7 +367,6 @@ export default function ManagerDashboard() {
                   </div>
                 </button>
 
-                {/* 🟢 TOP DESKTOP MANAGER PROFILE QUICK BUTTON */}
                 <Link
                   href="/dashboard-eventManagers/profile"
                   className={`w-10 h-10 rounded-xl border flex items-center justify-center font-black text-xs transition-all ${theme.inputBg} hover:border-blue-500 text-blue-500`}
@@ -369,7 +378,7 @@ export default function ManagerDashboard() {
                 <div className="relative">
                   <button 
                     onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-                    className={`w-10 h-10 rounded-xl border flex items-center justify-center relative transition-all ${theme.inputBg}`}
+                    className={`w-10 h-10 rounded-xl border flex items-center justify-center relative transition-all cursor-pointer ${theme.inputBg}`}
                   >
                     <Bell size={18} className={isNotificationsOpen ? theme.accent : 'text-slate-400'} />
                     {recentCheckIns.length > 0 && (
@@ -385,7 +394,7 @@ export default function ManagerDashboard() {
                       <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
                         {recentCheckIns.slice(0, 3).map((g: any) => (
                           <div key={g.id} className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] flex flex-col gap-1">
-                            <p className="font-bold">🎉 <span className={theme.accent}>{g.name}</span> verified entry.</p>
+                            <p className="font-bold"><span className={theme.accent}>{g.name}</span> verified entry.</p>
                           </div>
                         ))}
                       </div>
@@ -439,7 +448,7 @@ export default function ManagerDashboard() {
           </div>
         ) : (
           <>
-            {/* 🟢 PAIRED PROGRESS CARDS (GATE ATTENDANCE & MEAL CATERING) */}
+            {/* PAIRED PROGRESS CARDS (GATE ATTENDANCE & MEAL CATERING) WITH LIST VIEW BUTTONS */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
               
               {/* GATE ATTENDANCE CARD */}
@@ -453,9 +462,19 @@ export default function ManagerDashboard() {
                       Gate Attendance Stream
                     </span>
                   </div>
-                  <span className="text-xs font-mono font-black text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
-                    {gateCheckInPercent}%
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveModalList('checkin')}
+                      className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                      title="View Checked-in List"
+                    >
+                      <Eye size={12} />
+                      <span>List</span>
+                    </button>
+                    <span className="text-xs font-mono font-black text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
+                      {gateCheckInPercent}%
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mb-4">
@@ -467,7 +486,6 @@ export default function ManagerDashboard() {
                   </div>
                 </div>
 
-                {/* PROGRESS BAR */}
                 <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
@@ -487,9 +505,19 @@ export default function ManagerDashboard() {
                       Meal Catering Vouchers
                     </span>
                   </div>
-                  <span className="text-xs font-mono font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
-                    {mealClaimPercent}%
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveModalList('food')}
+                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                      title="View Food Claimed List"
+                    >
+                      <Eye size={12} />
+                      <span>List</span>
+                    </button>
+                    <span className="text-xs font-mono font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
+                      {mealClaimPercent}%
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mb-4">
@@ -501,7 +529,6 @@ export default function ManagerDashboard() {
                   </div>
                 </div>
 
-                {/* PROGRESS BAR */}
                 <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-amber-500 rounded-full transition-all duration-500" 
@@ -527,7 +554,17 @@ export default function ManagerDashboard() {
                       <div key={guest.id} className={`p-4 flex items-center justify-between transition-colors ${isDark ? 'hover:bg-white/[0.02]' : 'hover:bg-slate-50'}`}>
                         <div className="flex items-center gap-4">
                           <div className={`w-2.5 h-2.5 rounded-full ${colors.dot} shrink-0`} />
-                          <p className="text-sm font-black tracking-tight">{guest.name}</p>
+                          <div>
+                            <p className="text-sm font-black tracking-tight">{guest.name}</p>
+                            {/* Show competition track if multi-competition is enabled and category/competition exists */}
+                            {isMultiCompActive && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                              <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-0.5">
+                                <Trophy size={10} /> 
+                                <span>Track: {guest.competitionTitle || 'General Competition Track'}</span>
+                                {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -538,6 +575,81 @@ export default function ManagerDashboard() {
           </>
         )}
       </main>
+
+      {/* MODAL LIST INSPECTOR (CHECK-IN VS FOOD CLAIMED) */}
+      {activeModalList && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className={`w-full max-w-lg rounded-[2.5rem] border p-6 shadow-2xl flex flex-col max-h-[85vh] ${isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}>
+            
+            <div className="flex items-center justify-between pb-4 border-b border-inherit mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-xl ${activeModalList === 'checkin' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                  {activeModalList === 'checkin' ? <QrCode size={18} /> : <Utensils size={18} />}
+                </div>
+                <h3 className="text-base font-black uppercase tracking-wider">
+                  {activeModalList === 'checkin' ? 'Checked-In Guests Directory' : 'Food Claimed Vouchers Directory'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setActiveModalList(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+              {(activeModalList === 'checkin' ? checkedInGuestsList : foodScannedGuestsList).length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-xs font-semibold">
+                  No records found in this category yet.
+                </div>
+              ) : (
+                (activeModalList === 'checkin' ? checkedInGuestsList : foodScannedGuestsList).map((guest: any, idx: number) => (
+                  <div key={guest.id || idx} className={`p-3.5 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-slate-400">#{idx + 1}</span>
+                        <h4 className="text-xs font-bold">{guest.name}</h4>
+                        <span className="text-[9px] uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-bold">
+                          {guest.category || 'General'}
+                        </span>
+                      </div>
+                      
+                      {/* Show participated competition track if multi-competition is active */}
+                      {isMultiCompActive && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                        <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-1">
+                          <Trophy size={10} />
+                          <span>Track: {guest.competitionTitle || 'General Track'}</span>
+                          {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
+                        </p>
+                      )}
+
+                      <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                        Mobile: {guest.phone || 'N/A'} | Token: {guest.qrToken || guest.qr_token || 'N/A'}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg ${activeModalList === 'checkin' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                      {activeModalList === 'checkin' 
+                        ? (guest.checkInTime ? new Date(guest.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Verified') 
+                        : (guest.foodClaimedTime ? new Date(guest.foodClaimedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Claimed')}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-inherit mt-4 flex justify-end">
+              <button
+                onClick={() => setActiveModalList(null)}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-md"
+              >
+                Close Directory
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {isScanning && activeEvent && (
         <EventScanner 
