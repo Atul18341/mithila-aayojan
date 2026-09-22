@@ -10,7 +10,7 @@ import {
   Settings, Bell, Clock, Calendar, Sparkles, Plus,
   Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
   Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket,
-  User, Crown, ChevronRight, Eye, Trophy
+  User, Crown, ChevronRight, Eye, Trophy, FileText
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
@@ -113,9 +113,14 @@ export default function ManagerDashboard() {
     const foodIssued = targetGuests.filter(g => Boolean(g.hasFoodAccess || (g as any).foodIncluded)).length;
     const foodScanned = targetGuests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed)).length;
 
-    // Full lists for inspection modals
-    const checkedInGuestsList = targetGuests.filter(g => Boolean(g.checkInTime || g.isCheckedIn));
-    const foodScannedGuestsList = targetGuests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed));
+    // Full lists for inspection modals sorted in descending order of check-in / claim time
+    const checkedInGuestsList = targetGuests
+      .filter(g => Boolean(g.checkInTime || g.isCheckedIn))
+      .sort((a, b) => (b.checkInTime || 0) - (a.checkInTime || 0));
+
+    const foodScannedGuestsList = targetGuests
+      .filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed))
+      .sort((a, b) => (b.foodClaimedTime || 0) - (a.foodClaimedTime || 0));
 
     return {
       event: targetEvent,
@@ -148,11 +153,65 @@ export default function ManagerDashboard() {
     ? Math.min(100, Math.round((foodScannedCount / foodIssuedCount) * 100)) 
     : 0;
 
-  const isMultiCompActive = Boolean(
+  const isMultiCompEvent = Boolean(
     activeEvent?.isMultiCompetition || 
     activeEvent?.type === 'exam' || 
     (activeEvent?.competitions && activeEvent.competitions.length > 0)
   );
+
+  // PDF Download Handler for Check-In List
+  const handleDownloadCheckInPdf = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Check-In Report - ${activeEvent?.name || 'Event'}</title>
+          <style>
+            body { font-family: sans-serif; padding: 20px; color: #1e293b; }
+            h1 { font-size: 16px; text-transform: uppercase; margin-bottom: 4px; }
+            p { font-size: 10px; color: #64748b; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+            th { background-color: #f1f5f9; text-transform: uppercase; }
+          </style>
+        </head>
+        <body>
+          <h1>Check-In Report: ${activeEvent?.name || ''}</h1>
+          <p>Generated: ${new Date().toLocaleString()} | Total Checked-In: ${checkedInGuestsList.length}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Token ID</th>
+                <th>Category</th>
+                <th>Check-In Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${checkedInGuestsList.map((g: any, i: number) => `
+                <tr>
+                  <td>${i + 1}</td>
+                  <td>${g.name}</td>
+                  <td>${g.qrToken || g.qr_token || 'N/A'}</td>
+                  <td>${g.category || 'General'}</td>
+                  <td>${g.checkInTime ? new Date(g.checkInTime).toLocaleString() : 'Verified'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() { window.print(); window.close(); }
+          </script>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
 
   const handleWorkspaceChange = async (nextId: number) => {
     if (!currentManagerEmail) return;
@@ -219,7 +278,6 @@ export default function ManagerDashboard() {
   return (
     <div className={`flex h-screen w-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 overflow-hidden relative pt-12 sm:pt-20`}>
       
-      {/* MOBILE BACKDROP OVERLAY */}
       {isSidebarOpen && (
         <div 
           onClick={() => setIsSidebarOpen(false)} 
@@ -244,10 +302,8 @@ export default function ManagerDashboard() {
         theme={theme}
       />
 
-      {/* MAIN CONTENT WORKSPACE */}
       <main className={`flex-1 flex flex-col space-y-8 overflow-hidden h-full ${showEditorScreen || isManagingVolunteers ? 'p-4 sm:p-6 overflow-y-auto custom-scrollbar' : 'p-4 sm:p-8 overflow-y-auto custom-scrollbar'}`}>
         
-        {/* UNIFIED HEADER BAR */}
         {!showEditorScreen && !isManagingVolunteers && (
           <header className={`shrink-0 w-full py-4 border-b ${theme.bg} flex items-center justify-between z-40 relative gap-3`}>
             
@@ -281,7 +337,6 @@ export default function ManagerDashboard() {
                   </div>
                 )}
 
-                {/* DROPDOWN SWITCHER */}
                 {isDropdownOpen && sessionData.length > 0 && (
                   <div className={`absolute top-full left-0 mt-4 w-72 sm:w-80 rounded-[2.5rem] border ${theme.dropdownMenu} p-3 z-50`}>
                     <div className="px-4 py-2 border-b border-white/5 mb-2 flex items-center gap-2 text-slate-500">
@@ -321,7 +376,6 @@ export default function ManagerDashboard() {
               </div>
             </div>
 
-            {/* HEADER RIGHT SIDE: PINNED SYNC STATUS BAR + DESKTOP UTILITIES */}
             <div className="flex items-center gap-3 shrink-0">
               <SyncStatusBar />
 
@@ -406,7 +460,6 @@ export default function ManagerDashboard() {
           </header>
         )}
 
-        {/* WORKSPACE LAYER TOGGLE ROUTER */}
         {isManagingVolunteers ? (
           <div className="flex-1 flex items-center justify-center py-6">
             <VolunteerManager 
@@ -448,10 +501,8 @@ export default function ManagerDashboard() {
           </div>
         ) : (
           <>
-            {/* PAIRED PROGRESS CARDS (GATE ATTENDANCE & MEAL CATERING) WITH LIST VIEW BUTTONS */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
               
-              {/* GATE ATTENDANCE CARD */}
               <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
                 <div className="flex justify-between items-center mb-3">
                   <div className="flex items-center gap-2.5">
@@ -494,7 +545,6 @@ export default function ManagerDashboard() {
                 </div>
               </div>
 
-              {/* MEAL CATERING CARD */}
               <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
                 <div className="flex justify-between items-center mb-3">
                   <div className="flex items-center gap-2.5">
@@ -539,7 +589,6 @@ export default function ManagerDashboard() {
 
             </section>
 
-            {/* REAL-TIME COLLAPSED ACTIVITY REGISTRY */}
             <section className={`border p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] animate-in slide-in-from-bottom-6 duration-500 ${theme.card}`}>
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-base sm:text-lg font-black italic">Recent Entry Streams</h3>
@@ -556,8 +605,7 @@ export default function ManagerDashboard() {
                           <div className={`w-2.5 h-2.5 rounded-full ${colors.dot} shrink-0`} />
                           <div>
                             <p className="text-sm font-black tracking-tight">{guest.name}</p>
-                            {/* Show competition track if multi-competition is enabled and category/competition exists */}
-                            {isMultiCompActive && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                            {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
                               <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-0.5">
                                 <Trophy size={10} /> 
                                 <span>Track: {guest.competitionTitle || 'General Competition Track'}</span>
@@ -615,8 +663,7 @@ export default function ManagerDashboard() {
                         </span>
                       </div>
                       
-                      {/* Show participated competition track if multi-competition is active */}
-                      {isMultiCompActive && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                      {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
                         <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-1">
                           <Trophy size={10} />
                           <span>Track: {guest.competitionTitle || 'General Track'}</span>
@@ -625,20 +672,29 @@ export default function ManagerDashboard() {
                       )}
 
                       <p className="text-[10px] text-slate-400 mt-1 font-mono">
-                        Mobile: {guest.phone || 'N/A'} | Token: {guest.qrToken || guest.qr_token || 'N/A'}
+                        Token: {guest.qrToken || guest.qr_token || 'N/A'}
                       </p>
                     </div>
                     <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg ${activeModalList === 'checkin' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
                       {activeModalList === 'checkin' 
-                        ? (guest.checkInTime ? new Date(guest.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Verified') 
-                        : (guest.foodClaimedTime ? new Date(guest.foodClaimedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Claimed')}
+                        ? (guest.checkInTime ? new Date(guest.checkInTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Verified') 
+                        : (guest.foodClaimedTime ? new Date(guest.foodClaimedTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Claimed')}
                     </span>
                   </div>
                 ))
               )}
             </div>
 
-            <div className="pt-4 border-t border-inherit mt-4 flex justify-end">
+            <div className="pt-4 border-t border-inherit mt-4 flex items-center justify-between">
+              {activeModalList === 'checkin' && checkedInGuestsList.length > 0 ? (
+                <button
+                  onClick={handleDownloadCheckInPdf}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-md"
+                >
+                  <FileText size={14} /> Download PDF Report
+                </button>
+              ) : <div />}
+
               <button
                 onClick={() => setActiveModalList(null)}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-md"

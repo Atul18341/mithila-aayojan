@@ -1,13 +1,13 @@
 // src/app/dashboard-eventManagers/volunteers/panel/page.tsx
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
 import { 
   QrCode, Clock, Loader, Bell, Sun, Moon, 
   LogOut, Calendar, Sparkles, LogIn, Utensils, RefreshCw, Lock,
-  MoreVertical, X
+  MoreVertical, X, Search, CheckCircle2, Trophy, Eye
 } from 'lucide-react';
 import { db } from '../../../lib/db';
 import EventScanner from '../../../components/Scanner';
@@ -26,7 +26,14 @@ export default function VolunteerCheckInPanel() {
   const [syncMessage, setSyncMessage] = useState('');
   const [scanMode, setScanMode] = useState<ScanMode>('CHECK_IN');
 
-  // HYDRATION GUARD REF: Prevents infinite re-hydration loops across device screen sizes
+  // Modal List Inspector State for Volunteers ('checkin' | 'food' | null)
+  const [activeModalList, setActiveModalList] = useState<'checkin' | 'food' | null>(null);
+
+  // Fast-Tap Search State for Food Claim Desk
+  const [foodSearchQuery, setFoodSearchQuery] = useState('');
+  const [claimActionLoadingId, setClaimActionLoadingId] = useState<number | string | null>(null);
+
+  // HYDRATION GUARD REF
   const hasHydratedRef = useRef(false);
 
   const router = useRouter();
@@ -61,7 +68,13 @@ export default function VolunteerCheckInPanel() {
 
   const resolvedEventId = activeEvent?.id || activeEventId || null;
 
-  // FETCH ASSIGNED DESK SCOPE FROM INDEXEDDB managerEvents TABLE
+  const isMultiCompEvent = Boolean(
+    activeEvent?.isMultiCompetition || 
+    activeEvent?.type === 'exam' || 
+    (activeEvent?.competitions && activeEvent.competitions.length > 0)
+  );
+
+  // FETCH ASSIGNED DESK SCOPE
   const activeAssignment = useLiveQuery(
     async () => {
       if (!activeUser?.identifier || !resolvedEventId) return null;
@@ -74,10 +87,8 @@ export default function VolunteerCheckInPanel() {
     [activeUser?.identifier, resolvedEventId]
   );
 
-  // Read assignedDesk stored in IndexedDB (defaulting to CHECK_IN)
   const assignedDesk = activeAssignment?.assignedDesk || 'CHECK_IN';
 
-  // AUTOMATICALLY LOCK AND SYNC SCAN MODE BASED ON ASSIGNED DESK PERMISSION
   useEffect(() => {
     if (assignedDesk === 'CHECK_IN') {
       setScanMode('CHECK_IN');
@@ -101,7 +112,29 @@ export default function VolunteerCheckInPanel() {
     [resolvedEventId]
   ) || [];
 
-  // 3. CONTEXTUAL METRICS FOR VOLUNTEER DESK (ADAPTS TO ACTIVE SCAN MODE)
+  // FETCH ALL GUESTS FOR LIST INSPECTORS & FOOD CLAIM FILTERING
+  const allEventGuests = useLiveQuery(
+    async () => {
+      if (!resolvedEventId) return [];
+      return await db.guests.where('eventId').equals(resolvedEventId).toArray();
+    },
+    [resolvedEventId]
+  ) || [];
+
+  // SORTED & FILTERED LISTS FOR MODAL INSPECTORS (Descending Order)
+  const checkedInGuestsList = useMemo(() => {
+    return allEventGuests
+      .filter(g => Boolean(g.checkInTime || g.isCheckedIn))
+      .sort((a, b) => (b.checkInTime || 0) - (a.checkInTime || 0));
+  }, [allEventGuests]);
+
+  const foodScannedGuestsList = useMemo(() => {
+    return allEventGuests
+      .filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed))
+      .sort((a, b) => (b.foodClaimedTime || 0) - (a.foodClaimedTime || 0));
+  }, [allEventGuests]);
+
+  // 3. CONTEXTUAL METRICS
   const deskMetrics = useLiveQuery(
     async () => {
       if (!resolvedEventId) {
@@ -120,13 +153,54 @@ export default function VolunteerCheckInPanel() {
     [resolvedEventId]
   ) || { totalRegistered: 0, totalCheckedIn: 0, totalFoodEligible: 0, totalFoodClaimed: 0 };
 
-  // Calculate percentage progress for active mode
   const currentCount = scanMode === 'CHECK_IN' ? deskMetrics.totalCheckedIn : scanMode === 'FOOD_CLAIM' ? deskMetrics.totalFoodClaimed : deskMetrics.totalRegistered;
   const currentTotal = scanMode === 'CHECK_IN' ? deskMetrics.totalRegistered : scanMode === 'FOOD_CLAIM' ? deskMetrics.totalFoodEligible : deskMetrics.totalRegistered;
   const progressPercent = currentTotal > 0 ? Math.min(100, Math.round((currentCount / currentTotal) * 100)) : 0;
 
-  // 4. HYDRATION ENGINE: FETCH FROM POSTGRESQL AND STORE assignedDesk IN INDEXEDDB
-  const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null, forceRefresh = false) => {
+  // FAST-TAP FOOD CLAIM CONFIRMATION HANDLER
+  const handleConfirmFoodClaim = async (guest: any) => {
+    const recordId = guest.id || guest.guestId;
+    if (!recordId) return;
+
+    setClaimActionLoadingId(recordId);
+    try {
+      if (!db.isOpen()) await db.open();
+
+      const timestamp = Date.now();
+      await db.guests.update(Number(recordId) || recordId, {
+        hasFoodClaimed: true,
+        foodClaimedTime: timestamp,
+        syncStatus: 'pending'
+      });
+
+      if (navigator.onLine && guest.qrToken) {
+        await fetch('/api/sync/food-claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ qrToken: guest.qrToken, eventId: resolvedEventId })
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.error('Failed to confirm food claim locally:', err);
+    } finally {
+      setClaimActionLoadingId(null);
+    }
+  };
+
+  // FILTERED & DESCENDING SORTED GUESTS FOR FOOD CLAIM DESK SEARCH
+  const checkedInGuestsForFood = useMemo(() => {
+    return checkedInGuestsList.filter(g => {
+      if (foodSearchQuery.trim()) {
+        const query = foodSearchQuery.toLowerCase();
+        const nameMatch = g.name?.toLowerCase().includes(query);
+        const tokenMatch = (g.qrToken || g.qr_token)?.toLowerCase().includes(query);
+        if (!nameMatch && !tokenMatch) return false;
+      }
+      return true;
+    });
+  }, [checkedInGuestsList, foodSearchQuery]);
+
+  const hydrateWorkspaceFromPostgres = async (identifier: string, targetEventId?: number | null) => {
     if (!navigator.onLine) return;
     setIsHydrating(true);
     setSyncMessage('Fetching event data & guest manifests from cloud...');
@@ -191,8 +265,6 @@ export default function VolunteerCheckInPanel() {
           });
         }
       });
-
-      console.log('✅ Local IndexedDB successfully populated from PostgreSQL (including assignedDesk).');
     } catch (err) {
       console.error('❌ Sync hydration error:', err);
     } finally {
@@ -232,7 +304,6 @@ export default function VolunteerCheckInPanel() {
     );
   }
 
-  // Non-blocking fallback: Render main shell with loading overlay if needed rather than unmounting entire layout
   if (!activeEvent && !isHydrating) {
     return (
       <div className={`h-screen w-full flex flex-col items-center justify-center p-6 text-center ${isDark ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-900'}`}>
@@ -254,7 +325,7 @@ export default function VolunteerCheckInPanel() {
   };
 
   return (
-    <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-between overflow-x-hidden custom-scrollbar`}>
+    <div className={`min-h-screen ${theme.bg} ${theme.textMain} transition-colors duration-500 flex flex-col justify-between overflow-x-hidden custom-scrollbar pt-12 sm:pt-16`}>
       
       {/* HEADER */}
       <header className={`sticky top-0 z-40 w-full px-6 py-4 border-b ${isDark ? 'border-white/5' : 'border-slate-200'} backdrop-blur-xl bg-inherit/80 flex items-center justify-between`}>
@@ -273,14 +344,11 @@ export default function VolunteerCheckInPanel() {
           </div>
         </div>
 
-        {/* SMALL SCREEN HEADER CONTROLS */}
         <div className="flex sm:hidden items-center gap-2">
           <SyncStatusBar />
-
           <button
             onClick={() => setIsUtilitiesOpen(!isUtilitiesOpen)}
             className={`p-2 rounded-xl border transition-all ${theme.inputBg}`}
-            aria-label="Toggle Header Menu"
           >
             {isUtilitiesOpen ? <X size={18} /> : <MoreVertical size={18} />}
           </button>
@@ -302,83 +370,11 @@ export default function VolunteerCheckInPanel() {
             </div>
           </button>
 
-          <div className="relative">
-            <button 
-              onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-              className={`w-10 h-10 rounded-xl border flex items-center justify-center relative transition-all ${theme.inputBg}`}
-            >
-              <Bell size={16} className={isNotificationsOpen ? 'text-purple-500' : 'text-slate-400'} />
-              {recentCheckIns.length > 0 && (
-                <div className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-red-500 rounded-full border border-inherit" />
-              )}
-            </button>
-
-            {isNotificationsOpen && (
-              <div className={`absolute top-full right-0 mt-3 w-72 rounded-3xl border p-4 z-50 animate-in fade-in zoom-in-95 ${theme.dropdownMenu}`}>
-                <div className="flex justify-between items-center mb-3 px-1">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Your Recent Scans</span>
-                  <span className="text-[8px] font-mono font-bold bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded-md">Live</span>
-                </div>
-                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
-                  {recentCheckIns.slice(0, 3).map((g: any) => (
-                    <div key={g.id} className="p-2.5 rounded-lg bg-white/5 border border-white/5 text-[10px] flex flex-col gap-0.5">
-                      <p className="font-bold truncate">
-                        ✓ <span className="text-purple-400">{g.name}</span> verified.
-                      </p>
-                      <span className="text-[8px] text-slate-500 font-mono">
-                        {new Date(g.checkInTime || g.foodClaimedTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  ))}
-                  {recentCheckIns.length === 0 && (
-                    <p className="text-[11px] text-center py-4 text-slate-500 font-medium">No passes processed yet.</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
           <LogoutButton />
         </div>
-
-        {/* COLLAPSIBLE SECONDARY MENU FOR SMALL SCREENS */}
-        {isUtilitiesOpen && (
-          <div className={`sm:hidden absolute top-full right-6 mt-2 p-4 rounded-2xl border z-50 shadow-2xl flex flex-col gap-3 animate-in slide-in-from-top-2 duration-200 ${theme.dropdownMenu}`}>
-            <div className="flex items-center justify-between gap-6">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Theme Switch</span>
-              <button 
-                onClick={() => setIsDark(!isDark)} 
-                className={`w-9 h-9 rounded-xl border flex items-center justify-center relative overflow-hidden ${theme.inputBg}`}
-              >
-                {isDark ? <Moon size={15} className="text-purple-400" /> : <Sun size={15} className="text-amber-500" />}
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between gap-6">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Recent Scans</span>
-              <button 
-                onClick={() => {
-                  setIsNotificationsOpen(!isNotificationsOpen);
-                  setIsUtilitiesOpen(false);
-                }}
-                className={`w-9 h-9 rounded-xl border flex items-center justify-center relative ${theme.inputBg}`}
-              >
-                <Bell size={15} className="text-purple-500" />
-                {recentCheckIns.length > 0 && (
-                  <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
-                )}
-              </button>
-            </div>
-
-            <div className="pt-2 border-t border-inherit flex items-center justify-between gap-6">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Terminal Exit</span>
-              <LogoutButton />
-            </div>
-          </div>
-        )}
       </header>
 
-      {/* CORE CONTROL COUNTER SUB-PANEL */}
+      {/* CORE CONTROL COUNTER SUB-PANEL WITH DIRECTORY INSPECTION BUTTONS */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
         
         {/* RESTRICTED 3-WAY MODE SELECTOR BRIDGE */}
@@ -421,7 +417,7 @@ export default function VolunteerCheckInPanel() {
           </button>
         </div>
 
-        {/* CONTEXTUAL RATIO STAT CARD (ADAPTS TO CHECK_IN VS FOOD_CLAIM VS REGISTRATION) */}
+        {/* CONTEXTUAL RATIO STAT CARD WITH QUICK DIRECTORY BUTTONS */}
         <div className={`w-full max-w-xs p-5 rounded-2xl border flex flex-col gap-3 ${theme.card}`}>
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
@@ -438,13 +434,33 @@ export default function VolunteerCheckInPanel() {
               </p>
             </div>
             
-            <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border ${
-              scanMode === 'CHECK_IN' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
-              scanMode === 'FOOD_CLAIM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
-              'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-            }`}>
-              {scanMode === 'REGISTRATION' ? deskMetrics.totalRegistered : `${progressPercent}%`}
-            </span>
+            <div className="flex items-center gap-1.5">
+              {scanMode === 'CHECK_IN' && (
+                <button
+                  onClick={() => setActiveModalList('checkin')}
+                  className="px-2 py-0.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                  title="View Checked-in List"
+                >
+                  <Eye size={11} /> List
+                </button>
+              )}
+              {scanMode === 'FOOD_CLAIM' && (
+                <button
+                  onClick={() => setActiveModalList('food')}
+                  className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                  title="View Food Claimed List"
+                >
+                  <Eye size={11} /> List
+                </button>
+              )}
+              <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border ${
+                scanMode === 'CHECK_IN' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
+                scanMode === 'FOOD_CLAIM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
+                'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              }`}>
+                {scanMode === 'REGISTRATION' ? deskMetrics.totalRegistered : `${progressPercent}%`}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-baseline justify-between">
@@ -465,7 +481,6 @@ export default function VolunteerCheckInPanel() {
             )}
           </div>
 
-          {/* STREAM PROGRESS BAR */}
           <div className="w-full h-2 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
             <div 
               className={`h-full rounded-full transition-all duration-500 ${
@@ -478,8 +493,8 @@ export default function VolunteerCheckInPanel() {
         </div>
       </div>
 
-      {/* TARGETED CENTRAL ZONE: SHOWS SCAN BUTTON OR SPOT-REGISTRATION BOXED FORM */}
-      <div className="flex-1 flex flex-col justify-center items-center p-6 my-auto w-full max-w-xl mx-auto">
+      {/* TARGETED CENTRAL ZONE */}
+      <div className="flex-1 flex flex-col justify-center items-center p-4 sm:p-6 my-auto w-full max-w-xl mx-auto">
         {scanMode === 'REGISTRATION' ? (
           <div className={`w-full rounded-[2.5rem] p-6 sm:p-8 border shadow-2xl animate-in fade-in zoom-in-95 duration-200 ${theme.card}`}>
             <div className="flex items-center justify-between pb-4 mb-6 border-b border-inherit">
@@ -489,12 +504,12 @@ export default function VolunteerCheckInPanel() {
                 </div>
                 <div>
                   <h3 className="text-base font-black uppercase tracking-wider">Spot-Registration</h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Issue New Pass on-spot on event day and during event.</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Issue New Pass on-spot on event day.</p>
                 </div>
               </div>
             </div>
 
-            {activeEvent ? (
+            {activeEvent && (
               <UniversalRegistrationForm 
                 event={{ 
                   ...activeEvent, 
@@ -502,27 +517,110 @@ export default function VolunteerCheckInPanel() {
                   type: (activeEvent.type as any) || 'event'
                 }} 
               />
-            ) : (
-              <div className="p-6 text-center">
-                <p className="text-xs font-bold text-slate-400">Loading event details for registration...</p>
-              </div>
             )}
+          </div>
+        ) : scanMode === 'FOOD_CLAIM' ? (
+          /* CHECKED-IN GUESTS LIST WITH TOKEN SEARCH & CONFIRM MEAL */
+          <div className={`w-full rounded-[2.5rem] p-5 sm:p-6 border shadow-2xl flex flex-col h-[60vh] max-h-[550px] animate-in fade-in duration-200 ${theme.card}`}>
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-inherit">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-600 text-white">
+                  <Utensils size={16} />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider">Food Claim Desk (Checked-In List)</h3>
+                  <p className="text-[9px] text-slate-400">Search by Token ID or name to issue meal voucher</p>
+                </div>
+              </div>
+            </div>
+
+            {/* TOKEN ID & NAME SEARCH INPUT */}
+            <div className="relative mb-3">
+              <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by Token ID (e.g. TICKET-...) or name..."
+                value={foodSearchQuery}
+                onChange={(e) => setFoodSearchQuery(e.target.value)}
+                className={`w-full border rounded-xl pl-10 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 ${theme.inputBg}`}
+              />
+            </div>
+
+            {/* STREAM OF CHECKED-IN ATTENDEES */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+              {checkedInGuestsForFood.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 text-xs font-semibold italic">
+                  No checked-in guests found matching token or name.
+                </div>
+              ) : (
+                checkedInGuestsForFood.map((guest) => {
+                  const hasClaimed = Boolean(guest.hasFoodClaimed || (guest as any).foodClaimed);
+                  const isActionLoading = claimActionLoadingId === (guest.id || guest.guestId);
+                  const tokenDisplay = guest.qrToken || guest.qr_token || 'N/A';
+
+                  return (
+                    <div 
+                      key={guest.id || guest.guestId} 
+                      className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+                        hasClaimed ? 'bg-amber-500/5 border-amber-500/25 opacity-75' : 'bg-white/5 border-white/5 hover:border-amber-500/40'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-black truncate">{guest.name}</h4>
+                          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-bold shrink-0">
+                            {guest.category || 'General'}
+                          </span>
+                        </div>
+
+                        {/* COMPETITION & AGE CATEGORY DISPLAY */}
+                        {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                          <p className="text-[10px] font-bold text-amber-400 flex items-center gap-1 mt-0.5">
+                            <Trophy size={10} />
+                            <span>{guest.competitionTitle || 'General Track'}</span>
+                            {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
+                          </p>
+                        )}
+
+                        {/* TOKEN ID DISPLAY */}
+                        <div className="text-[10px] text-slate-400 font-mono mt-1 flex items-center gap-1.5">
+                          <span className="bg-white/10 px-1.5 py-0.5 rounded text-slate-300 font-bold">Token: {tokenDisplay}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        disabled={hasClaimed || isActionLoading}
+                        onClick={() => handleConfirmFoodClaim(guest)}
+                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed ${
+                          hasClaimed 
+                            ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30' 
+                            : 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/30'
+                        }`}
+                      >
+                        {isActionLoading ? (
+                          <Loader size={13} className="animate-spin" />
+                        ) : hasClaimed ? (
+                          <>
+                            <CheckCircle2 size={13} /> Claimed
+                          </>
+                        ) : (
+                          <>
+                            <Utensils size={13} /> Give Food
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         ) : (
           <div className="relative flex items-center justify-center">
-            {/* OUTER RADAR PULSE GLOW */}
-            <div className={`absolute -inset-4 rounded-full opacity-30 animate-ping ${
-              scanMode === 'CHECK_IN' ? 'bg-purple-500' : 'bg-amber-500'
-            }`} />
-
-            {/* MAIN ENLARGED SCAN BUTTON */}
+            <div className="absolute -inset-4 rounded-full opacity-30 animate-ping bg-purple-500" />
             <button 
               onClick={() => setIsScanning(true)}
-              className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 ${
-                scanMode === 'CHECK_IN' 
-                  ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-600/40 ring-8 ring-purple-500/20' 
-                  : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/40 ring-8 ring-amber-500/20'
-              }`}
+              className="relative w-48 h-48 sm:w-56 sm:h-56 rounded-full flex flex-col items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all border-4 border-white/20 group hover:scale-105 bg-purple-600 hover:bg-purple-700 shadow-purple-600/40 ring-8 ring-purple-500/20"
             >
               <QrCode size={56} className="group-hover:scale-110 transition-transform text-white drop-shadow-md" />
               <span className="text-xs font-black uppercase tracking-[0.2em] text-white/90 drop-shadow">
@@ -533,16 +631,90 @@ export default function VolunteerCheckInPanel() {
         )}
       </div>
 
+      {/* MODAL LIST INSPECTOR (CHECK-IN LIST VS FOOD CLAIMED LIST) */}
+      {activeModalList && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className={`w-full max-w-lg rounded-[2.5rem] border p-6 shadow-2xl flex flex-col max-h-[85vh] ${isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}>
+            
+            <div className="flex items-center justify-between pb-4 border-b border-inherit mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-xl ${activeModalList === 'checkin' ? 'bg-purple-500/10 text-purple-400' : 'bg-amber-500/10 text-amber-500'}`}>
+                  {activeModalList === 'checkin' ? <QrCode size={18} /> : <Utensils size={18} />}
+                </div>
+                <h3 className="text-base font-black uppercase tracking-wider">
+                  {activeModalList === 'checkin' ? 'Checked-In Guests Directory' : 'Food Claimed Vouchers Directory'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setActiveModalList(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+              {(activeModalList === 'checkin' ? checkedInGuestsList : foodScannedGuestsList).length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-xs font-semibold">
+                  No records found in this category yet.
+                </div>
+              ) : (
+                (activeModalList === 'checkin' ? checkedInGuestsList : foodScannedGuestsList).map((guest: any, idx: number) => (
+                  <div key={guest.id || idx} className={`p-3.5 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-slate-400">#{idx + 1}</span>
+                        <h4 className="text-xs font-bold">{guest.name}</h4>
+                        <span className="text-[9px] uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-bold">
+                          {guest.category || 'General'}
+                        </span>
+                      </div>
+                      
+                      {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                        <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-1">
+                          <Trophy size={10} />
+                          <span>Track: {guest.competitionTitle || 'General Track'}</span>
+                          {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
+                        </p>
+                      )}
+
+                      <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                        Token: {guest.qrToken || guest.qr_token || 'N/A'}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg ${activeModalList === 'checkin' ? 'bg-purple-500/10 text-purple-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                      {activeModalList === 'checkin' 
+                        ? (guest.checkInTime ? new Date(guest.checkInTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Verified') 
+                        : (guest.foodClaimedTime ? new Date(guest.foodClaimedTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Claimed')}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-inherit mt-4 flex justify-end">
+              <button
+                onClick={() => setActiveModalList(null)}
+                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-md"
+              >
+                Close Directory
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* FOOTER BAR */}
       <footer className={`p-4 text-center border-t ${isDark ? 'border-white/5 text-slate-600' : 'border-slate-200 text-slate-400'} text-[8px] font-black uppercase tracking-[0.2em]`}>
         Mithila Aayojan Encryption Lock Edge Terminal Secure Active
       </footer>
 
-      {/* DETACHED CAMERA SCANNER ENGINE PORTAL */}
-      {isScanning && resolvedEventId && scanMode !== 'REGISTRATION' && (
+      {/* CAMERA SCANNER ENGINE PORTAL (CHECK-IN DESK ONLY) */}
+      {isScanning && resolvedEventId && scanMode === 'CHECK_IN' && (
         <EventScanner 
           currentEventId={resolvedEventId}
-          variant={scanMode === 'CHECK_IN' ? 'purple' : 'amber'}
+          variant="purple"
           isDark={isDark}
           scanMode={scanMode}
           onClose={() => setIsScanning(false)}
