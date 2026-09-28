@@ -3,12 +3,24 @@
 
 import React, { useState, useEffect } from 'react';
 import { Download, X } from 'lucide-react';
+import { db } from '../lib/db';
 
-export default function PWAInstallBanner() {
+export default function PWAInstallBanner({ eventId }: { eventId?: number | null }) {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Delay mounting evaluation until initial hydration finishes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsHydrated(true);
+    }, 1500); // 1.5s grace period for PublicEventPortal to hydrate & render
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
+    if (!isHydrated) return;
+
     const handleBeforeInstallPrompt = (e: Event) => {
       // Prevent the mini-infobar from appearing on mobile
       e.preventDefault();
@@ -17,7 +29,31 @@ export default function PWAInstallBanner() {
       setIsVisible(true);
     };
 
+    const handleAppInstalled = async () => {
+      try {
+        if (!db.isOpen()) await db.open();
+
+        const timestamp = Date.now();
+        const userAgent = navigator.userAgent;
+
+        // Verify if installations table exists before writing
+        if (db.tables.some(t => t.name === 'installations')) {
+          await db.table('installations').add({
+            eventId: eventId || null,
+            isStandalone: true,
+            installedAt: timestamp,
+            userAgent,
+            syncStatus: 'pending'
+          });
+          console.log('🎉 PWA Installation Captured & Logged to Telemetry Matrix!');
+        }
+      } catch (err) {
+        console.error('Failed to log PWA installation metric:', err);
+      }
+    };
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
 
     // Check if already installed
     if (window.matchMedia('(display-mode: standalone)').matches) {
@@ -26,8 +62,9 @@ export default function PWAInstallBanner() {
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, []);
+  }, [isHydrated, eventId]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -49,7 +86,7 @@ export default function PWAInstallBanner() {
     setIsVisible(false);
   };
 
-  if (!isVisible) return null;
+  if (!isHydrated || !isVisible) return null;
 
   return (
     <aside aria-label="App Installation" className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 bg-slate-900 border border-slate-800 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-bottom-5 duration-300">
@@ -65,12 +102,14 @@ export default function PWAInstallBanner() {
 
       <div className="flex items-center gap-2 shrink-0">
         <button
+          type="button"
           onClick={handleInstallClick}
           className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 cursor-pointer"
         >
           Install
         </button>
         <button
+          type="button"
           onClick={() => setIsVisible(false)}
           aria-label="Close install banner"
           className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"

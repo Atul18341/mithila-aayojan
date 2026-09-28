@@ -10,7 +10,7 @@ import {
   Settings, Bell, Clock, Calendar, Sparkles, Plus,
   Heart, Briefcase, Globe, X, ShieldCheck, UserCheck,
   Pencil, Sun, Moon, ChevronDown, Layers, Menu, Utensils, Ticket,
-  User, Crown, ChevronRight, Eye, Trophy, FileText
+  User, Crown, ChevronRight, Eye, Trophy, FileText, BarChart3, Smartphone, Laptop
 } from 'lucide-react';
 
 import { db } from '../../lib/db';
@@ -46,6 +46,9 @@ export default function ManagerDashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [isManagingVolunteers, setIsManagingVolunteers] = useState(false);
+
+  // Active View Tab State ('overview' | 'telemetry')
+  const [activeTab, setActiveTab] = useState<'overview' | 'telemetry'>('overview');
 
   // Modal State for Lists (Check-in List vs Food Claim List)
   const [activeModalList, setActiveModalList] = useState<'checkin' | 'food' | null>(null);
@@ -108,12 +111,21 @@ export default function ManagerDashboard() {
       .limit(10)
       .toArray();
 
+    // Fetch installation / telemetry logs for the active event if table exists
+    let installationLogs: any[] = [];
+    try {
+      if (db.tables.some(t => t.name === 'installations')) {
+        installationLogs = await db.table('installations').where('eventId').equals(session.activeEventId).toArray();
+      }
+    } catch (e) {
+      // Table might not be initialized yet
+    }
+
     const totalRegistrations = targetGuests.length;
     const liveCheckIns = targetGuests.filter(g => Boolean(g.checkInTime || g.isCheckedIn)).length;
     const foodIssued = targetGuests.filter(g => Boolean(g.hasFoodAccess || (g as any).foodIncluded)).length;
     const foodScanned = targetGuests.filter(g => Boolean(g.hasFoodClaimed || (g as any).foodClaimed)).length;
 
-    // Full lists for inspection modals sorted in descending order of check-in / claim time
     const checkedInGuestsList = targetGuests
       .filter(g => Boolean(g.checkInTime || g.isCheckedIn))
       .sort((a, b) => (b.checkInTime || 0) - (a.checkInTime || 0));
@@ -131,7 +143,8 @@ export default function ManagerDashboard() {
       foodScanned,
       recentCheckIns,
       checkedInGuestsList,
-      foodScannedGuestsList
+      foodScannedGuestsList,
+      installationLogs
     };
   }, [currentManagerEmail]);
 
@@ -139,6 +152,7 @@ export default function ManagerDashboard() {
   const recentCheckIns = currentWorkspace?.recentCheckIns || [];
   const checkedInGuestsList = currentWorkspace?.checkedInGuestsList || [];
   const foodScannedGuestsList = currentWorkspace?.foodScannedGuestsList || [];
+  const installationLogs = currentWorkspace?.installationLogs || [];
   
   const totalRegistrationCount = currentWorkspace?.totalRegistrations || 0;
   const totalCheckInCount = currentWorkspace?.liveCheckIns || 0;
@@ -159,7 +173,6 @@ export default function ManagerDashboard() {
     (activeEvent?.competitions && activeEvent.competitions.length > 0)
   );
 
-  // PDF Download Handler for Check-In List
   const handleDownloadCheckInPdf = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -501,125 +514,211 @@ export default function ManagerDashboard() {
           </div>
         ) : (
           <>
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
-              
-              <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`p-2.5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-slate-100'} text-emerald-500`}>
-                      <QrCode size={18} />
+            {/* VIEW SUB-TAB TOGGLE (OVERVIEW VS TELEMETRY) */}
+            <div className="flex items-center gap-2 border-b border-inherit pb-4">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'overview' 
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                    : `${theme.inputBg} text-slate-400 hover:text-slate-200`
+                }`}
+              >
+                Overview & Streams
+              </button>
+              <button
+                onClick={() => setActiveTab('telemetry')}
+                className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'telemetry' 
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                    : `${theme.inputBg} text-slate-400 hover:text-slate-200`
+                }`}
+              >
+                <BarChart3 size={14} /> System Telemetry
+              </button>
+            </div>
+
+            {activeTab === 'telemetry' ? (
+              /* TELEMETRY & INSTALLATION METRICS TAB */
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className={`border p-5 rounded-2xl ${theme.card}`}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Total Terminal Sessions</p>
+                    <h3 className="text-2xl font-black font-mono">{installationLogs.length}</h3>
+                  </div>
+                  <div className={`border p-5 rounded-2xl ${theme.card}`}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Standalone PWA Installs</p>
+                    <h3 className="text-2xl font-black font-mono text-emerald-500">
+                      {installationLogs.filter((l: any) => l.isStandalone).length}
+                    </h3>
+                  </div>
+                  <div className={`border p-5 rounded-2xl ${theme.card}`}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Browser / Web Clients</p>
+                    <h3 className="text-2xl font-black font-mono text-blue-500">
+                      {installationLogs.filter((l: any) => !l.isStandalone).length}
+                    </h3>
+                  </div>
+                </div>
+
+                <div className={`border p-6 rounded-[2rem] ${theme.card}`}>
+                  <h3 className="text-sm font-black uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <BarChart3 size={16} className="text-blue-500" /> Active Terminal Environment Logs
+                  </h3>
+                  {installationLogs.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs font-semibold">
+                      No installation telemetry logs recorded for this event yet.
                     </div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                      Gate Attendance Stream
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setActiveModalList('checkin')}
-                      className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
-                      title="View Checked-in List"
-                    >
-                      <Eye size={12} />
-                      <span>List</span>
-                    </button>
-                    <span className="text-xs font-mono font-black text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
-                      {gateCheckInPercent}%
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <div className="text-3xl font-black uppercase tracking-tight flex items-baseline gap-2">
-                    {totalCheckInCount}
-                    <span className="text-sm font-bold text-slate-500 uppercase">
-                      / {totalRegistrationCount} Verified
-                    </span>
-                  </div>
-                </div>
-
-                <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
-                    style={{ width: `${gateCheckInPercent}%` }} 
-                  />
-                </div>
-              </div>
-
-              <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`p-2.5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-slate-100'} text-amber-500`}>
-                      <Utensils size={18} />
-                    </div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                      Meal Catering Vouchers
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setActiveModalList('food')}
-                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
-                      title="View Food Claimed List"
-                    >
-                      <Eye size={12} />
-                      <span>List</span>
-                    </button>
-                    <span className="text-xs font-mono font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
-                      {mealClaimPercent}%
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <div className="text-3xl font-black uppercase tracking-tight flex items-baseline gap-2">
-                    {foodScannedCount}
-                    <span className="text-sm font-bold text-slate-500 uppercase">
-                      / {foodIssuedCount} Claimed
-                    </span>
-                  </div>
-                </div>
-
-                <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-amber-500 rounded-full transition-all duration-500" 
-                    style={{ width: `${mealClaimPercent}%` }} 
-                  />
-                </div>
-              </div>
-
-            </section>
-
-            <section className={`border p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] animate-in slide-in-from-bottom-6 duration-500 ${theme.card}`}>
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-base sm:text-lg font-black italic">Recent Entry Streams</h3>
-              </div>
-              {recentCheckIns.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500 font-bold italic">Awaiting system entries...</div>
-              ) : (
-                <div className="divide-y divide-white/5 border border-white/5 rounded-3xl overflow-hidden">
-                  {recentCheckIns.map((guest: any) => {
-                    const colors = GUEST_COLOR_MAP[guest.type as keyof typeof GUEST_COLOR_MAP] || GUEST_COLOR_MAP.delegate;
-                    return (
-                      <div key={guest.id} className={`p-4 flex items-center justify-between transition-colors ${isDark ? 'hover:bg-white/[0.02]' : 'hover:bg-slate-50'}`}>
-                        <div className="flex items-center gap-4">
-                          <div className={`w-2.5 h-2.5 rounded-full ${colors.dot} shrink-0`} />
-                          <div>
-                            <p className="text-sm font-black tracking-tight">{guest.name}</p>
-                            {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
-                              <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-0.5">
-                                <Trophy size={10} /> 
-                                <span>Track: {guest.competitionTitle || 'General Competition Track'}</span>
-                                {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
-                              </p>
-                            )}
+                  ) : (
+                    <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar pr-1">
+                      {installationLogs.map((log: any, idx: number) => (
+                        <div key={log.id || idx} className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${theme.inputBg}`}>
+                          <div className="flex items-center gap-3">
+                            {log.isStandalone ? <Smartphone size={16} className="text-emerald-500" /> : <Laptop size={16} className="text-blue-500" />}
+                            <div>
+                              <div className="font-bold flex items-center gap-2">
+                                <span>{log.isStandalone ? 'PWA Standalone App' : 'Browser Client'}</span>
+                                <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded ${log.isStandalone ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                  {log.isStandalone ? 'Installed' : 'Web Browser'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 truncate max-w-xs sm:max-w-md font-mono mt-0.5">{log.userAgent}</p>
+                            </div>
                           </div>
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {new Date(log.installedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </div>
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </section>
+              </div>
+            ) : (
+              /* OVERVIEW TAB */
+              <div className="space-y-8 animate-in fade-in duration-300">
+                <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  
+                  {/* GATE ATTENDANCE CARD */}
+                  <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-2.5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-slate-100'} text-emerald-500`}>
+                          <QrCode size={18} />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          Gate Attendance Stream
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setActiveModalList('checkin')}
+                          className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                          title="View Checked-in List"
+                        >
+                          <Eye size={12} />
+                          <span>List</span>
+                        </button>
+                        <span className="text-xs font-mono font-black text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
+                          {gateCheckInPercent}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <div className="text-3xl font-black uppercase tracking-tight flex items-baseline gap-2">
+                        {totalCheckInCount}
+                        <span className="text-sm font-bold text-slate-500 uppercase">
+                          / {totalRegistrationCount} Verified
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
+                        style={{ width: `${gateCheckInPercent}%` }} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* MEAL CATERING CARD */}
+                  <div className={`border p-6 rounded-[2rem] flex flex-col justify-between ${theme.card}`}>
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-2.5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-slate-100'} text-amber-500`}>
+                          <Utensils size={18} />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          Meal Catering Vouchers
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setActiveModalList('food')}
+                          className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer"
+                          title="View Food Claimed List"
+                        >
+                          <Eye size={12} />
+                          <span>List</span>
+                        </button>
+                        <span className="text-xs font-mono font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
+                          {mealClaimPercent}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <div className="text-3xl font-black uppercase tracking-tight flex items-baseline gap-2">
+                        {foodScannedCount}
+                        <span className="text-sm font-bold text-slate-500 uppercase">
+                          / {foodIssuedCount} Claimed
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-2.5 bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-amber-500 rounded-full transition-all duration-500" 
+                        style={{ width: `${mealClaimPercent}%` }} 
+                      />
+                    </div>
+                  </div>
+
+                </section>
+
+                <section className={`border p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] ${theme.card}`}>
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-base sm:text-lg font-black italic">Recent Entry Streams</h3>
+                  </div>
+                  {recentCheckIns.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500 font-bold italic">Awaiting system entries...</div>
+                  ) : (
+                    <div className="divide-y divide-white/5 border border-white/5 rounded-3xl overflow-hidden">
+                      {recentCheckIns.map((guest: any) => {
+                        const colors = GUEST_COLOR_MAP[guest.type as keyof typeof GUEST_COLOR_MAP] || GUEST_COLOR_MAP.delegate;
+                        return (
+                          <div key={guest.id} className={`p-4 flex items-center justify-between transition-colors ${isDark ? 'hover:bg-white/[0.02]' : 'hover:bg-slate-50'}`}>
+                            <div className="flex items-center gap-4">
+                              <div className={`w-2.5 h-2.5 rounded-full ${colors.dot} shrink-0`} />
+                              <div>
+                                <p className="text-sm font-black tracking-tight">{guest.name}</p>
+                                {isMultiCompEvent && (guest.category === 'event-participant' || guest.competitionTitle) && (
+                                  <p className="text-[10px] font-bold text-blue-500 flex items-center gap-1 mt-0.5">
+                                    <Trophy size={10} /> 
+                                    <span>Track: {guest.competitionTitle || 'General Competition Track'}</span>
+                                    {guest.ageGroupLabel && <span className="text-slate-400 font-normal">({guest.ageGroupLabel})</span>}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
           </>
         )}
       </main>

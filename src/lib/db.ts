@@ -212,23 +212,31 @@ export interface EventRegistration {
   syncStatus: string;                  //
   registrationTimestamp: number;       // Date.now()
 }
-
+export interface InstallationLog {
+  id?: number;
+  eventId?: number | null;
+  isStandalone: boolean;      // True if running as installed PWA, false if in standard browser
+  installedAt: number;        // Timestamp (Date.now()) of the session log
+  userAgent: string;          // Browser / Device user-agent string
+  syncStatus: 'pending' | 'synced'; // Offline sync status flag
+}
 export class AayojanDB extends Dexie {
   events!: Table<Events>;
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
   eventRegistrations!: Table<EventRegistration>; //
-
+  installations!:Table<InstallationLog>;
   constructor() {
     super('MithilaAayojanDB'); //
     // Bumped database version to 9 to index whatsapp_number & helpline_number
-    this.version(9).stores({
+    this.version(10).stores({
       events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus', //
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus', //
       users: '++id, email, identifier, role, activeEventId, syncStatus', //
       managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus', //
-      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus' //
+      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus', //
+      installations: '++id, eventId, isStandalone, syncStatus'
     });
   }
 }

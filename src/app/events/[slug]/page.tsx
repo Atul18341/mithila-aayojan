@@ -4,6 +4,7 @@
 import React, { useState, useEffect, use } from 'react';
 import { db } from '../../../lib/db'; 
 import PublicEventPortal from './PublicEventPortal';
+import PWAInstallBanner from '@/components/PWAInstallBanner';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 interface PageProps {
@@ -255,5 +256,10 @@ export default function EventDynamicRoutingWrapper({ params }: PageProps) {
     );
   }
 
-  return <PublicEventPortal event={eventRecord} />;
+  return (
+    <>
+      <PublicEventPortal event={eventRecord} />
+      <PWAInstallBanner eventId={eventRecord?.id} />
+    </>
+  );
 }
