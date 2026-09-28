@@ -249,7 +249,7 @@ export async function POST(request: Request) {
         const coverMedia = base64ToBuffer(ev.coverBlobBase64);
         if (coverMedia) {
           finalCoverName = `event-${generatedSlug}-cover.webp`;
-          const finalCoverKey = `event-banner/${finalCoverName}`;
+          const finalCoverKey = `event-cover-image/${finalCoverName}`;
           await r2Client.send(new PutObjectCommand({
             Bucket: bucketName,
             Key: finalCoverKey,
@@ -264,7 +264,7 @@ export async function POST(request: Request) {
         const posterMedia = base64ToBuffer(ev.posterBlobBase64);
         if (posterMedia) {
           finalPosterName = `event-${generatedSlug}-poster.webp`;
-          const finalPosterKey = `event-cover-image/${finalPosterName}`;
+          const finalPosterKey = `event-banner/${finalPosterName}`;
           await r2Client.send(new PutObjectCommand({
             Bucket: bucketName,
             Key: finalPosterKey,
