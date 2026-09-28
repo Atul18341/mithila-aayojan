@@ -121,6 +121,41 @@ export interface Events {
   };
 }
 
+export interface EventRegistration {
+  // Primary Keys & Identifiers
+  id?: number;                         // Local Dexie auto-increment ID
+  registrationId: string;              // Public unique pass ID (e.g., 'REG-982314')
+  eventId: string | number;            // Associated Event ID
+  // Attendee Core Profile
+  name: string;                        //
+  email: string;                       //
+  phone: string;                       //
+  category: AttendeeCategory;          //
+  
+  // 🟢 Selected Competition & Age Group Identification
+  competitionId?: string | null;       //
+  competitionTitle?: string | null;    //
+  ageGroupId?: string | null;          //
+  ageGroupLabel?: string | null;       //
+
+  // 🟢 Verified Age Metadata
+  isAgeVerified?: boolean;             //
+  verifiedAge?: number | null;         //
+
+  customAnswers: Record<string, any>;  //
+  // Financial Audit Breakdown
+  basePrice: number;                   //
+  gstAmount: number;                   //
+  totalPrice: number;                  //
+  // Gateway Payment Verification
+  paymentId?: string;                  // Razorpay payment ID (or 'FREE_ENTRY')
+  orderId?: string | null;             // Razorpay order ID
+  // System Lifecycle & Sync Metadata
+  status: string;                      //
+  syncStatus: string;                  //
+  registrationTimestamp: number;       // Date.now()
+}
+
 export interface Guest {
   // Primary Keys & Linking
   id?: number;                          // Dexie local auto-increment primary key
@@ -134,9 +169,14 @@ export interface Guest {
   phone?: string | null;                // Optional contact details
   category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)
   
-  // 🟢 Competition & Age Group Meta for check-in
-  competitionTitle?: string | null;
-  ageGroupLabel?: string | null;
+  // 🟢 Competition & Age Group Meta derived from EventRegistration interface
+  competitionId?: string | null;       
+  competitionTitle?: string | null;    
+  ageGroupId?: string | null;          
+  ageGroupLabel?: string | null;       
+  isAgeVerified?: boolean;             
+  verifiedAge?: number | null;         
+  customAnswers?: Record<string, any>; 
 
   // Gate Security & QR Verification
   qrToken: string;                      // Encrypted or unique QR payload string
@@ -178,40 +218,6 @@ export interface ManagerEvents {
   syncStatus: 'synced' | 'pending';
 }
 
-export interface EventRegistration {
-  // Primary Keys & Identifiers
-  id?: number;                         // Local Dexie auto-increment ID
-  registrationId: string;              // Public unique pass ID (e.g., 'REG-982314')
-  eventId: string | number;            // Associated Event ID
-  // Attendee Core Profile
-  name: string;                        //
-  email: string;                       //
-  phone: string;                       //
-  category: AttendeeCategory;          //
-  
-  // 🟢 Selected Competition & Age Group Identification
-  competitionId?: string | null;       //
-  competitionTitle?: string | null;    //
-  ageGroupId?: string | null;          //
-  ageGroupLabel?: string | null;       //
-
-  // 🟢 Verified Age Metadata
-  isAgeVerified?: boolean;             //
-  verifiedAge?: number | null;         //
-
-  customAnswers: Record<string, any>;  //
-  // Financial Audit Breakdown
-  basePrice: number;                   //
-  gstAmount: number;                   //
-  totalPrice: number;                  //
-  // Gateway Payment Verification
-  paymentId?: string;                  // Razorpay payment ID (or 'FREE_ENTRY')
-  orderId?: string | null;             // Razorpay order ID
-  // System Lifecycle & Sync Metadata
-  status: string;                      //
-  syncStatus: string;                  //
-  registrationTimestamp: number;       // Date.now()
-}
 export interface InstallationLog {
   id?: number;
   eventId?: number | null;
@@ -220,6 +226,7 @@ export interface InstallationLog {
   userAgent: string;          // Browser / Device user-agent string
   syncStatus: 'pending' | 'synced'; // Offline sync status flag
 }
+
 export class AayojanDB extends Dexie {
   events!: Table<Events>;
   guests!: Table<Guest>;
@@ -229,7 +236,7 @@ export class AayojanDB extends Dexie {
   installations!:Table<InstallationLog>;
   constructor() {
     super('MithilaAayojanDB'); //
-    // Bumped database version to 9 to index whatsapp_number & helpline_number
+    // Bumped database version to 10 to index whatsapp_number & helpline_number
     this.version(10).stores({
       events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus', //
       guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus', //
@@ -241,4 +248,4 @@ export class AayojanDB extends Dexie {
   }
 }
 
-export const db = new AayojanDB(); //
+export const db = new AayojanDB();

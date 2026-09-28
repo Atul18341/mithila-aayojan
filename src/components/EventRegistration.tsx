@@ -1,30 +1,31 @@
-// src/components/EventEditor/EventDetailEditor.tsx
+// src/components/EventRegistration/UniversalRegistrationForm.tsx
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
-  X, Save, Briefcase, Layers, BookOpen, 
-  ShieldCheck, Globe, Award, Heart, GlassWater, 
-  Calendar, Info, Shield, Layout, MapPin, Plus, 
-  Eye, EyeOff, Settings2, Sparkles, CheckCircle2, 
-  Loader2, TrendingUp, Image as ImageIcon, UploadCloud, Clock,
-  Utensils, IndianRupee, Trophy, Trash2, UserCheck, FileText,
-  Edit2, RotateCcw, Users, MessageCircle, PhoneCall, Camera, Share2
+  Send, CheckCircle2, Loader2, User, Mail, Phone, Users, IndianRupee, 
+  Ticket, Trophy, AlertCircle, Layers,
+  Camera, Upload, X, AlertTriangle, BookOpen, Building2, Award, Share2
 } from 'lucide-react';
-import { type AttendeeCategory, db } from '../lib/db';
+import { getApplicableCategoriesForType, db } from '@/lib/db';
+import { loadRazorpayScript } from '@/hooks/useRazorpay';
+import { translations, Locale } from '@/lib/translations';
 
-const ATTENDEE_CATEGORIES: { id: AttendeeCategory; label: string }[] = [
-  { id: 'patron', label: 'Chief Patrons & Core Members' },
-  { id: 'dignitary', label: 'Dignitaries & VIPs' },
-  { id: 'speaker', label: 'Keynote Speakers & Panelists' },
-  { id: 'artisan', label: 'Cultural Artists & Artisans' },
-  { id: 'delegate', label: 'Registered Delegates' },
-  { id: 'trainee', label: 'Trainees & Scholars' },
-  { id: 'exhibitor', label: 'Exhibitors & Vendors' },
-  { id: 'general-public', label: 'General Visitors & Public' },
-  { id: 'event-participant', label: 'Event Participant' },
-  { id: 'ops-team', label: 'Operations & Logistics Team' }
-];
+export type AttendeeCategory = 
+  | 'patron' 
+  | 'dignitary'
+  | 'vip'
+  | 'sponsor' 
+  | 'speaker' 
+  | 'artisan' 
+  | 'delegate' 
+  | 'trainee' 
+  | 'exhibitor' 
+  | 'general-public' 
+  | 'event-participant'
+  | 'ops-team';
 
 export interface AgeGroup {
   id: string;
@@ -39,52 +40,87 @@ export interface SubCompetition {
   title: string;
   code: string;
   category?: string;
-  ageGroups: AgeGroup[];
   rules?: string;
+  ageGroups?: AgeGroup[];
 }
 
-export interface EventData {
-  id?: number;
-  name: string;
-  type: string;
-  date?: string;
-  endDate?: string;
-  isMultiDay?: boolean;
-  startTime?: string;
-  endTime?: string;
+export interface FoodConfig {
+  enabled: boolean;
+  strategy?: 'complimentary' | 'coupon-based' | 'paid-buffet' | 'self-arranged';
+  vendorDetails?: string;
+  availableForAll: 'yes' | 'no';
+  allowedCategories?: AttendeeCategory[] | string[];
+}
+
+const ATTENDEE_CATEGORY_KEYS: AttendeeCategory[] = [
+  'patron',
+  'dignitary',
+  'vip',
+  'sponsor',
+  'speaker',
+  'artisan',
+  'delegate',
+  'trainee',
+  'exhibitor',
+  'general-public',
+  'event-participant',
+  'ops-team'
+];
+
+const PUBLIC_EXCLUSIVE_CATEGORIES: AttendeeCategory[] = [
+  'sponsor',
+  'speaker',
+  'artisan',
+  'delegate',
+  'trainee',
+  'exhibitor',
+  'general-public',
+  'event-participant'
+];
+
+function checkFoodAccess(
+  category: AttendeeCategory | string | undefined | null,
+  foodConfig?: FoodConfig | null
+): boolean {
+  if (!foodConfig || !foodConfig.enabled) {
+    return false;
+  }
+
+  if (foodConfig.availableForAll === 'yes') {
+    return true;
+  }
+
+  if (!category) {
+    return false;
+  }
+
+  let allowed: string[] = [];
+  if (Array.isArray(foodConfig.allowedCategories)) {
+    allowed = foodConfig.allowedCategories;
+  } else if (typeof foodConfig.allowedCategories === 'string') {
+    try {
+      const parsed = JSON.parse(foodConfig.allowedCategories);
+      allowed = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      allowed = [];
+    }
+  }
+
+  return allowed.includes(category);
+}
+
+interface EventData {
+  id?: string;
+  slug?: string;
+  name?: string;
+  type: 'event' | 'celebration' | 'summit' | 'workshop' | 'conference' | 'exam' | 'competition';
   registrationEndDate?: string;
-  protocol: string;
-  whatsapp_number?: string;
-  whatsappNumber?: string;
-  helpline_number?: string;
-  helplineNumber?: string;
+  registration_end_date?: string;
   isMultiCompetition?: boolean;
-  competitions?: SubCompetition[];
   collectPhoto?: boolean;
   referralAllowed?: boolean;
-  tagline?: string;
-  description?: string;
-  venueName?: string;
-  location?: string;
-  organizerId?: number;
-  organizerName?: string;
-  organizerEmail?: string;
-  status?: 'draft' | 'published' | 'unpublished';
-  slug?: string;
-  hypeThreshold?: number;
-  visibility?: {
-    map: boolean;
-    rsvp: boolean;
-    schedule: boolean;
-    gallery: boolean;
-  };
-  foodConfig?: {
-    enabled: boolean;
-    strategy: 'complimentary' | 'coupon-based' | 'paid-buffet' | 'self-arranged';
-    vendorDetails: string;
-    availableForAll: 'yes' | 'no';
-    allowedCategories: AttendeeCategory[];
-  };
+  competitions?: SubCompetition[];
+  foodConfig?: FoodConfig;
   pricingConfig?: {
     isRequired: boolean;
     baseFee: number;
@@ -92,1410 +128,1159 @@ export interface EventData {
     applicableForAll: 'yes' | 'no';
     categoryFees: Record<AttendeeCategory, number>;
   };
-  coverBlob?: Blob | null;
-  posterBlob?: Blob | null;
-  createdAt: number;
+  [key: string]: any;
 }
 
-interface EventDetailEditorProps {
-  event: EventData | null;
-  isDark: boolean;
-  onClose: () => void;
-  onCreationSuccess: (newEventId: number) => Promise<void>;
-}
-
-interface CategoryConfig {
+interface CustomFieldConfig {
   id: string;
   label: string;
-  group: string;
-  icon: any;
-  defaultProtocol: 'ticketed' | 'open-registration' | 'invite-only';
+  type: 'text' | 'select' | 'textarea';
+  required: boolean;
+  options?: { value: string; label: string }[];
 }
 
-const COMPREHENSIVE_CATEGORIES: CategoryConfig[] = [
-  { id: 'exam', label: 'Exam / Scholarship Test', group: 'Educational & Training', icon: Award, defaultProtocol: 'ticketed' },
-  { id: 'conference', label: 'Conference / Summit', group: 'Corporate & Business', icon: Briefcase, defaultProtocol: 'ticketed' },
-  { id: 'trade-show', label: 'Trade Show / Expo', group: 'Corporate & Business', icon: Layers, defaultProtocol: 'open-registration' },
-  { id: 'workshop', label: 'Workshop / Seminar', group: 'Educational & Training', icon: BookOpen, defaultProtocol: 'open-registration' },
-  { id: 'training', label: 'Training Program', group: 'Educational & Training', icon: ShieldCheck, defaultProtocol: 'invite-only' },
-  { id: 'event', label: 'Sanwaad / Festival', group: 'Cultural & Community', icon: Globe, defaultProtocol: 'open-registration' },
-  { id: 'fundraiser', label: 'Charity / Gala', group: 'Cultural & Community', icon: Award, defaultProtocol: 'invite-only' },
-  { id: 'celebration', label: 'Celebration / Wedding', group: 'Social & Private', icon: Heart, defaultProtocol: 'invite-only' },
-  { id: 'private-party', label: 'Private Social / Gathering', group: 'Social & Private', icon: GlassWater, defaultProtocol: 'invite-only' }
-];
+interface UniversalRegistrationFormProps {
+  event: EventData;
+  lang?: Locale;
+}
 
-const compressToWebP = (file: File, maxDimension = 1200, quality = 0.75): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
+export default function UniversalRegistrationForm({ event, lang = 'en' }: UniversalRegistrationFormProps) {
+  const router = useRouter();
+  const t = translations[lang] || translations.en;
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<{ message: string; queryParam: string } | null>(null);
+  const [globalWarning, setGlobalWarning] = useState<string | null>(null);
+
+  // Field-specific inline error/warning states
+  const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
+
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    referralCode: '',
+    category: '' as AttendeeCategory | '',
+    competitionId: '',
+    ageGroupId: '',
+    photoBase64: '' as string | null,
+    customAnswers: {} as Record<string, string>
+  });
+
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [competitionsList, setCompetitionsList] = useState<SubCompetition[]>(
+    event.competitions || []
+  );
+  const [isMultiCompActive, setIsMultiCompActive] = useState<boolean>(
+    event.isMultiCompetition ?? (event.type === 'exam' || event.type === 'competition' || true)
+  );
+  const [isLoadingCompetitions, setIsLoadingCompetitions] = useState<boolean>(false);
+
+  const [pricing, setPricing] = useState({
+    basePrice: 0,
+    gstAmount: 0,
+    totalPrice: 0
+  });
+
+  const validateField = (fieldName: string, value: any): string => {
+    let warning = '';
+    switch (fieldName) {
+      case 'name':
+        if (!value || !value.trim()) {
+          warning = lang === 'hi' ? 'नाम दर्ज करना अनिवार्य है।' : lang === 'mai' ? 'नाम दर्ज करब अनिवार्य अछि।' : 'Full name is required.';
+        } else if (value.trim().length < 2) {
+          warning = lang === 'hi' ? 'कृपया कम से कम 2 अक्षरों का नाम दर्ज करें।' : lang === 'mai' ? 'कृपया कम सं कम 2 अक्षर क नाम लिखू।' : 'Name must be at least 2 characters.';
+        }
+        break;
+
+      case 'email':
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!value || !value.trim()) {
+          warning = lang === 'hi' ? 'ईमेल आईडी दर्ज करना अनिवार्य है।' : lang === 'mai' ? 'ईमेल पता दर्ज करब अनिवार्य अछि।' : 'Email address is required.';
+        } else if (!emailRegex.test(value.trim())) {
+          warning = lang === 'hi' ? 'कृपया एक वैध ईमेल पता दर्ज करें।' : lang === 'mai' ? 'कृपया एकटा वैध ईमेल पता दर्ज करू।' : 'Please enter a valid email address.';
+        }
+        break;
+
+      case 'phone':
+        const cleanDigits = String(value || '').replace(/\D/g, '');
+        if (!cleanDigits) {
+          warning = lang === 'hi' ? 'मोबाइल नंबर दर्ज करना अनिवार्य है।' : lang === 'mai' ? 'मोबाइल नंबर दर्ज करब अनिवार्य अछि।' : 'Mobile number is required.';
+        } else if (cleanDigits.length !== 10) {
+          warning = lang === 'hi' ? `मोबाइल नंबर में ठीक 10 अंक होने चाहिए (${cleanDigits.length}/10)` : lang === 'mai' ? `मोबाइल नंबर मे ठीक 10 अंक होबक चाही (${cleanDigits.length}/10)` : `Mobile number must be exactly 10 digits (${cleanDigits.length}/10).`;
+        }
+        break;
+
+      case 'category':
+        if (!value) {
+          warning = lang === 'hi' ? 'कृपया एक श्रेणी का चयन करें।' : lang === 'mai' ? 'कृपया एकटा श्रेणीक चयन करू।' : 'Please select an attendee category.';
+        }
+        break;
+
+      case 'competitionId':
+        if ((formData.category === 'event-participant' || event.type === 'exam') && isMultiCompActive && !value) {
+          warning = lang === 'hi' ? 'कृपया एक परीक्षा/प्रतियोगिता ट्रैक चुनें।' : lang === 'mai' ? 'कृपया एकटा परीक्षा ट्रैक चुनू।' : 'Please select an exam/competition track.';
+        }
+        break;
+
+      case 'ageGroupId':
+        if (availableAgeGroups.length > 0 && !value) {
+          warning = lang === 'hi' ? 'कृपया इस परीक्षा/प्रतियोगिता के लिए अपना आयु वर्ग चुनें।' : lang === 'mai' ? 'कृपया एहि परीक्षाक लेल अपन आयु वर्ग चुनू।' : 'Please select an age group or stream.';
+        }
+        break;
+
+      case 'photo':
+        if (event.collectPhoto !== false && !value) {
+          warning = lang === 'hi' ? 'प्रतिभागी की फोटो अपलोड या कैप्चर करना अनिवार्य है।' : lang === 'mai' ? 'प्रतिभागीक फोटो अपलोड या कैप्चर करब अनिवार्य अछि।' : 'Participant photo is required.';
+        }
+        break;
+
+      default:
+        break;
+    }
+    return warning;
+  };
+
+  const markTouchedAndValidate = (fieldName: string, value: any) => {
+    setTouchedFields(prev => ({ ...prev, [fieldName]: true }));
+    const errorMsg = validateField(fieldName, value);
+    setFieldWarnings(prev => {
+      const updated = { ...prev };
+      if (errorMsg) updated[fieldName] = errorMsg;
+      else delete updated[fieldName];
+      return updated;
+    });
+  };
+
+  const compressImage = (imageSrc: string): Promise<string> => {
+    return new Promise((resolve) => {
       const img = new Image();
-      img.src = event.target?.result as string;
+      img.src = imageSrc;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
+        const MAX_WIDTH = 600;
+        const scale = MAX_WIDTH / img.width;
+        canvas.width = MAX_WIDTH;
+        canvas.height = img.height * scale;
 
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
         const ctx = canvas.getContext('2d');
-        if (!ctx) return reject(new Error('Canvas context generation failed'));
-        
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => blob ? resolve(blob) : reject(new Error('WebP compression failed')),
-          'image/webp',
-          quality
-        );
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
-      img.onerror = (err) => reject(err);
-    };
-    reader.onerror = (err) => reject(err);
-  });
-};
+    });
+  };
 
-export default function EventDetailEditor({
-  event,
-  isDark,
-  onClose,
-  onCreationSuccess
-}: EventDetailEditorProps) {
-  const [activeModule, setActiveModule] = useState<'basics' | 'media' | 'protocols'>('basics');
-
-  const [isSaving, setIsSaving] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'success'>('idle');
-  const [currentStatus, setCurrentStatus] = useState<'draft' | 'published' | 'unpublished'>('draft');
-  const [isCreateMode, setIsCreateMode] = useState(!event);
-
-  const [coverBlob, setCoverBlob] = useState<Blob | null>(null);
-  const [posterBlob, setPosterBlob] = useState<Blob | null>(null);
-  const [coverPreview, setCoverPreview] = useState<string>('');
-  const [posterPreview, setPosterPreview] = useState<string>('');
-
-  const [organizerInfo, setOrganizerInfo] = useState<{
-    id?: number;
-    name: string;
-    email: string;
-  }>({ name: 'System Administrator', email: '' });
-
-  const [newComp, setNewComp] = useState<{
-    title: string;
-    code: string;
-    category: string;
-    ageGroups: AgeGroup[];
-    rules: string;
-  }>({
-    title: '',
-    code: '',
-    category: '',
-    ageGroups: [],
-    rules: ''
-  });
-
-  const [tempAgeGroup, setTempAgeGroup] = useState({
-    label: '',
-    code: '',
-    minAge: '',
-    maxAge: ''
-  });
-
-  const [editingCompId, setEditingCompId] = useState<string | null>(null);
-
-  const coverInputRef = useRef<HTMLInputElement>(null);
-  const posterInputRef = useRef<HTMLInputElement>(null);
-  const compFormRef = useRef<HTMLDivElement>(null);
-
-  const initialCategoryFees = ATTENDEE_CATEGORIES.reduce((acc, cat) => {
-    acc[cat.id] = 0;
-    return acc;
-  }, {} as Record<AttendeeCategory, number>);
-
-  const [details, setDetails] = useState({
-    title: '',
-    tagline: '',
-    description: '',
-    venueName: '',
-    address: '',
-    primaryDate: '',
-    endDate: '',
-    isMultiDay: false,
-    startTime: '',
-    endTime: '',
-    registrationEndDate: '',
-    whatsappNumber: '',
-    helplineNumber: '',
-    isMultiCompetition: false,
-    collectPhoto: true,
-    referralAllowed: false,
-    competitions: [] as SubCompetition[],
-    hypeThreshold: 0,
-    type: 'exam', 
-    protocol: 'ticketed' as 'ticketed' | 'open-registration' | 'invite-only',
-    visibility: { map: true, rsvp: true, schedule: true, gallery: false },
-    foodConfig: {
-      enabled: false,
-      strategy: 'complimentary' as 'complimentary' | 'coupon-based' | 'paid-buffet' | 'self-arranged',
-      vendorDetails: '',
-      availableForAll: 'yes' as 'yes' | 'no',
-      allowedCategories: [] as AttendeeCategory[]
-    },
-    pricingConfig: {
-      isRequired: false,
-      baseFee: 0,
-      gstApplicable: false,
-      applicableForAll: 'yes' as 'yes' | 'no',
-      categoryFees: initialCategoryFees
-    }
-  });
-
-  useEffect(() => {
-    async function loadActiveSession() {
-      try {
-        if (db && db.users) {
-          const sessionUser = await db.users.toCollection().first();
-          if (sessionUser) {
-            setOrganizerInfo({
-              id: sessionUser.id,
-              name: sessionUser.name || 'Core Member',
-              email: sessionUser.identifier || ''
-            });
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch active organizer session:", err);
-      }
-    }
-    loadActiveSession();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (coverPreview) URL.revokeObjectURL(coverPreview);
-      if (posterPreview) URL.revokeObjectURL(posterPreview);
-    };
-  }, [coverPreview, posterPreview]);
-
-  useEffect(() => {
-    if (event) {
-      setDetails({
-        title: event.name || '',
-        tagline: event.tagline || '',
-        description: event.description || '',
-        venueName: event.venueName || '',
-        address: event.location || '',
-        primaryDate: event.date || '',
-        endDate: event.endDate || '',
-        isMultiDay: event.isMultiDay || false,
-        startTime: event.startTime || '',
-        endTime: event.endTime || '',
-        registrationEndDate: event.registrationEndDate || '',
-        whatsappNumber: event.whatsappNumber || event.whatsapp_number || '',
-        helplineNumber: event.helplineNumber || event.helpline_number || '',
-        isMultiCompetition: event.isMultiCompetition ?? (event.type === 'exam' ? true : false),
-        collectPhoto: event.collectPhoto ?? true,
-        referralAllowed: event.referralAllowed ?? false,
-        competitions: (event.competitions || []).map(c => ({
-          ...c,
-          ageGroups: Array.isArray(c.ageGroups) ? c.ageGroups : []
-        })),
-        hypeThreshold: event.hypeThreshold || 0,
-        type: event.type || 'exam',
-        protocol: (event.protocol || 'ticketed') as 'ticketed' | 'open-registration' | 'invite-only', 
-        visibility: event.visibility || { map: true, rsvp: true, schedule: true, gallery: false },
-        foodConfig: {
-          enabled: event.foodConfig?.enabled || false,
-          strategy: event.foodConfig?.strategy || 'complimentary',
-          vendorDetails: event.foodConfig?.vendorDetails || '',
-          availableForAll: event.foodConfig?.availableForAll || 'yes',
-          allowedCategories: event.foodConfig?.allowedCategories || []
-        },
-        pricingConfig: {
-          isRequired: event.pricingConfig?.isRequired || false,
-          baseFee: event.pricingConfig?.baseFee || 0,
-          gstApplicable: event.pricingConfig?.gstApplicable || false,
-          applicableForAll: event.pricingConfig?.applicableForAll || 'yes',
-          categoryFees: { ...initialCategoryFees, ...(event.pricingConfig?.categoryFees || {}) }
-        }
+  const startCamera = async () => {
+    try {
+      setIsCameraActive(true);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
+        audio: false
       });
-
-      if (event.organizerName || event.organizerEmail) {
-        setOrganizerInfo({
-          id: event.organizerId,
-          name: event.organizerName || 'Core Member',
-          email: event.organizerEmail || ''
-        });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
       }
-
-      setCurrentStatus(event.status || 'draft');
-      setIsCreateMode(false);
-      setSaveStatus('idle');
-
-      if (event.coverBlob) {
-        setCoverBlob(event.coverBlob);
-        setCoverPreview(URL.createObjectURL(event.coverBlob));
-      } else {
-        setCoverBlob(null);
-        setCoverPreview('');
-      }
-
-      if (event.posterBlob) {
-        setPosterBlob(event.posterBlob);
-        setPosterPreview(URL.createObjectURL(event.posterBlob));
-      } else {
-        setPosterBlob(null);
-        setPosterPreview('');
-      }
-    } else {
-      handleResetToCreation();
+    } catch (err) {
+      console.error('Camera access error:', err);
+      setFieldWarnings(prev => ({ ...prev, photo: 'Unable to access device camera. Please upload a photo file instead.' }));
+      setIsCameraActive(false);
     }
-  }, [event]);
-
-  const handleResetToCreation = () => {
-    setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', endDate: '', isMultiDay: false, startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: true, collectPhoto: true, referralAllowed: false, competitions: [], hypeThreshold: 0, type: 'exam', protocol: 'ticketed',
-      visibility: { map: true, rsvp: true, schedule: true, gallery: false },
-      foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
-      pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
-    });
-    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
-    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
-    setEditingCompId(null);
-    setCurrentStatus('draft');
-    setIsCreateMode(true);
-    setActiveModule('basics');
-    setSaveStatus('idle');
-    setCoverBlob(null);
-    setPosterBlob(null);
-    setCoverPreview('');
-    setPosterPreview('');
   };
 
-  const handleAddAgeGroup = () => {
-    if (!tempAgeGroup.label.trim()) return;
-
-    const parsedMin = tempAgeGroup.minAge.trim() !== '' ? parseInt(tempAgeGroup.minAge, 10) : undefined;
-    const parsedMax = tempAgeGroup.maxAge.trim() !== '' ? parseInt(tempAgeGroup.maxAge, 10) : undefined;
-
-    const createdGroup: AgeGroup = {
-      id: `ag-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      label: tempAgeGroup.label.trim(),
-      code: tempAgeGroup.code.trim().toUpperCase() || `GRP-${newComp.ageGroups.length + 1}`,
-      minAge: isNaN(parsedMin as number) ? undefined : parsedMin,
-      maxAge: isNaN(parsedMax as number) ? undefined : parsedMax,
-    };
-
-    setNewComp(prev => ({
-      ...prev,
-      ageGroups: [...prev.ageGroups, createdGroup]
-    }));
-
-    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
-  };
-
-  const handleRemoveAgeGroup = (groupId: string) => {
-    setNewComp(prev => ({
-      ...prev,
-      ageGroups: prev.ageGroups.filter(g => g.id !== groupId)
-    }));
-  };
-
-  const handleSaveCompetition = () => {
-    if (!newComp.title.trim()) return;
-
-    if (editingCompId) {
-      setDetails(prev => ({
-        ...prev,
-        competitions: prev.competitions.map(comp => 
-          comp.id === editingCompId 
-            ? {
-                ...comp,
-                title: newComp.title.trim(),
-                code: newComp.code.trim().toUpperCase() || comp.code,
-                category: newComp.category.trim() || 'General',
-                ageGroups: newComp.ageGroups,
-                rules: newComp.rules.trim() || undefined
-              }
-            : comp
-        )
-      }));
-      setEditingCompId(null);
-    } else {
-      const created: SubCompetition = {
-        id: Date.now().toString(),
-        title: newComp.title.trim(),
-        code: newComp.code.trim().toUpperCase() || `COMP-${details.competitions.length + 1}`,
-        category: newComp.category.trim() || 'General',
-        ageGroups: newComp.ageGroups,
-        rules: newComp.rules.trim() || undefined
-      };
-
-      setDetails(prev => ({
-        ...prev,
-        competitions: [...prev.competitions, created]
-      }));
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-
-    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
-    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
-    if (saveStatus === 'success') setSaveStatus('idle');
+    setIsCameraActive(false);
   };
 
-  const handleEditCompetition = (comp: SubCompetition) => {
-    setEditingCompId(comp.id);
-    setNewComp({
-      title: comp.title,
-      code: comp.code,
-      category: comp.category || '',
-      ageGroups: comp.ageGroups || [],
-      rules: comp.rules || ''
-    });
-    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
-    compFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const captureSnapshot = async () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth || 640;
+    canvas.height = videoRef.current.videoHeight || 640;
+    const ctx = canvas.getContext('2d');
+    ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    
+    const rawData = canvas.toDataURL('image/jpeg', 0.85);
+    const optimized = await compressImage(rawData);
+    setFormData(prev => ({ ...prev, photoBase64: optimized }));
+    markTouchedAndValidate('photo', optimized);
+    stopCamera();
   };
 
-  const handleCancelEdit = () => {
-    setEditingCompId(null);
-    setNewComp({ title: '', code: '', category: '', ageGroups: [], rules: '' });
-    setTempAgeGroup({ label: '', code: '', minAge: '', maxAge: '' });
-  };
-
-  const handleRemoveCompetition = (id: string) => {
-    if (editingCompId === id) {
-      handleCancelEdit();
-    }
-    setDetails(prev => ({
-      ...prev,
-      competitions: prev.competitions.filter(item => item.id !== id)
-    }));
-    if (saveStatus === 'success') setSaveStatus('idle');
-  };
-
-  const handleTypeChange = (selectedType: string) => {
-    setDetails(prev => {
-      const targetConfig = COMPREHENSIVE_CATEGORIES.find(c => c.id === selectedType);
-      return {
-        ...prev,
-        type: selectedType,
-        protocol: targetConfig ? targetConfig.defaultProtocol : prev.protocol,
-        isMultiCompetition: selectedType === 'exam' ? true : prev.isMultiCompetition
-      };
-    });
-  };
-
-  const handleFoodCategoryToggle = (categoryId: AttendeeCategory) => {
-    setDetails(prev => {
-      const currentSelected = prev.foodConfig.allowedCategories;
-      const updatedCategories = currentSelected.includes(categoryId)
-        ? currentSelected.filter(id => id !== categoryId)
-        : [...currentSelected, categoryId];
-      return { ...prev, foodConfig: { ...prev.foodConfig, allowedCategories: updatedCategories } };
-    });
-  };
-
-  const handlePricingCategoryFeeChange = (categoryId: AttendeeCategory, val: number) => {
-    setDetails(prev => ({
-      ...prev,
-      pricingConfig: {
-        ...prev.pricingConfig,
-        categoryFees: {
-          ...prev.pricingConfig.categoryFees,
-          [categoryId]: val
-        }
-      }
-    }));
-  };
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'cover' | 'poster') => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const webpBlob = await compressToWebP(file, target === 'cover' ? 1200 : 800, 0.75);
-      const viewUrl = URL.createObjectURL(webpBlob);
-
-      if (target === 'cover') {
-        if (coverPreview) URL.revokeObjectURL(coverPreview);
-        setCoverBlob(webpBlob);
-        setCoverPreview(viewUrl);
-      } else {
-        if (posterPreview) URL.revokeObjectURL(posterPreview);
-        setPosterBlob(webpBlob);
-        setPosterPreview(viewUrl);
-      }
-      if (saveStatus === 'success') setSaveStatus('idle');
-    } catch (err) {
-      console.error('Asset optimization pipeline exception:', err);
-    }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setDetails(prev => ({ ...prev, [name]: value }));
-    if (saveStatus === 'success') setSaveStatus('idle');
-  };
-
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDetails(prev => ({ ...prev, hypeThreshold: parseInt(e.target.value) }));
-    if (saveStatus === 'success') setSaveStatus('idle');
-  };
-
-  const handleSubmit = async (forcedStatus?: 'draft' | 'published' | 'unpublished') => {
-    if (!details.title.trim() || !details.primaryDate) return;
-    forcedStatus === 'published' ? setIsPublishing(true) : setIsSaving(true);
-
-    const generatedSlug = details.title.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '');
-
-    const isMultiActive = details.isMultiCompetition || details.type === 'exam';
-
-    const compiledData = {
-      name: details.title,
-      tagline: details.tagline,
-      description: details.description,
-      venueName: details.venueName,
-      location: details.address,
-      date: details.primaryDate,
-      endDate: details.isMultiDay ? details.endDate : '',
-      isMultiDay: details.isMultiDay,
-      startTime: details.startTime,
-      endTime: details.endTime,
-      registrationEndDate: details.registrationEndDate,
-      whatsappNumber: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
-      whatsapp_number: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
-      helplineNumber: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
-      helpline_number: details.helplineNumber.replace(/\D/g, '').slice(0, 10),
-      isMultiCompetition: isMultiActive,
-      collectPhoto: details.collectPhoto,
-      referralAllowed: details.referralAllowed,
-      competitions: isMultiActive ? details.competitions : [],
-      organizerId: organizerInfo.id || event?.organizerId || null,
-      organizerName: organizerInfo.name,
-      organizerEmail: organizerInfo.email,
-      type: details.type,
-      protocol: details.protocol, 
-      status: forcedStatus || currentStatus, 
-      slug: generatedSlug || event?.slug || 'live-slug',
-      hypeThreshold: details.hypeThreshold,
-      visibility: details.visibility,
-      foodConfig: details.foodConfig,
-      pricingConfig: details.pricingConfig,
-      coverBlob: coverBlob !== null ? coverBlob : (event?.coverBlob || null),    
-      posterBlob: posterBlob !== null ? posterBlob : (event?.posterBlob || null),  
-      createdAt: event?.createdAt || Date.now(),
-      syncStatus: 'pending' as const 
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const rawData = event.target?.result as string;
+      const optimized = await compressImage(rawData);
+      setFormData(prev => ({ ...prev, photoBase64: optimized }));
+      markTouchedAndValidate('photo', optimized);
     };
+    reader.readAsDataURL(file);
+  };
 
-    try {
-      if (isCreateMode || !event || !event.id) {
-        const newId = await db.events.add(compiledData as any);
-        setSaveStatus('success');
-        setIsCreateMode(false);
-        if (onCreationSuccess) await onCreationSuccess(newId as number);
-      } else {
-        await db.events.update(event.id, compiledData);
-        setSaveStatus('success');
-        if (forcedStatus) setCurrentStatus(forcedStatus);
+  useEffect(() => {
+    async function loadCompetitionsFromDb() {
+      if (!db || !db.events) return;
+
+      setIsLoadingCompetitions(true);
+      try {
+        let fetchedEvent = null;
+
+        if (event.id) {
+          const numericId = typeof event.id === 'string' ? parseInt(event.id, 10) : event.id;
+          if (!isNaN(numericId)) {
+            fetchedEvent = await db.events.get(numericId);
+          }
+        }
+
+        if (!fetchedEvent && event.slug) {
+          fetchedEvent = await db.events.where('slug').equals(event.slug).first();
+        }
+
+        if (fetchedEvent) {
+          if (fetchedEvent.isMultiCompetition !== undefined) {
+            setIsMultiCompActive(fetchedEvent.isMultiCompetition);
+          }
+          if (Array.isArray(fetchedEvent.competitions)) {
+            setCompetitionsList(fetchedEvent.competitions);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load competitions from Dexie DB:", err);
+      } finally {
+        setIsLoadingCompetitions(false);
       }
-      setTimeout(() => setSaveStatus('idle'), 3000);
-    } catch (err) {
-      console.error("Database transaction exception:", err);
-    } finally {
-      setIsSaving(false);
-      setIsPublishing(false);
+    }
+
+    loadCompetitionsFromDb();
+  }, [event.id, event.slug]);
+
+  const selectedCompetition = competitionsList.find(c => c.id === formData.competitionId);
+  const availableAgeGroups = selectedCompetition?.ageGroups || [];
+
+  useEffect(() => {
+    if (!event.pricingConfig?.isRequired) {
+      setPricing({ basePrice: 0, gstAmount: 0, totalPrice: 0 });
+      return;
+    }
+
+    let calculatedBase = 0;
+    if (event.pricingConfig.applicableForAll === 'yes') {
+      calculatedBase = event.pricingConfig.baseFee || 0;
+    } else if (formData.category) {
+      calculatedBase = event.pricingConfig.categoryFees?.[formData.category] || 0;
+    }
+
+    const calculatedGst = event.pricingConfig.gstApplicable ? parseFloat((calculatedBase * 0.18).toFixed(2)) : 0;
+    const calculatedTotal = calculatedBase + calculatedGst;
+
+    setPricing({
+      basePrice: calculatedBase,
+      gstAmount: calculatedGst,
+      totalPrice: calculatedTotal
+    });
+  }, [formData.category, event.pricingConfig]);
+
+  const getCustomFieldsForEvent = (): CustomFieldConfig[] => {
+    if (event.type === 'exam') {
+      return [
+        { id: 'schoolOrCollege', label: 'School / College / Institution Name', type: 'text', required: true },
+        { 
+          id: 'academicLevel', 
+          label: 'Academic Stream / Class / Standard', 
+          type: 'select', 
+          required: true, 
+          options: [
+            { value: 'Primary (Class 5-7)', label: 'Primary (Class 5-7)' },
+            { value: 'Secondary (Class 8-10)', label: 'Secondary (Class 8-10)' },
+            { value: 'Higher Secondary (Class 11-12)', label: 'Higher Secondary (Class 11-12)' },
+            { value: 'Undergraduate / College', label: 'Undergraduate / College' },
+            { value: 'Graduate / Professional', label: 'Graduate / Professional' }
+          ] 
+        },
+        { id: 'rollNumberOrId', label: 'Previous Roll No / Registration Code (Optional)', type: 'text', required: false }
+      ];
+    }
+
+    switch (event.type) {
+      case 'summit':
+      case 'conference':
+        return [
+          { id: 'company', label: t.customFields.company, type: 'text', required: true },
+          { id: 'designation', label: t.customFields.designation, type: 'text', required: true }
+        ];
+      case 'workshop':
+        return [
+          { 
+            id: 'experience', 
+            label: t.customFields.experience, 
+            type: 'select', 
+            required: true, 
+            options: [
+              { value: 'Beginner', label: t.customFields.optionBeginner },
+              { value: 'Intermediate', label: t.customFields.optionIntermediate },
+              { value: 'Advanced', label: t.customFields.optionAdvanced }
+            ] 
+          },
+          { 
+            id: 'laptop', 
+            label: t.customFields.laptop, 
+            type: 'select', 
+            required: true, 
+            options: [
+              { value: 'Yes', label: t.customFields.optionYes },
+              { value: 'No', label: t.customFields.optionNo }
+            ] 
+          }
+        ];
+      case 'celebration':
+      default:
+        return [
+          { id: 'location', label: t.customFields.location, type: 'text', required: false }
+        ];
     }
   };
 
-  const styles = {
-    panel: isDark ? 'bg-[#0a0f1d] border-white/5 text-white' : 'bg-white border-slate-200 text-slate-900 shadow-xl',
-    input: isDark ? 'bg-white/5 border-white/10 text-white focus:border-blue-500' : 'bg-slate-100 border-slate-200 text-slate-900 focus:border-blue-600',
-    label: 'text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5',
-    sectionHeader: 'text-xs font-black uppercase tracking-widest text-slate-500 border-b border-inherit pb-2 mb-3',
-    tabButton: (isActive: boolean) => `flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all border ${
-      isActive ? isDark ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-500'
-    }`
+  const fields = getCustomFieldsForEvent();
+
+  const handleCustomChange = (fieldId: string, value: string, isRequired: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      customAnswers: { ...prev.customAnswers, [fieldId]: value }
+    }));
+    setTouchedFields(prev => ({ ...prev, [fieldId]: true }));
+    if (isRequired && !value.trim()) {
+      setFieldWarnings(prev => ({ ...prev, [fieldId]: 'This field is required.' }));
+    } else {
+      setFieldWarnings(prev => {
+        const copy = { ...prev };
+        delete copy[fieldId];
+        return copy;
+      });
+    }
   };
 
-  const groupedCategories = COMPREHENSIVE_CATEGORIES.reduce((acc, current) => {
-    if (!acc[current.group]) acc[current.group] = [];
-    acc[current.group].push(current);
-    return acc;
-  }, {} as Record<string, typeof COMPREHENSIVE_CATEGORIES>);
-
-  const accentColor = details.type === 'celebration' ? 'emerald' : details.type === 'exam' ? 'blue' : 'blue';
-
-  const formatAgeRangeBadge = (min?: number, max?: number) => {
+  const formatAgeBadgeText = (min?: number, max?: number) => {
     if (min !== undefined && max !== undefined) return `${min}–${max} yrs`;
     if (min !== undefined) return `≥ ${min} yrs`;
     if (max !== undefined) return `≤ ${max} yrs`;
-    return 'Open Age';
+    return t.formOpenBracket;
   };
 
+  const generateQrToken = (eventData: EventData, phone: string): string => {
+    const rawEventTitle = eventData?.name || eventData?.title || eventData?.slug || eventData?.id || 'EV';
+    let prefix = rawEventTitle.replace(/[^A-Za-z]/g, '').substring(0, 2).toUpperCase();
+    if (prefix.length < 2) prefix = (prefix + 'X').substring(0, 2);
+
+    const cleanPhoneDigits = phone ? phone.replace(/\D/g, '') : '';
+    let phoneTail = cleanPhoneDigits.slice(-4);
+
+    if (phoneTail.length < 4) {
+      phoneTail = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+
+    return `${prefix}26-${phoneTail}`;
+  };
+
+  const sendRegistrationToServer = async (registrationPayload: any, guestPayload: any, paymentResponse?: any) => {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+
+    const response = await fetch('/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        registration: registrationPayload,
+        guest: guestPayload,
+        paymentDetails: paymentResponse ? {
+          razorpay_order_id: paymentResponse.razorpay_order_id,
+          razorpay_payment_id: paymentResponse.razorpay_payment_id,
+          razorpay_signature: paymentResponse.razorpay_signature,
+        } : null
+      }),
+    });
+
+    const data = await response.json();
+
+    if (response.status === 409 || data.isDuplicate) {
+      const queryParam = registrationPayload.phone || registrationPayload.email;
+      const errorObj = {
+        message: data.error || (lang === 'hi' ? 'इस ईमेल या फोन नंबर से पहले ही पंजीकरण किया जा चुका है।' : lang === 'mai' ? 'एहि ईमेल या फोन नंबर सं पहिनेहि पंजीकरण भऽ चुकल अछि।' : 'An account with this email or phone is already registered for this exam/event.'),
+        queryParam: encodeURIComponent(queryParam)
+      };
+      setDuplicateError(errorObj);
+      throw new Error(data.error || 'DUPLICATE_REGISTRATION');
+    }
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'Server registration record failed.');
+    }
+
+    return data;
+  };
+
+  const saveRegistrationRecord = async (paymentDetails?: { paymentId?: string; orderId?: string; signature?: string }) => {
+    const eventIdParam = event.id || event.slug || 'default';
+    const registrationId = `REG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const qrToken = generateQrToken(event, formData.phone);
+    const isOnline = typeof window !== 'undefined' && navigator.onLine;
+
+    const selectedComp = competitionsList.find(c => c.id === formData.competitionId);
+    const selectedAgeGroup = selectedComp?.ageGroups?.find(g => g.id === formData.ageGroupId);
+
+    const resolvedCategory = event.type === 'exam' ? 'event-participant' : (formData.category || 'event-participant');
+    const hasFoodAccess = checkFoodAccess(resolvedCategory, event.foodConfig);
+
+    const registrationPayload = {
+      registrationId: registrationId,
+      eventId: eventIdParam,
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      referralCode: formData.referralCode || null,
+      category: resolvedCategory as AttendeeCategory,
+      competitionId: formData.competitionId || null,
+      competitionTitle: selectedComp ? selectedComp.title : (event.type === 'exam' ? event.name : null),
+      ageGroupId: formData.ageGroupId || null,
+      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null,
+      customAnswers: {
+        ...formData.customAnswers,
+        participantPhoto: formData.photoBase64 || ''
+      },
+      photoUrl: formData.photoBase64 || null,
+      
+      basePrice: pricing.basePrice,
+      gstAmount: pricing.gstAmount,
+      totalPrice: pricing.totalPrice,
+      
+      paymentId: paymentDetails?.paymentId || 'FREE_ENTRY',
+      orderId: paymentDetails?.orderId || null,
+      
+      status: 'CONFIRMED',
+      syncStatus: isOnline ? 'synced' : 'pending',
+      registrationTimestamp: Date.now()
+    };
+
+    const guestPayload = {
+      guestId: `GUEST-${Date.now()}`,
+      registrationId: registrationId,
+      eventId: eventIdParam,
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      referralCode: formData.referralCode || null,
+      category: resolvedCategory,
+      competitionTitle: selectedComp ? selectedComp.title : (event.type === 'exam' ? event.name : null),
+      ageGroupLabel: selectedAgeGroup ? selectedAgeGroup.label : null,
+      photoUrl: formData.photoBase64 || null,
+      
+      qrToken: qrToken,
+      isCheckedIn: false,
+      
+      hasFoodAccess: hasFoodAccess,
+      hasFoodClaimed: false,
+      
+      amountPaid: pricing.totalPrice,
+      syncStatus: isOnline ? 'synced' : 'pending',
+      registeredAt: Date.now()
+    };
+
+    if (isOnline) {
+      await sendRegistrationToServer(registrationPayload, guestPayload, paymentDetails ? {
+        razorpay_order_id: paymentDetails.orderId,
+        razorpay_payment_id: paymentDetails.paymentId,
+        razorpay_signature: paymentDetails.signature
+      } : undefined);
+    }
+
+    if (typeof window !== 'undefined' && db) {
+      try {
+        await db.transaction('rw', [db.eventRegistrations, db.guests], async () => {
+          await db.eventRegistrations.add(registrationPayload);
+          await db.guests.add(guestPayload);
+        });
+      } catch (error) {
+        console.error("❌ Dexie Write Failure:", error);
+      }
+    }
+
+    return eventIdParam;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDuplicateError(null);
+    setGlobalWarning(null);
+
+    // Validate all fields across the board
+    const newWarnings: Record<string, string> = {};
+    const nameWarn = validateField('name', formData.name);
+    if (nameWarn) newWarnings.name = nameWarn;
+
+    const emailWarn = validateField('email', formData.email);
+    if (emailWarn) newWarnings.email = emailWarn;
+
+    const phoneWarn = validateField('phone', formData.phone);
+    if (phoneWarn) newWarnings.phone = phoneWarn;
+
+    if (event.collectPhoto !== false) {
+      const photoWarn = validateField('photo', formData.photoBase64);
+      if (photoWarn) newWarnings.photo = photoWarn;
+    }
+
+    if (event.type !== 'exam') {
+      const catWarn = validateField('category', formData.category);
+      if (catWarn) newWarnings.category = catWarn;
+    }
+
+    if (formData.category === 'event-participant' || event.type === 'exam') {
+      const compWarn = validateField('competitionId', formData.competitionId);
+      if (compWarn) newWarnings.competitionId = compWarn;
+
+      if (availableAgeGroups.length > 0) {
+        const ageWarn = validateField('ageGroupId', formData.ageGroupId);
+        if (ageWarn) newWarnings.ageGroupId = ageWarn;
+      }
+    }
+
+    fields.forEach(f => {
+      if (f.required && !formData.customAnswers[f.id]?.trim()) {
+        newWarnings[f.id] = `${f.label} is required.`;
+      }
+    });
+
+    if (Object.keys(newWarnings).length > 0) {
+      setFieldWarnings(newWarnings);
+      setTouchedFields({
+        name: true,
+        email: true,
+        phone: true,
+        category: true,
+        competitionId: true,
+        ageGroupId: true,
+        photo: true,
+        ...fields.reduce((acc, f) => ({ ...acc, [f.id]: true }), {})
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const eventIdParam = event.id || event.slug || 'default';
+    const isFeeApplicable = event.pricingConfig?.isRequired && pricing.totalPrice > 0;
+    const isOffline = typeof window !== 'undefined' && !navigator.onLine;
+
+    if (isFeeApplicable && isOffline) {
+      setGlobalWarning('Payment processing requires an active internet connection. Please connect to the internet to complete your ticket purchase.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (isFeeApplicable) {
+      try {
+        const isScriptLoaded = await loadRazorpayScript();
+        if (!isScriptLoaded) {
+          setGlobalWarning('Payment gateway library failed to mount. Verify your internet connection.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const orderResponse = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: pricing.totalPrice, 
+            receipt: `reg_${event?.name || 'evt'}_${Date.now()}`,
+          }),
+        });
+
+        const orderData = await orderResponse.json();
+        if (!orderData.success) {
+          throw new Error(orderData.error || 'Backend checkout orchestration failure.');
+        }
+
+        const options = {
+          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+          amount: orderData.order.amount,
+          currency: orderData.order.currency,
+          name: "Mithila Aayojan",
+          description: event.type === 'exam' ? "Exam Registration Pass" : "Event Access Registration Pass",
+          image: "/icons/splash-icon.png",
+          order_id: orderData.order.id,
+          handler: async function (response: any) {
+            try {
+              const eventId = await saveRegistrationRecord({
+                paymentId: response.razorpay_payment_id,
+                orderId: response.razorpay_order_id,
+                signature: response.razorpay_signature
+              });
+
+              setIsSubmitting(false);
+              setFormSubmitted(true);
+              router.push(`/ticket?eventId=${encodeURIComponent(eventId)}&phone=${encodeURIComponent(formData.phone)}`);
+            } catch (dbErr: any) {
+              console.error("Database write failed after payment:", dbErr);
+              setIsSubmitting(false);
+              if (dbErr.message !== 'DUPLICATE_REGISTRATION') {
+                router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}&phone=${encodeURIComponent(formData.phone)}`);
+              }
+            }
+          },
+          prefill: {
+            name: formData.name,
+            email: formData.email,
+            contact: formData.phone,
+          },
+          theme: {
+            color: "#0ea5e9",
+          },
+          modal: {
+            ondismiss: function () {
+              setIsSubmitting(false);
+            }
+          }
+        };
+
+        const paymentWindow = new (window as any).Razorpay(options);
+        paymentWindow.open();
+
+      } catch (err: any) {
+        console.error("Payment setup failure:", err);
+        if (err.message !== 'DUPLICATE_REGISTRATION') {
+          setGlobalWarning(err.message || "Failed to initialize checkout gateway.");
+        }
+        setIsSubmitting(false);
+      }
+    } else {
+      try {
+        const eventId = await saveRegistrationRecord();
+        setIsSubmitting(false);
+        setFormSubmitted(true);
+        router.push(`/ticket?eventId=${encodeURIComponent(eventIdParam)}&phone=${encodeURIComponent(formData.phone)}`);
+      } catch (dbErr: any) {
+        console.error("Database write failure on free tier:", dbErr);
+        setIsSubmitting(false);
+      }
+    }
+  };
+
+  if (formSubmitted) {
+    return (
+      <div className="text-center py-10 px-4 space-y-4 animate-in zoom-in-95 duration-300">
+        <div className="w-14 h-14 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 size={28} />
+        </div>
+        <div className="space-y-1.5">
+          <h4 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">{t.formSubmittedHeading}</h4>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[260px] mx-auto leading-relaxed">
+            {t.formSubmittedDesc}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`w-full h-full flex flex-col overflow-hidden ${styles.panel}`}>
-      {/* HEADER CONTROLS */}
-      <div className="p-6 border-b border-inherit flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-inherit z-10 shrink-0">
-        <div>
-          <div className={`flex items-center gap-2 text-${accentColor}-500 mb-1`}>
-            <Settings2 size={16} />
-            <span className="text-[10px] font-black uppercase tracking-[0.3em]">{isCreateMode ? 'Instantiation Engine' : 'Configure Experience'}</span>
+    <form onSubmit={handleSubmit} className="space-y-4 w-full">
+      
+      {/* EXAM BANNER NOTICE IF TYPE IS EXAM */}
+      {event.type === 'exam' && (
+        <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center gap-2.5 text-xs text-blue-700 dark:text-blue-300 font-medium">
+          <Award size={16} className="shrink-0 text-blue-500" />
+          <span>Official Candidate Registration Portal for <strong>{event.name || 'Pratibha Khoj'}</strong></span>
+        </div>
+      )}
+
+      {/* CORE FIELDS */}
+      <div className="space-y-3">
+        {/* 1. FULL NAME FIELD */}
+        <div className="space-y-1">
+          <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+            {t.formNameLabel} <span className="text-red-400 font-bold">*</span>
+          </label>
+          <div className="relative group">
+            <User size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+            <input 
+              type="text" 
+              required 
+              placeholder={t.formNamePlaceholder} 
+              value={formData.name} 
+              onChange={e => {
+                const val = e.target.value;
+                setFormData({...formData, name: val});
+                markTouchedAndValidate('name', val);
+                setDuplicateError(null);
+                setGlobalWarning(null);
+              }} 
+              onBlur={() => markTouchedAndValidate('name', formData.name)}
+              className={`w-full bg-slate-50 dark:bg-white/5 border ${touchedFields.name && fieldWarnings.name ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400`}
+            />
           </div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-black italic tracking-tight">{isCreateMode ? (details.title || "Initialize New Event / Exam") : details.title}</h2>
-            {!isCreateMode && (
-              <span className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border ${currentStatus === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>{currentStatus}</span>
+          {touchedFields.name && fieldWarnings.name && (
+            <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+              <AlertCircle size={12} className="shrink-0" />
+              <span>{fieldWarnings.name}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 2. EMAIL ID FIELD */}
+        <div className="space-y-1">
+          <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+            {t.formEmailLabel} <span className="text-red-400 font-bold">*</span>
+          </label>
+          <div className="relative group">
+            <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+            <input 
+              type="email" 
+              required 
+              placeholder={t.formEmailPlaceholder} 
+              value={formData.email} 
+              onChange={e => {
+                const val = e.target.value;
+                setFormData({...formData, email: val});
+                markTouchedAndValidate('email', val);
+                setDuplicateError(null);
+                setGlobalWarning(null);
+              }} 
+              onBlur={() => markTouchedAndValidate('email', formData.email)}
+              className={`w-full bg-slate-50 dark:bg-white/5 border ${touchedFields.email && fieldWarnings.email ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400`}
+            />
+          </div>
+          {touchedFields.email && fieldWarnings.email && (
+            <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+              <AlertCircle size={12} className="shrink-0" />
+              <span>{fieldWarnings.email}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 3. PHONE NUMBER FIELD (Exact 10-Digits) */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between px-1">
+            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500">
+              {t.formPhoneLabel} <span className="text-red-400 font-bold">*</span>
+            </label>
+            <span className={`text-[10px] font-mono font-bold ${formData.phone.length === 10 ? 'text-emerald-500' : 'text-slate-400'}`}>
+              {formData.phone.length}/10 digits
+            </span>
+          </div>
+          <div className="relative group">
+            <Phone size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+            <input 
+              type="tel" 
+              required 
+              maxLength={10}
+              placeholder={t.formPhonePlaceholder} 
+              value={formData.phone} 
+              onChange={e => {
+                const numericVal = e.target.value.replace(/\D/g, '').slice(0, 10);
+                setFormData({...formData, phone: numericVal});
+                markTouchedAndValidate('phone', numericVal);
+                setDuplicateError(null);
+                setGlobalWarning(null);
+              }} 
+              onBlur={() => markTouchedAndValidate('phone', formData.phone)}
+              className={`w-full bg-slate-50 dark:bg-white/5 border ${touchedFields.phone && fieldWarnings.phone ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400`}
+            />
+          </div>
+          {touchedFields.phone && fieldWarnings.phone && (
+            <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+              <AlertCircle size={12} className="shrink-0" />
+              <span>{fieldWarnings.phone}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 🔗 REFERRAL CODE FIELD (Rendered only if referralAllowed is true) */}
+        {event.referralAllowed === true && (
+          <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-white/5 animate-in fade-in duration-200">
+            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+              Referral Code / Counselor ID <span className="text-slate-400 font-normal">(Optional)</span>
+            </label>
+            <div className="relative group">
+              <Share2 size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+              <input 
+                type="text" 
+                placeholder="Enter referral or counselor code..." 
+                value={formData.referralCode} 
+                onChange={e => {
+                  setFormData({...formData, referralCode: e.target.value});
+                }} 
+                className="w-full bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400 uppercase font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 📷 PARTICIPANT PHOTO CAPTURE MODULE (Rendered only if collectPhoto is not explicitly false) */}
+        {event.collectPhoto !== false && (
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-white/5 animate-in fade-in duration-200">
+            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1 flex items-center justify-between">
+              <span>Participant Photo <span className="text-red-400 font-bold">*</span></span>
+              <span className="text-[9px] lowercase opacity-75 font-normal">Passport size / Clear face</span>
+            </label>
+
+            {formData.photoBase64 && !isCameraActive && (
+              <div className="relative w-28 h-28 mx-auto rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-md">
+                <img src={formData.photoBase64} alt="Captured Participant" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormData(prev => ({ ...prev, photoBase64: null }));
+                    markTouchedAndValidate('photo', null);
+                  }}
+                  className="absolute top-1.5 right-1.5 p-1 bg-red-600/90 text-white rounded-full hover:bg-red-700 transition"
+                >
+                  <X size={12} />
+                </button>
+                <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[9px] font-bold text-center py-0.5 flex items-center justify-center gap-1">
+                  <CheckCircle2 size={10} /> Photo Ready
+                </div>
+              </div>
             )}
-          </div>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
-          <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30 cursor-pointer`}>
-            {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event / Exam') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Details')}
-          </button>
-          <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20 cursor-pointer"><X size={18} /></button>
-        </div>
-      </div>
 
-      {/* NAVIGATOR LAYER */}
-      <div className="px-6 py-2 border-b border-inherit flex items-center gap-2 shrink-0 bg-slate-50/50 dark:bg-white/[0.01]">
-        <button type="button" onClick={() => setActiveModule('basics')} className={styles.tabButton(activeModule === 'basics')}><Layout size={14} /><span>Core Profiles</span></button>
-        <button type="button" onClick={() => setActiveModule('media')} className={styles.tabButton(activeModule === 'media')}><ImageIcon size={14} /><span>Assets & Media</span></button>
-        <button type="button" onClick={() => setActiveModule('protocols')} className={styles.tabButton(activeModule === 'protocols')}><Shield size={14} /><span>Controls & Logistics</span></button>
-      </div>
-
-      {/* DATA ENTRY LAYER */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-        
-        {/* MODULE 1: CORE PROFILE */}
-        {activeModule === 'basics' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className={`p-6 rounded-3xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}>
-              <div className="flex justify-between items-end mb-6">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-amber-500"><TrendingUp size={14} /><span className="text-[10px] font-black uppercase tracking-widest">Growth Logic</span></div>
-                  <h4 className="text-sm font-bold">Sparkle Threshold</h4>
-                </div>
-                <span className={`text-2xl font-black text-${accentColor}-500`}>{details.hypeThreshold}+</span>
-              </div>
-              <input type="range" min="0" max="500" step="10" value={details.hypeThreshold} onChange={handleSliderChange} className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-${accentColor}-500 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
-            </div>
-
-            <div className={`p-4 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
-              <div className="flex items-center gap-3">
-                <UserCheck size={18} className="text-blue-500" />
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Organizer (Authenticated)</span>
-                  <p className="text-xs font-bold leading-tight">{organizerInfo.name} {organizerInfo.email ? `(${organizerInfo.email})` : ''}</p>
-                </div>
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-blue-500/20 text-blue-400">Session Verified</span>
-            </div>
-
-            <div>
-              <div className={styles.sectionHeader}>Identity Details</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input type="text" name="title" required value={details.title} onChange={handleChange} placeholder="Event / Exam Title (e.g. Pratibha Khoj 2026)" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                <input type="text" name="tagline" value={details.tagline} onChange={handleChange} placeholder="Thematic Tagline / Subtitle" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-              </div>
-            </div>
-
-            <div>
-              <div className={styles.sectionHeader}>Venue & Timelineedsdffz</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input name="venueName" type="text" placeholder="Exam Center / Venue Designation" value={details.venueName} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                <div className="relative">
-                  <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
-                  <input name="primaryDate" required type="date" value={details.primaryDate} onChange={handleChange} className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                </div>
-              </div>
-<div>Hello</div>
-              {/* Multi-Day Event Toggle & End Date Picker */}
-              <div className={`mt-4 p-4 rounded-2xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Calendar size={16} className={details.isMultiDay ? `text-${accentColor}-500` : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">Multi-Day Event</span>
-                      <span className="text-[10px] text-slate-500">Enable if this event spans across multiple consecutive days</span>
-                    </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setDetails(prev => ({ ...prev, isMultiDay: !prev.isMultiDay }));
-                      if (saveStatus === 'success') setSaveStatus('idle');
-                    }} 
-                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiDay ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+            {isCameraActive && (
+              <div className="relative rounded-2xl overflow-hidden border border-blue-500 bg-black aspect-square max-w-[220px] mx-auto">
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                <div className="absolute bottom-2 inset-x-0 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={captureSnapshot}
+                    className="px-3.5 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-blue-500 transition"
                   >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiDay ? 'left-7' : 'left-1'}`} />
+                    Snapshot
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-700 transition"
+                  >
+                    Cancel
                   </button>
                 </div>
-
-                {details.isMultiDay && (
-                  <div className="pt-2 space-y-1.5 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
-                    <label className={styles.label}>Event End Date</label>
-                    <div className="relative">
-                      <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
-                      <input 
-                        name="endDate" 
-                        type="date" 
-                        value={details.endDate} 
-                        onChange={handleChange} 
-                        className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
-                      />
-                    </div>
-                    <span className="text-[10px] text-slate-500 block ml-1">
-                      Specify the final completion/conclusion date for this multi-day event.
-                    </span>
-                  </div>
-                )}
               </div>
+            )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-                <input name="startTime" type="time" value={details.startTime} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                <input name="endTime" type="time" value={details.endTime} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+            {!formData.photoBase64 && !isCameraActive && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={startCamera}
+                  className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl border border-dashed border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-bold transition"
+                >
+                  <Camera size={14} />
+                  <span>Open Camera</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                >
+                  <Upload size={14} />
+                  <span>Upload File</span>
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
               </div>
-              <input name="address" type="text" placeholder="Geographic Address String" value={details.address} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none mt-4 ${styles.input}`} />
-            </div>
+            )}
+            {touchedFields.photo && fieldWarnings.photo && (
+              <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>{fieldWarnings.photo}</span>
+              </div>
+            )}
+          </div>
+        )}
 
-            <div>
-              <div className={styles.sectionHeader}>Core Purpose Architecture</div>
-              <select name="type" value={details.type} onChange={(e) => handleTypeChange(e.target.value)} className={`w-full p-4 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}>
-                {Object.entries(groupedCategories).map(([groupName, items]) => (
-                  <optgroup key={groupName} label={groupName} className={isDark ? 'bg-[#020617] text-slate-400' : 'bg-slate-50 text-slate-500'}>
-                    {items.map(cat => (<option key={cat.id} value={cat.id} className={isDark ? 'bg-[#0a0f1d] text-white font-bold' : 'bg-white text-slate-900 font-bold'}>{cat.label}</option>))}
-                  </optgroup>
+        {/* 4. ATTENDEE CATEGORY SELECTION (Hidden or Auto-Assigned for Exam Type) */}
+        {event.type !== 'exam' && (
+          <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-white/5">
+            <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+              {t.formCategoryLabel} <span className="text-red-400 font-bold">*</span>
+            </label>
+            <div className="relative group">
+              <Users size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+              <select
+                required
+                value={formData.category}
+                onChange={e => {
+                  const selectedCat = e.target.value as AttendeeCategory;
+                  setFormData({
+                    ...formData, 
+                    category: selectedCat,
+                    competitionId: selectedCat === 'event-participant' ? formData.competitionId : '',
+                    ageGroupId: selectedCat === 'event-participant' ? formData.ageGroupId : ''
+                  });
+                  markTouchedAndValidate('category', selectedCat);
+                  setDuplicateError(null);
+                  setGlobalWarning(null);
+                }}
+                onBlur={() => markTouchedAndValidate('category', formData.category)}
+                className={`w-full bg-slate-50 dark:bg-slate-950 border ${touchedFields.category && fieldWarnings.category ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer`}
+              >
+                <option value="" className="text-slate-400">{t.formCategoryPlaceholder}</option>
+                {ATTENDEE_CATEGORY_KEYS.filter(cat => 
+                  getApplicableCategoriesForType(event.type).includes(cat) &&
+                  PUBLIC_EXCLUSIVE_CATEGORIES.includes(cat)
+                ).map(cat => (
+                  <option key={cat} value={cat} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                    {t.formCategories[cat]}
+                  </option>
                 ))}
               </select>
             </div>
-            <textarea rows={4} name="description" value={details.description} onChange={handleChange} placeholder="Exam description, guidelines, syllabus overview..." className={`w-full p-4 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`} />
+            {touchedFields.category && fieldWarnings.category && (
+              <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>{fieldWarnings.category}</span>
+              </div>
+            )}
           </div>
         )}
 
-        {/* MODULE 2: MEDIA LAYOUT */}
-        {activeModule === 'media' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="space-y-2">
-              <label className={styles.label}>Hero Layout Banner (16:9)</label>
-              <input type="file" ref={coverInputRef} accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'cover')} />
-              <div 
-                onClick={() => coverInputRef.current?.click()} 
-                className={`w-full aspect-[16/6] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden relative group transition-all ${isDark ? 'border-white/10 bg-white/5 hover:border-blue-500/50' : 'border-slate-200 bg-slate-50 hover:border-blue-500/50'}`}
-              >
-                {coverPreview ? (
-                  <div className="w-full h-full relative">
-                    <img src={coverPreview} alt="Hero Banner Preview" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <div className="flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-lg text-xs font-bold">
-                        <UploadCloud size={14} />
-                        <span>Click to Replace Banner</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 text-slate-400 p-4 text-center">
-                    <UploadCloud size={24} />
-                    <p className="text-xs font-bold">Select responsive cover layouts</p>
-                    <span className="text-[10px] text-slate-500">Supports WebP, PNG, JPG (16:9 ratio recommended)</span>
-                  </div>
-                )}
+        {/* 5. EXAM OR COMPETITION TRACK SELECTION */}
+        {(isMultiCompActive && (formData.category === 'event-participant' || event.type === 'exam')) && (
+          <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-white/5 animate-in fade-in duration-200">
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+                {event.type === 'exam' ? 'Select Exam Category / Paper Track' : t.formCompLabel} <span className="text-red-400 font-bold">*</span>
+              </label>
+              <div className="relative group">
+                <Trophy size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                <select
+                  required
+                  value={formData.competitionId}
+                  onChange={e => {
+                    const newCompId = e.target.value;
+                    setFormData({
+                      ...formData, 
+                      competitionId: newCompId,
+                      ageGroupId: ''
+                    });
+                    markTouchedAndValidate('competitionId', newCompId);
+                    setGlobalWarning(null);
+                  }}
+                  onBlur={() => markTouchedAndValidate('competitionId', formData.competitionId)}
+                  disabled={isLoadingCompetitions}
+                  className={`w-full bg-slate-50 dark:bg-slate-950 border ${touchedFields.competitionId && fieldWarnings.competitionId ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer disabled:opacity-50`}
+                >
+                  <option value="" className="text-slate-400">
+                    {isLoadingCompetitions 
+                      ? t.formCompLoading 
+                      : competitionsList.length === 0 
+                        ? (event.type === 'exam' ? 'General Examination Track' : t.formCompNone) 
+                        : t.formCompPlaceholder}
+                  </option>
+                  {competitionsList.map(comp => (
+                    <option key={comp.id} value={comp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                      [{comp.code}] {comp.title} {comp.category ? `(${comp.category})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
+              {touchedFields.competitionId && fieldWarnings.competitionId && (
+                <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+                  <AlertCircle size={12} className="shrink-0" />
+                  <span>{fieldWarnings.competitionId}</span>
+                </div>
+              )}
             </div>
 
-            <div className="space-y-2">
-              <label className={styles.label}>Distribution Poster (4:5 / Square)</label>
-              <input type="file" ref={posterInputRef} accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'poster')} />
-              <div 
-                onClick={() => posterInputRef.current?.click()} 
-                className={`w-44 aspect-[4/5] rounded-2xl border-2 border-dashed flex items-center justify-center cursor-pointer overflow-hidden relative group transition-all ${isDark ? 'border-white/10 bg-white/5 hover:border-blue-500/50' : 'border-slate-200 bg-slate-50 hover:border-blue-500/50'}`}
-              >
-                {posterPreview ? (
-                  <div className="w-full h-full relative">
-                    <img src={posterPreview} alt="Distribution Poster Preview" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-center p-2">
-                      <div className="flex flex-col items-center gap-1 bg-black/70 text-white p-2 rounded-lg text-[10px] font-bold">
-                        <UploadCloud size={12} />
-                        <span>Replace Poster</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-1.5 text-slate-400 text-center px-2">
-                    <UploadCloud size={20} />
-                    <p className="text-[10px] font-bold">Select event media graphic asset</p>
-                    <span className="text-[9px] text-slate-500">4:5 portrait aspect ratio</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODULE 3: CONTROLS, LOGISTICS & EXAM TRACKS */}
-        {activeModule === 'protocols' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div>
-              <div className={styles.sectionHeader}>Authorization Strategy</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {[
-                  { id: 'open-registration', label: 'Open Registration', desc: 'Public entry via token scans.' },
-                  { id: 'ticketed', label: 'Ticketed System', desc: 'Requires checkout validation.' },
-                  { id: 'invite-only', label: 'Invite-Only', desc: 'Restricted map bounds (VIPs).' }
-                ].map((p) => {
-                  const isSelected = details.protocol === p.id;
-                  return (
-                    <button key={p.id} type="button" onClick={() => setDetails(prev => ({ ...prev, protocol: p.id as any }))} className={`p-4 text-left border rounded-2xl transition-all ${isSelected ? `bg-${accentColor}-600/10 border-${accentColor}-500 text-${accentColor}-400 shadow-md` : `${styles.input} opacity-70`}`}>
-                      <span className="text-xs font-black block">{p.label}</span>
-                      <span className="text-[10px] text-slate-500 font-medium mt-1 block leading-tight">{p.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 📸 REGISTRATION CONFIGURATION TOGGLES (PHOTO COLLECTION & REFERRALS) */}
-            <div>
-              <div className={styles.sectionHeader}>Registration Form Configuration</div>
-              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                
-                {/* Collect Participant Photo Toggle */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Camera size={18} className={details.collectPhoto ? `text-${accentColor}-500` : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">Collect Participant Photo</span>
-                      <span className="text-[10px] text-slate-500">Require candidates to upload or capture a passport-size photo during registration</span>
-                    </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setDetails(prev => ({ ...prev, collectPhoto: !prev.collectPhoto }));
-                      if (saveStatus === 'success') setSaveStatus('idle');
-                    }} 
-                    className={`w-12 h-6 rounded-full transition-all relative ${details.collectPhoto ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+            {/* 6. DYNAMIC NESTED AGE CATEGORY SELECTION FIELD */}
+            {availableAgeGroups.length > 0 && (
+              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1 flex items-center justify-between">
+                  <span>{t.formAgeGroupLabel} <span className="text-red-400 font-bold">*</span></span>
+                  <span className="text-[9px] lowercase opacity-75 font-normal">({availableAgeGroups.length} {t.formBracketsAvailable})</span>
+                </label>
+                <div className="relative group">
+                  <Layers size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                  <select
+                    required
+                    value={formData.ageGroupId}
+                    onChange={e => {
+                      const ageId = e.target.value;
+                      setFormData({...formData, ageGroupId: ageId});
+                      markTouchedAndValidate('ageGroupId', ageId);
+                      setGlobalWarning(null);
+                    }}
+                    onBlur={() => markTouchedAndValidate('ageGroupId', formData.ageGroupId)}
+                    className={`w-full bg-slate-50 dark:bg-slate-950 border ${touchedFields.ageGroupId && fieldWarnings.ageGroupId ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer`}
                   >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.collectPhoto ? 'left-7' : 'left-1'}`} />
-                  </button>
+                    <option value="" className="text-slate-400">{t.formAgeGroupPlaceholder}</option>
+                    {availableAgeGroups.map(grp => (
+                      <option key={grp.id} value={grp.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-white">
+                        {grp.label} ({formatAgeBadgeText(grp.minAge, grp.maxAge)}) [{grp.code}]
+                      </option>
+                    ))}
+                  </select>
                 </div>
-
-                {/* Referral Allowed Toggle */}
-                <div className="flex items-center justify-between pt-3 border-t border-slate-200/50 dark:border-white/5">
-                  <div className="flex items-center gap-3">
-                    <Share2 size={18} className={details.referralAllowed ? `text-${accentColor}-500` : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">Allow Referrals / Counselor Tracking</span>
-                      <span className="text-[10px] text-slate-500">Enable referral code input or ambassador tracking fields on the registration form</span>
-                    </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setDetails(prev => ({ ...prev, referralAllowed: !prev.referralAllowed }));
-                      if (saveStatus === 'success') setSaveStatus('idle');
-                    }} 
-                    className={`w-12 h-6 rounded-full transition-all relative ${details.referralAllowed ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
-                  >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.referralAllowed ? 'left-7' : 'left-1'}`} />
-                  </button>
-                </div>
-
-              </div>
-            </div>
-
-            {/* 🟢 WHATSAPP & OFFLINE REGISTRATION HELPLINE CONFIGURATION */}
-            <div>
-              <div className={styles.sectionHeader}>WhatsApp & Offline Registration Helpline</div>
-              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                    <MessageCircle size={18} />
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold block">Assisted WhatsApp Submission Number</span>
-                    <span className="text-[10px] text-slate-500">
-                      Candidates who download offline exam registration forms will submit filled form photos directly to this WhatsApp number.
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                  <div className="space-y-1.5">
-                    <label className={styles.label}>
-                      <span>WhatsApp Helpline (10 Digits)</span>
-                    </label>
-                    <div className="relative">
-                      <MessageCircle size={14} className="absolute left-3.5 top-3.5 text-emerald-500 pointer-events-none" />
-                      <input 
-                        type="tel"
-                        maxLength={10}
-                        name="whatsappNumber"
-                        placeholder="e.g. 9876543210"
-                        value={details.whatsappNumber}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                          setDetails(prev => ({ ...prev, whatsappNumber: val }));
-                          if (saveStatus === 'success') setSaveStatus('idle');
-                        }}
-                        className={`w-full pl-10 pr-4 py-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                      />
-                    </div>
-                    <span className="text-[9.5px] text-slate-400 block ml-1">
-                      {details.whatsappNumber ? `Direct Link: https://wa.me/91${details.whatsappNumber}` : 'Defaults to universal WhatsApp sharing if unconfigured.'}
-                    </span>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className={styles.label}>
-                      <span>General Voice Helpline / Contact</span>
-                    </label>
-                    <div className="relative">
-                      <PhoneCall size={14} className="absolute left-3.5 top-3.5 text-blue-500 pointer-events-none" />
-                      <input 
-                        type="tel"
-                        maxLength={10}
-                        name="helplineNumber"
-                        placeholder="e.g. 9123456780"
-                        value={details.helplineNumber}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                          setDetails(prev => ({ ...prev, helplineNumber: val }));
-                          if (saveStatus === 'success') setSaveStatus('idle');
-                        }}
-                        className={`w-full pl-10 pr-4 py-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                      />
-                    </div>
-                    <span className="text-[9.5px] text-slate-400 block ml-1">
-                      Secondary contact displayed on physical admit cards & exam inquiries.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 🏆 MULTI-COMPETITION / EXAM TRACKS & NESTED AGE GROUPS BUILDER */}
-            <div>
-              <div className={styles.sectionHeader}>{details.type === 'exam' ? 'Exam Papers & Subject Tracks Control' : 'Multi-Competition Event Control'}</div>
-              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Trophy size={18} className={details.isMultiCompetition || details.type === 'exam' ? `text-${accentColor}-500` : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">{details.type === 'exam' ? 'Enable Multi-Paper / Multi-Stream Exam' : 'Multi-Competition Event'}</span>
-                      <span className="text-[10px] text-slate-500">Enable this if this exam/event hosts multiple papers, streams, or standard brackets</span>
-                    </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setDetails(prev => ({ ...prev, isMultiCompetition: !prev.isMultiCompetition }));
-                      if (saveStatus === 'success') setSaveStatus('idle');
-                    }} 
-                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiCompetition || details.type === 'exam' ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
-                  >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiCompetition || details.type === 'exam' ? 'left-7' : 'left-1'}`} />
-                  </button>
-                </div>
-
-                {(details.isMultiCompetition || details.type === 'exam') && (
-                  <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between">
-                      <label className={styles.label}>
-                        {editingCompId ? 'Edit Exam Track / Paper' : `Manage Exam Papers / Tracks (${details.competitions.length})`}
-                      </label>
-                      {editingCompId && (
-                        <button
-                          type="button"
-                          onClick={handleCancelEdit}
-                          className="text-[10px] font-bold text-amber-500 hover:underline flex items-center gap-1"
-                        >
-                          <RotateCcw size={10} />
-                          <span>Cancel Edit Mode</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Sub-Competition / Exam Track Form */}
-                    <div 
-                      ref={compFormRef}
-                      className={`p-4 rounded-2xl border space-y-4 transition-all ${
-                        editingCompId 
-                          ? 'border-blue-500/40 bg-blue-500/5 shadow-md shadow-blue-500/5' 
-                          : 'bg-black/5 dark:bg-white/[0.02] border-slate-200 dark:border-white/10'
-                      }`}
-                    >
-                      {/* Top Row: Track Meta */}
-                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                        <input
-                          type="text"
-                          placeholder={details.type === 'exam' ? "Exam Paper Title (e.g. Science & Mathematics)" : "Competition Title"}
-                          value={newComp.title}
-                          onChange={(e) => setNewComp(prev => ({ ...prev, title: e.target.value }))}
-                          className={`sm:col-span-5 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                        />
-                        <input
-                          type="text"
-                          placeholder="Base Code (e.g. PK-SCI)"
-                          value={newComp.code}
-                          onChange={(e) => setNewComp(prev => ({ ...prev, code: e.target.value }))}
-                          className={`sm:col-span-3 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                        />
-                        <input
-                          type="text"
-                          placeholder="Category / Stream"
-                          value={newComp.category}
-                          onChange={(e) => setNewComp(prev => ({ ...prev, category: e.target.value }))}
-                          className={`sm:col-span-4 p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                        />
-                      </div>
-
-                      {/* Nested Age Groups / Academic Standard Builder */}
-                      <div className="p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 bg-white/60 dark:bg-white/[0.01] space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                            <Users size={12} className="text-blue-500" />
-                            <span>Configure Academic Standards / Age Brackets ({newComp.ageGroups.length})</span>
-                          </label>
-                        </div>
-
-                        {/* Age Group Input Bar */}
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                          <input
-                            type="text"
-                            placeholder="Standard Label (e.g. Class 10th / Junior)"
-                            value={tempAgeGroup.label}
-                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, label: e.target.value }))}
-                            className={`sm:col-span-4 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
-                          />
-                          <input
-                            type="text"
-                            placeholder="Code (e.g. C10)"
-                            value={tempAgeGroup.code}
-                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, code: e.target.value }))}
-                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
-                          />
-                          <input
-                            type="number"
-                            min="1"
-                            max="120"
-                            placeholder="Min Age"
-                            value={tempAgeGroup.minAge}
-                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, minAge: e.target.value }))}
-                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
-                          />
-                          <input
-                            type="number"
-                            min="1"
-                            max="120"
-                            placeholder="Max Age"
-                            value={tempAgeGroup.maxAge}
-                            onChange={(e) => setTempAgeGroup(prev => ({ ...prev, maxAge: e.target.value }))}
-                            className={`sm:col-span-2 p-2 text-xs font-semibold rounded-lg border focus:outline-none ${styles.input}`}
-                          />
-                          <button
-                            type="button"
-                            onClick={handleAddAgeGroup}
-                            disabled={!tempAgeGroup.label.trim()}
-                            className="sm:col-span-2 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-all cursor-pointer"
-                          >
-                            <Plus size={13} />
-                            <span>Add Group</span>
-                          </button>
-                        </div>
-
-                        {/* List of Added Age Groups */}
-                        {newComp.ageGroups.length > 0 ? (
-                          <div className="flex flex-wrap gap-2 pt-1">
-                            {newComp.ageGroups.map(group => (
-                              <div
-                                key={group.id}
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-blue-500/20 bg-blue-500/10 text-blue-400"
-                              >
-                                <span>{group.label}</span>
-                                <span className="text-[9px] opacity-75 font-mono">[{group.code}]</span>
-                                <span className="text-[10px] px-1 py-0.2 rounded bg-black/20 text-slate-300">
-                                  {formatAgeRangeBadge(group.minAge, group.maxAge)}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveAgeGroup(group.id)}
-                                  className="ml-1 hover:text-red-400 transition-colors"
-                                >
-                                  <X size={12} />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-[10px] text-slate-400 italic">No academic brackets configured (Track will default to Open for all standards).</p>
-                        )}
-                      </div>
-
-                      {/* Rules & Guidelines */}
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                          <FileText size={11} className="text-blue-500" />
-                          <span>Exam Syllabus, Instructions & Rules</span>
-                        </label>
-                        <textarea
-                          rows={2}
-                          placeholder="Provide exam duration, passing criteria, negative marking notes..."
-                          value={newComp.rules}
-                          onChange={(e) => setNewComp(prev => ({ ...prev, rules: e.target.value }))}
-                          className={`w-full p-2.5 text-xs font-medium rounded-xl border focus:outline-none resize-none ${styles.input}`}
-                        />
-                      </div>
-
-                      <div className="flex justify-end items-center gap-2">
-                        {editingCompId && (
-                          <button
-                            type="button"
-                            onClick={handleCancelEdit}
-                            className="px-3 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={handleSaveCompetition}
-                          disabled={!newComp.title.trim()}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-${accentColor}-600 hover:bg-${accentColor}-700 disabled:opacity-40 transition-all shadow-sm cursor-pointer`}
-                        >
-                          {editingCompId ? <Save size={14} /> : <Plus size={14} />}
-                          <span>{editingCompId ? 'Update Track' : 'Add Exam Track'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Competitions List */}
-                    {details.competitions.length > 0 ? (
-                      <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
-                        {details.competitions.map((comp) => {
-                          const isBeingEdited = editingCompId === comp.id;
-                          return (
-                            <div 
-                              key={comp.id} 
-                              className={`p-3.5 rounded-2xl border space-y-2.5 transition-all ${
-                                isBeingEdited 
-                                  ? 'border-blue-500/50 bg-blue-500/10' 
-                                  : isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-2.5 flex-wrap">
-                                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                                    {comp.code}
-                                  </span>
-                                  <div>
-                                    <h5 className="text-xs font-bold leading-tight">{comp.title}</h5>
-                                    <span className="text-[10px] text-slate-400 font-medium">{comp.category || 'General'}</span>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditCompetition(comp)}
-                                    title="Edit track details"
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer"
-                                  >
-                                    <Edit2 size={13} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveCompetition(comp.id)}
-                                    title="Delete track"
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {comp.ageGroups && comp.ageGroups.length > 0 && (
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 mr-1">Standards:</span>
-                                  {comp.ageGroups.map(grp => (
-                                    <span 
-                                      key={grp.id} 
-                                      className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-500"
-                                    >
-                                      {grp.label} ({formatAgeRangeBadge(grp.minAge, grp.maxAge)})
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-
-                              {comp.rules && (
-                                <div className="p-2.5 rounded-xl border bg-black/5 dark:bg-white/[0.02] border-slate-200/50 dark:border-white/5">
-                                  <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 block mb-0.5">Syllabus / Instructions:</span>
-                                  <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{comp.rules}</p>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="p-4 text-center border border-dashed rounded-2xl border-slate-200 dark:border-white/10">
-                        <p className="text-xs text-slate-400">No exam tracks added yet. Use the fields above to configure exam papers.</p>
-                      </div>
-                    )}
+                {touchedFields.ageGroupId && fieldWarnings.ageGroupId && (
+                  <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+                    <AlertCircle size={12} className="shrink-0" />
+                    <span>{fieldWarnings.ageGroupId}</span>
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* REGISTRATION DEADLINE CUTOFF CONTROL */}
-            <div>
-              <div className={styles.sectionHeader}>Exam Registration Deadline & Access Rules</div>
-              <div className={`p-5 rounded-3xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="space-y-1.5">
-                  <label className={styles.label}>Registration End Date (Cutoff)</label>
-                  <div className="relative">
-                    <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
-                    <input 
-                      name="registrationEndDate" 
-                      type="date" 
-                      value={details.registrationEndDate} 
-                      onChange={handleChange} 
-                      className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-500 block ml-1">
-                    Candidate registration forms will automatically lock after this date. Leave blank for continuous open registration until exam day.
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* FOOD MODULE MATRIX CONFIGURATION */}
-            <div>
-              <div className={styles.sectionHeader}>Food / Refreshment Module (Optional)</div>
-              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Utensils size={18} className={details.foodConfig.enabled ? `text-${accentColor}-500` : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">Refreshments provided during exam</span>
-                      <span className="text-[10px] text-slate-500">Enable food tracking codes on admit passes</span>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, enabled: !prev.foodConfig.enabled } }))} className={`w-12 h-6 rounded-full transition-all relative ${details.foodConfig.enabled ? `bg-${accentColor}-600` : 'bg-slate-700'}`}>
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.foodConfig.enabled ? 'left-7' : 'left-1'}`} />
-                  </button>
-                </div>
-
-                {details.foodConfig.enabled && (
-                  <div className="space-y-4 pt-2 animate-in fade-in duration-200">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className={styles.label}>Allocation Strategy</label>
-                        <select name="foodStrategy" value={details.foodConfig.strategy} onChange={(e) => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, strategy: e.target.value as any } }))} className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}>
-                          <option value="complimentary">Complimentary Setup</option>
-                          <option value="coupon-based">Coupon Smart Token</option>
-                          <option value="paid-buffet">Paid Buffet Ledger</option>
-                          <option value="self-arranged">Self-Arranged Stall Desk</option>
-                        </select>
-                      </div>
-                      
-                      <div className="space-y-1.5">
-                        <label className={styles.label}>Is refreshment available for all?</label>
-                        <select 
-                          name="availableForAll" 
-                          value={details.foodConfig.availableForAll} 
-                          onChange={(e) => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, availableForAll: e.target.value as 'yes' | 'no' } }))} 
-                          className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                        >
-                          <option value="yes">Yes (All Candidates)</option>
-                          <option value="no">No (Restricted Categories)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {details.foodConfig.availableForAll === 'no' && (
-                      <div className="space-y-2 border border-white/5 dark:border-slate-800 p-4 rounded-2xl bg-black/5 animate-in slide-in-from-top-2 duration-200">
-                        <label className={styles.label}>Select Eligible Categories</label>
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          {details.foodConfig.allowedCategories.length === 0 ? (
-                            <span className="text-[11px] text-slate-500 italic">No category selected.</span>
-                          ) : (
-                            details.foodConfig.allowedCategories.map(catId => {
-                              const match = ATTENDEE_CATEGORIES.find(c => c.id === catId);
-                              return (
-                                <span key={catId} className="inline-flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold px-2.5 py-1 rounded-lg">
-                                  {match?.label || catId}
-                                  <button type="button" onClick={() => handleFoodCategoryToggle(catId)} className="hover:text-red-400 transition-colors">
-                                    <X size={10} className="stroke-[3]" />
-                                  </button>
-                                </span>
-                              );
-                            })
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                          {ATTENDEE_CATEGORIES.map(cat => {
-                            const isSelected = details.foodConfig.allowedCategories.includes(cat.id);
-                            return (
-                              <button
-                                key={cat.id}
-                                type="button"
-                                onClick={() => handleFoodCategoryToggle(cat.id)}
-                                className={`text-left px-3 py-2 text-[11px] font-bold rounded-xl border transition-all flex items-center justify-between ${
-                                  isSelected ? 'bg-blue-600/10 border-blue-500 text-blue-400' : `${styles.input} opacity-60 hover:opacity-100`
-                                }`}
-                              >
-                                <span>{cat.label}</span>
-                                {isSelected && <CheckCircle2 size={12} className="text-blue-400 shrink-0" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="space-y-1.5">
-                      <label className={styles.label}>Vendor Info & Notes</label>
-                      <input type="text" placeholder="Specify catering partner records" value={details.foodConfig.vendorDetails} onChange={(e) => setDetails(prev => ({ ...prev, foodConfig: { ...prev.foodConfig, vendorDetails: e.target.value } }))} className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* REGISTRATION & EXAM FEE MANAGEMENT */}
-            <div>
-              <div className={styles.sectionHeader}>Exam Registration Fee Management</div>
-              <div className={`p-5 rounded-3xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <IndianRupee size={18} className={details.pricingConfig.isRequired ? 'text-emerald-500' : 'text-slate-400'} />
-                    <div>
-                      <span className="text-xs font-bold block">Exam Fee collected for registration</span>
-                      <span className="text-[10px] text-slate-500">Require Razorpay transaction validation for admit card generation</span>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, isRequired: !prev.pricingConfig.isRequired } }))} className={`w-12 h-6 rounded-full transition-all relative ${details.pricingConfig.isRequired ? 'bg-emerald-600' : 'bg-slate-700'}`}>
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.pricingConfig.isRequired ? 'left-7' : 'left-1'}`} />
-                  </button>
-                </div>
-
-                {details.pricingConfig.isRequired && (
-                  <div className="space-y-4 pt-2 animate-in fade-in duration-200">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className={styles.label}>Is registration fee applicable for all?</label>
-                        <select 
-                          name="applicableForAll" 
-                          value={details.pricingConfig.applicableForAll} 
-                          onChange={(e) => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, applicableForAll: e.target.value as 'yes' | 'no' } }))} 
-                          className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
-                        >
-                          <option value="yes">Yes (Flat Exam Fee)</option>
-                          <option value="no">No (Category-Specific Fee Structure)</option>
-                        </select>
-                      </div>
-
-                      {details.pricingConfig.applicableForAll === 'yes' && (
-                        <div className="space-y-1.5">
-                          <label className={styles.label}>Base Exam Fee (₹)</label>
-                          <input type="number" min="0" placeholder="0.00" value={details.pricingConfig.baseFee || ''} onChange={(e) => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, baseFee: parseFloat(e.target.value) || 0 } }))} className={`w-full p-3 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                        </div>
-                      )}
-                    </div>
-
-                    {details.pricingConfig.applicableForAll === 'no' && (
-                      <div className="space-y-3 border border-white/5 dark:border-slate-800 p-4 rounded-2xl bg-black/5 animate-in slide-in-from-top-2 duration-200">
-                        <div>
-                          <label className={styles.label}>Configure Custom Fee Per Attendee Category</label>
-                          <span className="text-[10px] text-slate-500 block mb-3">Leave a category at 0 if registration should remain complimentary for them.</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                          {ATTENDEE_CATEGORIES.map(cat => (
-                            <div key={cat.id} className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-slate-200'}`}>
-                              <span className="text-[11px] font-bold leading-tight">{cat.label}</span>
-                              <div className="relative">
-                                <span className="absolute left-3 top-2.5 text-xs text-slate-500 font-bold">₹</span>
-                                <input 
-                                  type="number" 
-                                  min="0" 
-                                  placeholder="0"
-                                  value={details.pricingConfig.categoryFees[cat.id] || ''}
-                                  onChange={(e) => handlePricingCategoryFeeChange(cat.id, parseFloat(e.target.value) || 0)}
-                                  className={`w-full pl-7 pr-3 py-2 text-xs font-bold rounded-lg border focus:outline-none ${styles.input}`}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between border-t border-dashed border-white/10 dark:border-slate-800 pt-3">
-                      <div>
-                        <span className="text-xs font-bold block">Statutory GST Engine</span>
-                        <span className="text-[10px] text-slate-500">Append transaction taxes to configuration fees</span>
-                      </div>
-                      <button type="button" onClick={() => setDetails(prev => ({ ...prev, pricingConfig: { ...prev.pricingConfig, gstApplicable: !prev.pricingConfig.gstApplicable } }))} className={`w-12 h-6 rounded-full transition-all relative ${details.pricingConfig.gstApplicable ? 'bg-emerald-600' : 'bg-slate-700'}`}>
-                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.pricingConfig.gstApplicable ? 'left-7' : 'left-1'}`} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <div className={styles.sectionHeader}>Module Management Matrix</div>
-              <div className="space-y-3">
-                {Object.entries(details.visibility).map(([key, value]) => (
-                  <div key={key} className={`flex items-center justify-between p-4 rounded-2xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}>
-                    <div className="flex items-center gap-3">
-                      {value ? <Eye className={`text-${accentColor}-500`} size={18} /> : <EyeOff className="text-slate-500" size={18} />}
-                      <span className="text-xs font-black uppercase tracking-widest">{key} Component rendering</span>
-                    </div>
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setDetails(prev => ({
-                          ...prev, 
-                          visibility: {...prev.visibility, [key]: !value}
-                        }));
-                        if (saveStatus === 'success') setSaveStatus('idle');
-                      }}
-                      className={`w-12 h-6 rounded-full transition-all relative ${value ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${value ? 'left-7' : 'left-1'}`} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* METADATA PERSISTENCE FOOTER */}
-      <div className={`p-4 bg-white/5 border-t ${isDark ? 'border-t-white/5' : 'border-t-slate-100'} flex items-center justify-center gap-2 relative z-10 shrink-0`}>
-        <Sparkles size={12} className="text-amber-500" />
-        <p className="text-[9px] font-black text-slate-500 tracking-widest">
-          {isCreateMode ? 'Storage Target: ' : 'Exam Portal Link: '}
-          <span className={`text-${accentColor}-400 italic`}>
-             {isCreateMode ? 'IndexedDB.AayojanDB.events' : `/events/${event?.slug || details.title.toLowerCase().replace(/\s+/g, '-')}`}
+      {/* DYNAMIC METRIC FIELDS */}
+      {fields.length > 0 && (
+        <div className="pt-2 space-y-3 border-t border-slate-100 dark:border-white/5">
+          {fields.map(field => (
+            <div key={field.id} className="space-y-1 animate-in fade-in slide-in-from-right-2 duration-300">
+              <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+                {field.label} {field.required && <span className="text-red-400 font-bold">*</span>}
+              </label>
+              
+              {field.type === 'select' ? (
+                <select 
+                  required={field.required}
+                  value={formData.customAnswers[field.id] || ''}
+                  onChange={e => handleCustomChange(field.id, e.target.value, field.required)}
+                  onBlur={() => handleCustomChange(field.id, formData.customAnswers[field.id] || '', field.required)}
+                  className={`w-full bg-slate-50 dark:bg-slate-950 border ${touchedFields[field.id] && fieldWarnings[field.id] ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-semibold text-slate-800 dark:text-white cursor-pointer`}
+                >
+                  <option value="" className="text-slate-400">{t.customFields.selectPlaceholder}</option>
+                  {field.options?.map(opt => (
+                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">{opt.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <input 
+                  type="text" 
+                  required={field.required}
+                  placeholder={`${t.customFields.inputPlaceholder} ${field.label.toLowerCase()}...`}
+                  value={formData.customAnswers[field.id] || ''}
+                  onChange={e => handleCustomChange(field.id, e.target.value, field.required)}
+                  onBlur={() => handleCustomChange(field.id, formData.customAnswers[field.id] || '', field.required)}
+                  className={`w-full bg-slate-50 dark:bg-white/5 border ${touchedFields[field.id] && fieldWarnings[field.id] ? 'border-red-500/80 dark:border-red-500/80 bg-red-50/20' : 'border-slate-200 dark:border-white/10'} rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-transparent transition-all font-semibold text-slate-800 dark:text-white placeholder-slate-400`} 
+                />
+              )}
+              {touchedFields[field.id] && fieldWarnings[field.id] && (
+                <div className="flex items-center gap-1.5 px-1 pt-0.5 text-[11px] font-semibold text-red-500 dark:text-red-400 animate-in fade-in duration-200">
+                  <AlertCircle size={12} className="shrink-0" />
+                  <span>{fieldWarnings[field.id]}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* DYNAMIC REGISTRATION FEE COMPUTATION SUMMARY */}
+      {event.pricingConfig?.isRequired && (
+        <div className="pt-3 border-t border-dashed border-slate-200 dark:border-white/10 space-y-2 animate-in fade-in duration-300">
+          <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 ml-1">
+            {t.formTicketSummary}
           </span>
-        </p>
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.02] text-xs space-y-1 text-slate-600 dark:text-slate-400 font-semibold">
+            {event.pricingConfig.applicableForAll === 'no' && event.type !== 'exam' && !formData.category ? (
+              <p className="text-[11px] text-amber-500 italic font-medium">{t.formSelectCategoryToCalculate}</p>
+            ) : (
+              <>
+                <div className="flex justify-between items-center">
+                  <span>{t.formBasePrice}</span>
+                  <span className="font-bold text-slate-800 dark:text-white">₹{pricing.basePrice}</span>
+                </div>
+                {event.pricingConfig.gstApplicable && (
+                  <div className="flex justify-between items-center text-[11px] text-slate-400">
+                    <span>{t.formGst}</span>
+                    <span>₹{pricing.gstAmount}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center border-t border-slate-200 dark:border-white/10 pt-1.5 mt-1 text-slate-900 dark:text-white font-black">
+                  <span className="flex items-center gap-0.5"><IndianRupee size={12} /> {t.formPayableAmount}</span>
+                  <span className="text-sm text-emerald-500">₹{pricing.totalPrice}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {/* CONTROLLER ACTION INTERFACE */}
+      <button 
+        type="submit" 
+        disabled={isSubmitting || (event.pricingConfig?.isRequired && event.pricingConfig.applicableForAll === 'no' && event.type !== 'exam' && !formData.category)}
+        className="w-full bg-orange-600 hover:bg-gray-900 text-white py-3 mt-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2 group"
+      >
+        {isSubmitting ? (
+          <>
+            <Loader2 className="animate-spin text-white" size={14} />
+            <span>{t.formProcessing}</span>
+          </>
+        ) : (
+          <>
+            <span>
+              {pricing.totalPrice > 0 ? `₹${pricing.totalPrice} ${event.type === 'exam' ? 'Pay & Register for Exam' : t.formPayAndRegBtn}` : (event.type === 'exam' ? 'Submit Exam Registration' : t.formFreeRegBtn)}
+            </span>
+            <Send size={12} className="text-white/70 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+          </>
+        )}
+      </button>
+
+      {/* 🔴 GLOBAL/DUPLICATE WARNINGS BELOW BUTTON */}
+      <div className="space-y-3 pt-1">
+        {/* 1. DUPLICATE REGISTRATION WARNING BOX */}
+        {duplicateError && (
+          <div className="p-4 bg-red-500/10 dark:bg-red-500/20 border border-red-500/30 rounded-2xl space-y-3 animate-in fade-in slide-in-from-top-1 duration-300">
+            <div className="flex items-start gap-3 text-red-600 dark:text-red-400">
+              <AlertCircle size={18} className="shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="text-xs font-black uppercase tracking-wider">{t.formDuplicateTitle}</h4>
+                <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-300 font-medium">
+                  {duplicateError.message}
+                </p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-red-500/20 flex justify-end">
+              <Link
+                href={`/find-ticket?query=${duplicateError.queryParam}`}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-red-600/20 active:scale-95"
+              >
+                <Ticket size={13} />
+                <span>{t.formDuplicateBtn}</span>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* 2. OPERATIONAL / SYSTEM WARNING MESSAGE BOX */}
+        {globalWarning && (
+          <div className="p-3.5 bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
+            <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-relaxed">
+              {globalWarning}
+            </div>
+          </div>
+        )}
       </div>
-    </div>
+    </form>
   );
 }
