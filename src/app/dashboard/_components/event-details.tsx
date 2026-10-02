@@ -43,11 +43,24 @@ export interface SubCompetition {
   rules?: string;
 }
 
+export interface EventDaySchedule {
+  id: string;
+  dayNumber: number;
+  date: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  description?: string;
+}
+
 export interface EventData {
   id?: number;
   name: string;
   type: string;
   date?: string;
+  endDate?: string;
+  isMultiDay?: boolean;
+  daySchedules?: EventDaySchedule[];
   startTime?: string;
   endTime?: string;
   registrationEndDate?: string;
@@ -226,6 +239,9 @@ export default function EventDetailEditor({
     venueName: '',
     address: '',
     primaryDate: '',
+    endDate: '',
+    isMultiDay: false,
+    daySchedules: [] as EventDaySchedule[],
     startTime: '',
     endTime: '',
     registrationEndDate: '',
@@ -291,6 +307,9 @@ export default function EventDetailEditor({
         venueName: event.venueName || '',
         address: event.location || '',
         primaryDate: event.date || '',
+        endDate: event.endDate || '',
+        isMultiDay: event.isMultiDay || false,
+        daySchedules: Array.isArray(event.daySchedules) ? event.daySchedules : [],
         startTime: event.startTime || '',
         endTime: event.endTime || '',
         registrationEndDate: event.registrationEndDate || '',
@@ -357,7 +376,7 @@ export default function EventDetailEditor({
 
   const handleResetToCreation = () => {
     setDetails({
-      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: true, collectPhoto: true, referralAllowed: false, competitions: [], hypeThreshold: 0, type: 'exam', protocol: 'ticketed',
+      title: '', tagline: '', description: '', venueName: '', address: '', primaryDate: '', endDate: '', isMultiDay: false, daySchedules: [], startTime: '', endTime: '', registrationEndDate: '', whatsappNumber: '', helplineNumber: '', isMultiCompetition: true, collectPhoto: true, referralAllowed: false, competitions: [], hypeThreshold: 0, type: 'exam', protocol: 'ticketed',
       visibility: { map: true, rsvp: true, schedule: true, gallery: false },
       foodConfig: { enabled: false, strategy: 'complimentary', vendorDetails: '', availableForAll: 'yes', allowedCategories: [] },
       pricingConfig: { isRequired: false, baseFee: 0, gstApplicable: false, applicableForAll: 'yes', categoryFees: initialCategoryFees }
@@ -373,6 +392,37 @@ export default function EventDetailEditor({
     setPosterBlob(null);
     setCoverPreview('');
     setPosterPreview('');
+  };
+
+  const handleAddDaySchedule = () => {
+    const nextDayNum = details.daySchedules.length + 1;
+    const newDay: EventDaySchedule = {
+      id: `day-${Date.now()}`,
+      dayNumber: nextDayNum,
+      date: details.primaryDate || '',
+      title: `Day ${nextDayNum} Session`,
+      startTime: details.startTime || '09:00',
+      endTime: details.endTime || '17:00',
+      description: ''
+    };
+    setDetails(prev => ({ ...prev, daySchedules: [...prev.daySchedules, newDay] }));
+    if (saveStatus === 'success') setSaveStatus('idle');
+  };
+
+  const handleUpdateDaySchedule = (id: string, field: keyof EventDaySchedule, value: any) => {
+    setDetails(prev => ({
+      ...prev,
+      daySchedules: prev.daySchedules.map(day => day.id === id ? { ...day, [field]: value } : day)
+    }));
+    if (saveStatus === 'success') setSaveStatus('idle');
+  };
+
+  const handleRemoveDaySchedule = (id: string) => {
+    setDetails(prev => ({
+      ...prev,
+      daySchedules: prev.daySchedules.filter(day => day.id !== id).map((d, index) => ({ ...d, dayNumber: index + 1 }))
+    }));
+    if (saveStatus === 'success') setSaveStatus('idle');
   };
 
   const handleAddAgeGroup = () => {
@@ -559,6 +609,9 @@ export default function EventDetailEditor({
       venueName: details.venueName,
       location: details.address,
       date: details.primaryDate,
+      endDate: details.isMultiDay ? details.endDate : '',
+      isMultiDay: details.isMultiDay,
+      daySchedules: details.isMultiDay ? details.daySchedules : [],
       startTime: details.startTime,
       endTime: details.endTime,
       registrationEndDate: details.registrationEndDate,
@@ -639,10 +692,10 @@ export default function EventDetailEditor({
         <div>
           <div className={`flex items-center gap-2 text-${accentColor}-500 mb-1`}>
             <Settings2 size={16} />
-            <span className="text-[10px] font-black uppercase tracking-[0.3em]">{isCreateMode ? 'Instantiation Engine' : 'Configure Experience'}</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.3em]">{isCreateMode ? 'Event Setup Studio' : 'Configure Experience'}</span>
           </div>
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-black italic tracking-tight">{isCreateMode ? (details.title || "Initialize New Event / Exam") : details.title}</h2>
+            <h2 className="text-xl font-black italic tracking-tight">{isCreateMode ? (details.title || "Create New Event / Exam") : details.title}</h2>
             {!isCreateMode && (
               <span className={`px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border ${currentStatus === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>{currentStatus}</span>
             )}
@@ -652,17 +705,17 @@ export default function EventDetailEditor({
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
           <button type="button" onClick={() => handleSubmit()} disabled={isSaving || isPublishing || !details.title.trim() || !details.primaryDate} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2 shadow-lg transition-all bg-${accentColor}-600 hover:bg-${accentColor}-700 shadow-${accentColor}-50/20 disabled:opacity-30 cursor-pointer`}>
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Deploy Event / Exam') : (saveStatus === 'success' ? 'Changes Cached' : 'Update Details')}
+            {isCreateMode ? (saveStatus === 'success' ? 'Created Successfully' : 'Publish Event') : (saveStatus === 'success' ? 'Changes Saved' : 'Update Details')}
           </button>
           <button type="button" onClick={onClose} className="p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-500 border border-transparent hover:border-red-500/20 cursor-pointer"><X size={18} /></button>
         </div>
       </div>
 
-      {/* NAVIGATOR LAYER */}
+      {/* NAVIGATOR LAYER (Friendly Plain-English Tabs) */}
       <div className="px-6 py-2 border-b border-inherit flex items-center gap-2 shrink-0 bg-slate-50/50 dark:bg-white/[0.01]">
-        <button type="button" onClick={() => setActiveModule('basics')} className={styles.tabButton(activeModule === 'basics')}><Layout size={14} /><span>Core Profile</span></button>
-        <button type="button" onClick={() => setActiveModule('media')} className={styles.tabButton(activeModule === 'media')}><ImageIcon size={14} /><span>Assets & Media</span></button>
-        <button type="button" onClick={() => setActiveModule('protocols')} className={styles.tabButton(activeModule === 'protocols')}><Shield size={14} /><span>Controls & Logistics</span></button>
+        <button type="button" onClick={() => setActiveModule('basics')} className={styles.tabButton(activeModule === 'basics')}><Layout size={14} /><span>1. Basic Info & Schedule</span></button>
+        <button type="button" onClick={() => setActiveModule('media')} className={styles.tabButton(activeModule === 'media')}><ImageIcon size={14} /><span>2. Banners & Graphics</span></button>
+        <button type="button" onClick={() => setActiveModule('protocols')} className={styles.tabButton(activeModule === 'protocols')}><Shield size={14} /><span>3. Registration, Food & Pricing</span></button>
       </div>
 
       {/* DATA ENTRY LAYER */}
@@ -674,30 +727,37 @@ export default function EventDetailEditor({
             <div className={`p-6 rounded-3xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}>
               <div className="flex justify-between items-end mb-6">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-amber-500"><TrendingUp size={14} /><span className="text-[10px] font-black uppercase tracking-widest">Growth Logic</span></div>
-                  <h4 className="text-sm font-bold">Sparkle Threshold</h4>
+                  <div className="flex items-center gap-2 text-amber-500"><TrendingUp size={14} /><span className="text-[10px] font-black uppercase tracking-widest">Promotion Goal</span></div>
+                  <h4 className="text-sm font-bold">Featured Hype Target</h4>
                 </div>
                 <span className={`text-2xl font-black text-${accentColor}-500`}>{details.hypeThreshold}+</span>
               </div>
               <input type="range" min="0" max="500" step="10" value={details.hypeThreshold} onChange={handleSliderChange} className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-${accentColor}-500 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+              <p className="text-[10px] text-slate-400 mt-2">Adjust how many attendees or participants are targeted to feature this event prominently on portals.</p>
             </div>
 
             <div className={`p-4 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
               <div className="flex items-center gap-3">
                 <UserCheck size={18} className="text-blue-500" />
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Organizer (Authenticated)</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest block opacity-70">Organizer Account</span>
                   <p className="text-xs font-bold leading-tight">{organizerInfo.name} {organizerInfo.email ? `(${organizerInfo.email})` : ''}</p>
                 </div>
               </div>
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-blue-500/20 text-blue-400">Session Verified</span>
+              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-blue-500/20 text-blue-400">Verified Session</span>
             </div>
 
             <div>
-              <div className={styles.sectionHeader}>Identity Details</div>
+              <div className={styles.sectionHeader}>Event Title & Subtitle</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input type="text" name="title" required value={details.title} onChange={handleChange} placeholder="Event / Exam Title (e.g. Pratibha Khoj 2026)" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
-                <input type="text" name="tagline" value={details.tagline} onChange={handleChange} placeholder="Thematic Tagline / Subtitle" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                <div>
+                  <label className={styles.label}>Event / Exam Name *</label>
+                  <input type="text" name="title" required value={details.title} onChange={handleChange} placeholder="e.g. Pratibha Khoj Scholarship 2026" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                </div>
+                <div>
+                  <label className={styles.label}>Subtitle / Thematic Tagline</label>
+                  <input type="text" name="tagline" value={details.tagline} onChange={handleChange} placeholder="e.g. Igniting Young Minds Across Mithila" className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
+                </div>
               </div>
             </div>
 
@@ -710,6 +770,161 @@ export default function EventDetailEditor({
                   <input name="primaryDate" required type="date" value={details.primaryDate} onChange={handleChange} className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
                 </div>
               </div>
+
+              {/* Multi-Day Event Toggle & End Date Picker */}
+              <div className={`mt-4 p-4 rounded-2xl border space-y-4 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Calendar size={16} className={details.isMultiDay ? `text-${accentColor}-500` : 'text-slate-400'} />
+                    <div>
+                      <span className="text-xs font-bold block">Multi-Day Event</span>
+                      <span className="text-[10px] text-slate-500">Enable if this event spans across multiple consecutive days</span>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setDetails(prev => ({ ...prev, isMultiDay: !prev.isMultiDay }));
+                      if (saveStatus === 'success') setSaveStatus('idle');
+                    }} 
+                    className={`w-12 h-6 rounded-full transition-all relative ${details.isMultiDay ? `bg-${accentColor}-600` : 'bg-slate-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${details.isMultiDay ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                {details.isMultiDay && (
+                  <div className="pt-2 space-y-4 border-t border-dashed border-slate-200 dark:border-white/10 animate-in fade-in duration-200">
+                    <div className="space-y-1.5">
+                      <label className={styles.label}>Event End Date</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
+                        <input 
+                          name="endDate" 
+                          type="date" 
+                          value={details.endDate} 
+                          onChange={handleChange} 
+                          className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 block ml-1">
+                        Specify the final completion/conclusion date for this multi-day event.
+                      </span>
+                    </div>
+
+                    {/* Per-Day Name & Schedule Builder for Check-In & Food Allocation */}
+                    <div className="space-y-3 pt-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                          <Clock size={12} className="text-blue-500" />
+                          <span>Configure Daily Names & Check-in Schedules ({details.daySchedules.length})</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleAddDaySchedule}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-all cursor-pointer shadow-sm"
+                        >
+                          <Plus size={13} />
+                          <span>Add Day Schedule</span>
+                        </button>
+                      </div>
+
+                      {details.daySchedules.length > 0 ? (
+                        <div className="space-y-3 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+                          {details.daySchedules.map((day) => (
+                            <div 
+                              key={day.id} 
+                              className={`p-4 rounded-2xl border space-y-3 ${isDark ? 'bg-black/20 border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                  Day {day.dayNumber}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveDaySchedule(day.id)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                                  title="Remove Day"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                                <div className="sm:col-span-6 space-y-1">
+                                  <label className="text-[9px] font-bold text-slate-400 uppercase">Day Title / Session Name</label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. Opening Ceremony & Keynotes"
+                                    value={day.title}
+                                    onChange={(e) => handleUpdateDaySchedule(day.id, 'title', e.target.value)}
+                                    className={`w-full p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                                  />
+                                </div>
+                                <div className="sm:col-span-6 space-y-1">
+                                  <label className="text-[9px] font-bold text-slate-400 uppercase">Session Date</label>
+                                  <input
+                                    type="date"
+                                    value={day.date}
+                                    onChange={(e) => handleUpdateDaySchedule(day.id, 'date', e.target.value)}
+                                    className={`w-full p-2.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-slate-400 uppercase">Start Time</label>
+                                  <input
+                                    type="time"
+                                    value={day.startTime}
+                                    onChange={(e) => handleUpdateDaySchedule(day.id, 'startTime', e.target.value)}
+                                    className={`w-full p-2 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-slate-400 uppercase">End Time</label>
+                                  <input
+                                    type="time"
+                                    value={day.endTime}
+                                    onChange={(e) => handleUpdateDaySchedule(day.id, 'endTime', e.target.value)}
+                                    className={`w-full p-2 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 italic text-center py-2 border border-dashed rounded-xl border-slate-300 dark:border-white/10">
+                          No daily itineraries configured. Add days above to enable targeted per-day check-in and food coupon redemption.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* REGISTRATION DEADLINE CUTOFF CONTROL RESTORED HERE */}
+              <div className={`mt-4 p-4 rounded-2xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="space-y-1.5">
+                  <label className={styles.label}>Registration End Date (Cutoff)</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
+                    <input 
+                      name="registrationEndDate" 
+                      type="date" 
+                      value={details.registrationEndDate} 
+                      onChange={handleChange} 
+                      className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-500 block ml-1">
+                    Candidate registration forms will automatically lock after this date. Leave blank for continuous open registration until event day.
+                  </span>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <input name="startTime" type="time" value={details.startTime} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
                 <input name="endTime" type="time" value={details.endTime} onChange={handleChange} className={`w-full p-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} />
@@ -1203,29 +1418,6 @@ export default function EventDetailEditor({
                     )}
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* REGISTRATION DEADLINE CUTOFF CONTROL */}
-            <div>
-              <div className={styles.sectionHeader}>Exam Registration Deadline & Access Rules</div>
-              <div className={`p-5 rounded-3xl border space-y-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="space-y-1.5">
-                  <label className={styles.label}>Registration End Date (Cutoff)</label>
-                  <div className="relative">
-                    <Calendar className="absolute left-4 top-3.5 text-slate-500" size={18} />
-                    <input 
-                      name="registrationEndDate" 
-                      type="date" 
-                      value={details.registrationEndDate} 
-                      onChange={handleChange} 
-                      className={`w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-xl border focus:outline-none ${styles.input}`} 
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-500 block ml-1">
-                    Candidate registration forms will automatically lock after this date. Leave blank for continuous open registration until exam day.
-                  </span>
-                </div>
               </div>
             </div>
 

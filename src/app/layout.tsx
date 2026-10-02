@@ -24,6 +24,9 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Mithila Aayojan',
   },
+  icons: {
+    icon: '/favicon.ico', // Or '/logo.png' depending on your filename in the public folder
+  },
 };
 
 export const viewport: Viewport = {
@@ -42,11 +45,13 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+      suppressHydrationWarning
+    ><body>
       <ClientLayoutShell>
           {children}
           <PWAInstallBanner />
         </ClientLayoutShell>
+        </body>
     </html>
   );
 }
