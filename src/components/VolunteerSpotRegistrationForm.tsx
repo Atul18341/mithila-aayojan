@@ -303,10 +303,12 @@ export default function VolunteerSpotRegistrationForm({ event, lang = 'en', volu
       const qrToken = generateQrToken(event, formData.phone);
       const isOnline = typeof window !== 'undefined' && navigator.onLine;
 
-      // 🕒 Conditional Auto-Check-In Logic (Only on actual event date)
-      const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      // 🕒 Conditional Auto-Check-In Logic with explicit type casting
+      const todayStr = new Date().toISOString().split('T')[0];
       const eventDayStr = event.eventDate || event.eventStartDate;
       const isHappeningToday = eventDayStr ? todayStr === eventDayStr : true;
+
+      const dayCheckInsRecord: Record<number, number> = isHappeningToday ? { 1: Date.now() } : {};
 
       const selectedComp = competitionsList.find(c => c.id === formData.competitionId);
       const selectedAgeGroup = selectedComp?.ageGroups?.find(g => g.id === formData.ageGroupId);
@@ -356,7 +358,7 @@ export default function VolunteerSpotRegistrationForm({ event, lang = 'en', volu
         qrToken,
         isCheckedIn: isHappeningToday,
         checkInTime: isHappeningToday ? Date.now() : null,
-        dayCheckIns: isHappeningToday ? { "1": Date.now() } : {},
+        dayCheckIns: dayCheckInsRecord,
         hasFoodAccess,
         hasFoodClaimed: false,
         amountPaid: pricing.totalPrice,
