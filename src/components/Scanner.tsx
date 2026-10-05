@@ -1,17 +1,17 @@
 // src/components/Scanner.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { 
   Camera, X, CheckCircle2, AlertTriangle, Loader2, Keyboard, 
-  LogIn, Utensils 
+  LogIn, Calendar 
 } from 'lucide-react';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import { db } from '../lib/db';
 
 export type ScanStatus = 'idle' | 'success' | 'warning' | 'error';
-export type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM' | 'REGISTRATION';
+export type ScanMode = 'CHECK_IN' | 'REGISTRATION';
 
 interface ScanResultState {
   status: ScanStatus;
@@ -25,7 +25,7 @@ interface ReusableScannerProps {
   isDark?: boolean;
   scanMode?: ScanMode;
   onClose: () => void;
-  onScanExecute?: (token: string, mode: ScanMode) => Promise<{ status: ScanStatus; message: string; name?: string }>;
+  onScanExecute?: (token: string, mode: ScanMode, activeDay?: number) => Promise<{ status: ScanStatus; message: string; name?: string }>;
 }
 
 export default function EntryDeskCameraScanner({ 
@@ -41,6 +41,31 @@ export default function EntryDeskCameraScanner({
   const [manualToken, setManualToken] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
+  // Event configuration states for multi-day handling
+  const [eventConfig, setEventConfig] = useState<any>(null);
+  const [selectedDayNumber, setSelectedDayNumber] = useState<number>(1);
+
+  // Load event configuration on mount to detect multi-day settings
+  useEffect(() => {
+    async function loadEventConfig() {
+      try {
+        if (!db.isOpen()) await db.open();
+        const ev = await db.events.get(Number(currentEventId));
+        if (ev) {
+          setEventConfig(ev);
+          if (ev.isMultiDay && Array.isArray(ev.daySchedules) && ev.daySchedules.length > 0) {
+            setSelectedDayNumber(ev.daySchedules[0].dayNumber || 1);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load event config for scanner:", err);
+      }
+    }
+    if (currentEventId) {
+      loadEventConfig();
+    }
+  }, [currentEventId]);
+
   /**
    * Helper function to extract qrToken & attendee parameters from JSON payload or raw text
    */
@@ -54,7 +79,6 @@ export default function EntryDeskCameraScanner({
           userId: parsed.uid ? String(parsed.uid) : null,
           eventId: parsed.eid ? Number(parsed.eid) : null,
           category: parsed.cat || null,
-          hasFood: Boolean(parsed.food),
           rawToken: trimmedText
         };
       }
@@ -66,7 +90,6 @@ export default function EntryDeskCameraScanner({
       userId: trimmedText,
       eventId: null,
       category: null,
-      hasFood: false,
       rawToken: trimmedText
     };
   };
@@ -81,15 +104,16 @@ export default function EntryDeskCameraScanner({
     setIsProcessing(true);
 
     try {
-      // Step A: Parse scanned payload to extract exact qrToken
       const qrData = parseQrContent(rawInput);
       const targetQrToken = qrData.qrToken;
+      const isMultiDayActive = Boolean(eventConfig?.isMultiDay);
+      const activeDay = isMultiDayActive ? selectedDayNumber : 1;
 
-      console.log(`🔍 Scanning pass for qrToken: "${targetQrToken}" under Mode: ${scanMode}`);
+      console.log(`🔍 Scanning pass for qrToken: "${targetQrToken}" under Mode: ${scanMode} [MultiDay: ${isMultiDayActive}, Day: ${activeDay}]`);
 
       // Delegate to custom execution handler if provided
       if (onScanExecute) {
-        const customResult = await onScanExecute(targetQrToken, scanMode);
+        const customResult = await onScanExecute(targetQrToken, scanMode, activeDay);
         setScanResult({
           status: customResult.status,
           message: customResult.message,
@@ -98,7 +122,7 @@ export default function EntryDeskCameraScanner({
         return;
       }
 
-      // Step B: Locate guest record in Dexie IndexedDB using targetQrToken
+      // Locate guest record in Dexie IndexedDB using targetQrToken
       if (!db.isOpen()) await db.open();
 
       let guest = await db.guests
@@ -144,106 +168,69 @@ export default function EntryDeskCameraScanner({
 
       const now = Date.now();
       let mutationPayload: Record<string, any> = {};
-      let immediateStatus: ScanStatus = 'success';
       let immediateMessage = '';
 
-      // Step C: Validate conditions & prepare responses
       if (scanMode === 'CHECK_IN') {
-        const isAlreadyCheckedIn = 
-          Boolean(guest.checkInTime) || 
-          guest.isCheckedIn === true
+        // Handle Multi-Day vs Single-Day Check-in validation
+        if (isMultiDayActive) {
+          const existingDayChecks = guest.dayCheckIns || {};
+          if (existingDayChecks[activeDay]) {
+            setScanResult({
+              status: 'warning',
+              title: guest.name,
+              message: `${guest.name} is already checked in for Day ${activeDay}. / ${guest.name} पहले ही Day ${activeDay} के लिए चेक-इन कर चुके हैं।`
+            });
+            return;
+          }
 
-        if (isAlreadyCheckedIn) {
-          setScanResult({
-            status: 'warning',
-            title: guest.name,
-            message: `${guest.name} has already checked in. / ${guest.name} पहले ही चेक-इन कर चुके हैं।`
-          });
-          return;
-        }
+          const updatedDayChecks = { ...existingDayChecks, [activeDay]: now };
+          mutationPayload = {
+            dayCheckIns: updatedDayChecks,
+            day_check_ins: updatedDayChecks,
+            checkInTime: now, // latest checkin timestamp reference
+            isCheckedIn: true,
+            isCheckIn: 1,
+            syncStatus: 'pending'
+          };
+          immediateMessage = `✓ Day ${activeDay} Pass Verified (${guest.category || 'General'}). Check-in complete - ${guest.name}`;
+        } else {
+          const isAlreadyCheckedIn = Boolean(guest.checkInTime) || guest.isCheckedIn === true;
+          if (isAlreadyCheckedIn) {
+            setScanResult({
+              status: 'warning',
+              title: guest.name,
+              message: `${guest.name} has already checked in. / ${guest.name} पहले ही चेक-इन कर चुके हैं।`
+            });
+            return;
+          }
 
-        mutationPayload = {
-          checkInTime: now,
-          check_in_time: now,
-          isCheckedIn: true,
-          is_check_in: true,
-          isCheckIn: 1,
-          syncStatus: 'pending'
-        };
-
-        immediateMessage = `✓ Pass Verified (${guest.category || 'General'}). Gate check-in complete./ पास सत्यापित। गेट चेक-इन पूरा हो गया - ${guest.name}`;
-
-      } else if (scanMode === 'FOOD_CLAIM') {
-        const isFoodEligible = 
-          Boolean(guest.hasFoodAccess) || 
-          qrData.hasFood === true;
-
-        if (!isFoodEligible) {
-          setScanResult({
-            status: 'error',
-            title: guest.name,
-            message: 'Denied: Food not included with this pass type. / अस्वीकृत: इस पास के साथ भोजन शामिल नहीं है।'
-          });
-          return;
-        }
-
-        const isFoodAlreadyClaimed = 
-          Boolean(guest.foodClaimedTime) || 
-          guest.hasFoodClaimed === true 
-
-        if (isFoodAlreadyClaimed) {
-          setScanResult({
-            status: 'warning',
-            title: guest.name,
-            message: `Pass already claimed/redeemed for ${guest.name}. / ${guest.name} के लिए भोजन पहले ही प्राप्त किया जा चुका है।`
-          });
-          return;
-        }
-
-        const isAlreadyCheckedIn = 
-          Boolean(guest.checkInTime) || 
-          guest.isCheckedIn === true
-
-        mutationPayload = {
-          hasFoodClaimed: true,
-          has_food_claimed: true,
-          foodClaimedTime: now,
-          food_claimed_time: now,
-          syncStatus: 'pending',
-          ...(!isAlreadyCheckedIn && {
+          mutationPayload = {
             checkInTime: now,
             check_in_time: now,
             isCheckedIn: true,
             is_check_in: true,
-            isCheckIn: 1
-          })
-        };
-
-        immediateMessage = `🍱 Meal Allocation Approved. Voucher successfully redeemed${!isAlreadyCheckedIn ? ' & Check-in recorded' : ''}./भोजन थाली स्वीकृत। वाउचर सफलतापूर्वक भुना लिया गया${!isAlreadyCheckedIn ? ' और चेक-इन दर्ज किया गया' : ''} - ${guest.name}`;
+            isCheckIn: 1,
+            syncStatus: 'pending'
+          };
+          immediateMessage = `✓ Pass Verified (${guest.category || 'General'}). Gate check-in complete - ${guest.name}`;
+        }
       }
 
-      // ⚡ INSTANT OPTIMISTIC UI UPDATE (Fires immediately with zero perceived latency)
+      // ⚡ INSTANT OPTIMISTIC UI UPDATE
       setScanResult({
         status: 'success',
         title: guest.name,
         message: immediateMessage
       });
 
-      // Step D & E: Run heavy DB writes and network syncs asynchronously behind the scenes
+      // Background DB Mutation & Sync
       const guestId = guest.id!;
-      const updatedGuestRecord = { 
-        ...guest, 
-        ...mutationPayload, 
-        hasFoodClaimed: mutationPayload.hasFoodClaimed ?? guest.hasFoodClaimed ?? false,
-        has_food_claimed: mutationPayload.has_food_claimed  ?? guest.hasFoodClaimed ?? false,
-        foodClaimedTime: mutationPayload.foodClaimedTime ?? guest.foodClaimedTime ?? null,
-        food_claimed_time: mutationPayload.food_claimed_time ?? guest.foodClaimedTime ?? null,
-      };
+      const updatedGuestRecord = { ...guest, ...mutationPayload };
 
       (async () => {
         try {
           await db.guests.update(guestId, mutationPayload);
-          console.log(`💾 Local IndexedDB updated for pass (${targetQrToken}):`, mutationPayload);
+          console.log(`💾 Local IndexedDB updated for pass (${targetQrToken}) [Day: ${activeDay}]:`, mutationPayload);
 
           if (navigator.onLine) {
             const syncResponse = await fetch('/api/sync/push', {
@@ -254,7 +241,6 @@ export default function EntryDeskCameraScanner({
 
             if (syncResponse.ok) {
               await db.guests.update(guestId, { syncStatus: 'synced' });
-              console.log(`⚡ Online DB sync committed for pass (${targetQrToken})`);
             }
           }
         } catch (bgErr) {
@@ -268,7 +254,6 @@ export default function EntryDeskCameraScanner({
     } finally {
       setManualToken('');
 
-      // Auto-resume camera decoding feed after 2.5 seconds
       setTimeout(() => {
         setScanResult({ status: 'idle', message: '' });
         setIsProcessing(false);
@@ -276,22 +261,19 @@ export default function EntryDeskCameraScanner({
     }
   };
 
-  // Dynamic color accents matching active scan mode
-  const activeVariant = scanMode === 'CHECK_IN' ? (variant === 'amber' ? 'purple' : variant) : 'amber';
-
   const accentText = {
     blue: 'text-blue-500',
     emerald: 'text-emerald-500',
     purple: 'text-purple-500',
     amber: 'text-amber-500'
-  }[activeVariant];
+  }[variant];
 
   const accentBtn = {
     blue: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500/20',
     emerald: 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500/20',
     purple: 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500/20',
     amber: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500/20'
-  }[activeVariant];
+  }[variant];
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -300,7 +282,7 @@ export default function EntryDeskCameraScanner({
       }`}>
         
         {/* TERMINAL HEADER CONTROLS */}
-        <div className="flex justify-between items-center mb-4 gap-2">
+        <div className="flex justify-between items-center mb-3 gap-2">
           <div className="flex items-center gap-2 shrink-0">
             <Camera size={16} className={accentText} />
             <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -330,14 +312,44 @@ export default function EntryDeskCameraScanner({
           </div>
         </div>
 
+        {/* MULTI-DAY EVENT DAY SELECTOR (DYNAMICS BASED ON EVENT CONFIGURATION) */}
+        {eventConfig?.isMultiDay && Array.isArray(eventConfig?.daySchedules) && eventConfig.daySchedules.length > 0 && (
+          <div className="mb-3 p-3 rounded-2xl border bg-black/20 dark:bg-white/[0.02] border-white/10 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                <Calendar size={12} className="text-blue-500" />
+                <span>Select Target Scan Day</span>
+              </span>
+              <span className="text-[9px] font-bold text-blue-400">Day {selectedDayNumber} Active</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {eventConfig.daySchedules.map((schedule: any) => {
+                const isSelected = selectedDayNumber === schedule.dayNumber;
+                return (
+                  <button
+                    key={schedule.id || schedule.dayNumber}
+                    type="button"
+                    onClick={() => setSelectedDayNumber(schedule.dayNumber)}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border cursor-pointer ${
+                      isSelected 
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-md' 
+                        : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    Day {schedule.dayNumber}: {schedule.title || `Session ${schedule.dayNumber}`}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ACTIVE SCANNER MODE BADGE */}
-        <div className={`p-3 mb-4 rounded-xl border flex items-center justify-center gap-2 text-xs font-black uppercase tracking-wider ${
-          scanMode === 'CHECK_IN'
-            ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-            : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-        }`}>
-          {scanMode === 'CHECK_IN' ? <LogIn size={15} /> : <Utensils size={15} />}
-          <span>Active Mode: {scanMode === 'CHECK_IN' ? 'Gate Check-In' : 'Food Counter'}</span>
+        <div className="p-3 mb-4 rounded-xl border flex items-center justify-center gap-2 text-xs font-black uppercase tracking-wider bg-purple-500/10 text-purple-400 border-purple-500/20">
+          <LogIn size={15} />
+          <span>
+            Gate Check-In {eventConfig?.isMultiDay ? `(Day ${selectedDayNumber})` : ''}
+          </span>
         </div>
 
         {/* CAMERA / MANUAL ENTRY FRAME */}
@@ -405,7 +417,7 @@ export default function EntryDeskCameraScanner({
         <p className="mt-4 text-[9px] text-slate-500 text-center font-bold uppercase tracking-widest leading-relaxed">
           {showManualInput 
             ? "Enter ticket qrToken explicitly" 
-            : `Align Ticket QR code inside frame boundary (${scanMode})`}
+            : `Align Ticket QR code inside frame boundary (Gate Check-In${eventConfig?.isMultiDay ? ` - Day ${selectedDayNumber}` : ''})`}
         </p>
 
         {/* CLOSE BUTTON */}

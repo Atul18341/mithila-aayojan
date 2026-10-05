@@ -156,16 +156,17 @@ export async function POST(request: Request) {
 
       const eventUpsertQuery = `
         INSERT INTO events (
-          name, type, protocol, status, date, start_time, end_time, registration_end_date,
-          location, tagline, description, venue_name, whatsapp_number, helpline_number, visibility, 
-          food_config, pricing_config, is_multi_competition, competitions, organizer_id,
+          name, type, protocol, status, date, end_date, is_multi_day, day_schedules, 
+          start_time, end_time, registration_end_date, location, tagline, description, 
+          venue_name, whatsapp_number, helpline_number, visibility, food_config, 
+          pricing_config, is_multi_competition, competitions, organizer_id,
           created_at, updated_at, slug
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12, $13, $14, $15::jsonb, 
-          $16::jsonb, $17::jsonb, $18, $19::jsonb, $20,
-          timezone('utc', TO_TIMESTAMP($21 / 1000.0)), timezone('utc', now()), $22
+          $1, $2, $3, $4, $5, $6, $7, $8::jsonb,
+          $9, $10, $11, $12, $13, $14, $15, $16, $17, 
+          $18::jsonb, $19::jsonb, $20::jsonb, $21, $22::jsonb, $23,
+          timezone('utc', TO_TIMESTAMP($24 / 1000.0)), timezone('utc', now()), $25
         )
         ON CONFLICT (slug) 
         DO UPDATE SET 
@@ -174,6 +175,9 @@ export async function POST(request: Request) {
           protocol = COALESCE(EXCLUDED.protocol, events.protocol),
           status = COALESCE(EXCLUDED.status, events.status),
           date = COALESCE(EXCLUDED.date, events.date),
+          end_date = COALESCE(EXCLUDED.end_date, events.end_date),
+          is_multi_day = COALESCE(EXCLUDED.is_multi_day, events.is_multi_day),
+          day_schedules = COALESCE(EXCLUDED.day_schedules, events.day_schedules),
           start_time = COALESCE(EXCLUDED.start_time, events.start_time),
           end_time = COALESCE(EXCLUDED.end_time, events.end_time),
           registration_end_date = COALESCE(EXCLUDED.registration_end_date, events.registration_end_date),
@@ -207,6 +211,11 @@ export async function POST(request: Request) {
       const isMultiCompetition = ev.isMultiCompetition !== undefined ? Boolean(ev.isMultiCompetition) : null;
       const competitionsData = Array.isArray(ev.competitions) ? JSON.stringify(ev.competitions) : null;
       const eventCreationEpoch = toEpochMillis(ev.createdAt);
+      
+      const isMultiDay = Boolean(ev.isMultiDay || ev.is_multi_day);
+      const daySchedulesData = Array.isArray(ev.daySchedules) 
+        ? JSON.stringify(ev.daySchedules) 
+        : (Array.isArray(ev.day_schedules) ? JSON.stringify(ev.day_schedules) : '[]');
 
       const result = await client.query(eventUpsertQuery, [
         ev.name || null, 
@@ -214,6 +223,9 @@ export async function POST(request: Request) {
         ev.protocol || null, 
         ev.status || 'draft', 
         ev.date || null, 
+        ev.endDate || ev.end_date || null,
+        isMultiDay,
+        daySchedulesData,
         ev.startTime || null, 
         ev.endTime || null, 
         ev.registrationEndDate || ev.registration_end_date || null,
@@ -231,7 +243,7 @@ export async function POST(request: Request) {
         verifiedOrganizerId,
         eventCreationEpoch, 
         generatedSlug
-      ]); 
+      ]);
       
       const serverGeneratedId = result.rows[0].id;
 
@@ -348,7 +360,7 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 4. SYNCHRONIZE GUESTS TABLE (Separated Clean Queries without Cases/Conditions)
+    // 4. SYNCHRONIZE GUESTS TABLE (With Multi-Day Check-ins & Food Claims)
     // ==========================================
     for (const gst of guests) {
       let rawTargetEventId = gst.eventId; 
@@ -385,7 +397,6 @@ export async function POST(request: Request) {
         String(gst.has_food_access).toLowerCase() === 'true'
       );
       
-      // Robust food claim check: evaluates both booleans and timestamps
       const hasFoodClaimed = Boolean(
         gst.foodClaimedTime ||
         gst.food_claimed_time ||
@@ -405,13 +416,19 @@ export async function POST(request: Request) {
       
       const amountPaid = toNumeric(gst.amountPaid || gst.amount_paid);
 
-      // Query 1: Clean Guest Insert / Base Data Query with Food Claim columns included
+      const dayCheckInsObj = gst.dayCheckIns || gst.day_check_ins || {};
+      const dayFoodClaimsObj = gst.dayFoodClaims || gst.day_food_claims || {};
+      const dayCheckInsJson = JSON.stringify(dayCheckInsObj);
+      const dayFoodClaimsJson = JSON.stringify(dayFoodClaimsObj);
+
+      // Query 1: Guest Insert / Base Data Query with JSONB Day Maps included
       const guestInsertQuery = `
         INSERT INTO guests (
           event_id, name, type, qr_token, email, phone, amount_paid, 
-          has_food_access, has_food_claimed, food_claimed_time, server_updated_at
+          has_food_access, has_food_claimed, food_claimed_time, 
+          day_check_ins, day_food_claims, server_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, timezone('utc', now()))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, timezone('utc', now()))
         ON CONFLICT (qr_token) 
         DO UPDATE SET 
           name = EXCLUDED.name, 
@@ -422,6 +439,8 @@ export async function POST(request: Request) {
           has_food_access = EXCLUDED.has_food_access,
           has_food_claimed = CASE WHEN EXCLUDED.has_food_claimed THEN TRUE ELSE guests.has_food_claimed END,
           food_claimed_time = COALESCE(guests.food_claimed_time, EXCLUDED.food_claimed_time),
+          day_check_ins = guests.day_check_ins || EXCLUDED.day_check_ins,
+          day_food_claims = guests.day_food_claims || EXCLUDED.day_food_claims,
           server_updated_at = timezone('utc', now())
         RETURNING id;
       `; 
@@ -436,8 +455,10 @@ export async function POST(request: Request) {
         amountPaid, 
         hasFoodAccess,
         hasFoodClaimed,
-        rawFoodClaimedTime
-      ]); 
+        rawFoodClaimedTime,
+        dayCheckInsJson,
+        dayFoodClaimsJson
+      ]);
 
       const serverGuestId = insertResult.rows[0].id;
 
@@ -471,6 +492,7 @@ export async function POST(request: Request) {
       await logSyncAction('guests', actionType, serverGuestId, gst.clientTimestamp);
       syncedGuestsCount++;  
     }
+
     // ==========================================
     // 5. SYNCHRONIZE EVENT REGISTRATIONS TABLE
     // ==========================================
@@ -611,7 +633,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ 
       success: true, 
-      message: 'All relational transaction matrices verified and synchronized.', 
+      message: 'All relational transaction matrices and multi-day configurations verified and synchronized.', 
       counts: { 
         events: syncedEventsCount, 
         users: syncedUsersCount, 

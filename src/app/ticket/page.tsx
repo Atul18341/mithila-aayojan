@@ -5,7 +5,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import TicketQR from '@/components/TicketQR';
 import { toPng } from 'html-to-image';
-import { Loader2 } from 'lucide-react';
+import { Loader2, WifiOff, AlertTriangle } from 'lucide-react';
 import { db } from '@/lib/db'; // Dexie IndexedDB instance
 
 interface AttendeeData {
@@ -15,7 +15,7 @@ interface AttendeeData {
   category: string;
   competitionTitle?: string;
   ageGroupLabel?: string;
-  hasFoodAccess?: boolean; // 🟢 Added food access property
+  hasFoodAccess?: boolean;
   eventId: number;
   eventName: string;
   eventDetails?: {
@@ -38,8 +38,9 @@ export default function TicketPage() {
 
   const [loading, setLoading] = useState<boolean>(true);
   const [attendee, setAttendee] = useState<AttendeeData | null>(null);
+  const [offlineError, setOfflineError] = useState<boolean>(false);
 
-  // ⚡ HYBRID DATA FETCHING: Local IndexedDB -> PostgreSQL Online Cloud Endpoint Fallback
+  // 🕒 OFFLINE-FIRST HYBRID FETCHING LOGIC
   useEffect(() => {
     let isMounted = true;
 
@@ -51,6 +52,7 @@ export default function TicketPage() {
 
       try {
         setLoading(true);
+        setOfflineError(false);
 
         if (!db.isOpen()) await db.open();
 
@@ -63,7 +65,7 @@ export default function TicketPage() {
         const cleanQr = qrParam ? qrParam.trim() : '';
 
         // =========================================================================
-        // STEP 1: Attempt to load & merge records from local IndexedDB (guests & eventRegistrations)
+        // STEP 1: Always check local IndexedDB first (Offline-First Priority)
         // =========================================================================
         let localGuest: any = null;
         let localRegistration: any = null;
@@ -172,7 +174,7 @@ export default function TicketPage() {
             category: localGuest.category || localGuest.type || 'General',
             competitionTitle: localRegistration?.competitionTitle || localGuest.competitionTitle || undefined, 
             ageGroupLabel: localRegistration?.ageGroupLabel || localGuest.ageGroupLabel || undefined,
-            hasFoodAccess: resolvedFoodAccess, // 🟢 Passed to attendee state
+            hasFoodAccess: resolvedFoodAccess,
             eventId: Number(localGuest.eventId || numericEventId || 0),
             eventName: resolvedEventName,
             eventDetails: {
@@ -187,10 +189,24 @@ export default function TicketPage() {
         }
 
         // =========================================================================
-        // STEP 3: Fallback to Online PostgreSQL Server API if not found locally
+        // STEP 3: If NOT found locally, check if online before querying server API
+        // =========================================================================
+        const isOnline = typeof window !== 'undefined' && navigator.onLine;
+
+        if (!isOnline) {
+          // Device is offline and pass is not in IndexedDB
+          if (isMounted) {
+            setOfflineError(true);
+            setLoading(false);
+          }
+          return;
+        }
+
+        // =========================================================================
+        // STEP 4: Fallback to Online PostgreSQL Server API
         // =========================================================================
         const lookupQueryParam = cleanQr || cleanPhone || cleanEmail || eventIdParam;
-        if (typeof window !== 'undefined' && navigator.onLine && lookupQueryParam) {
+        if (lookupQueryParam) {
           const queryUrl = `/api/ticket/find?q=${encodeURIComponent(lookupQueryParam)}${cleanPhone ? `&phone=${encodeURIComponent(cleanPhone)}` : ''}${cleanEmail ? `&email=${encodeURIComponent(cleanEmail)}` : ''}${eventIdParam ? `&eventId=${encodeURIComponent(eventIdParam)}` : ''}`;
           
           const res = await fetch(queryUrl);
@@ -236,7 +252,7 @@ export default function TicketPage() {
                 category: resolvedCategory,
                 competitionTitle: guest?.competitionTitle || registration?.competitionTitle || undefined,
                 ageGroupLabel: guest?.ageGroupLabel || registration?.ageGroupLabel || undefined,
-                hasFoodAccess: resolvedFoodAccess, // 🟢 Passed from server response
+                hasFoodAccess: resolvedFoodAccess,
                 eventId: Number(event?.id || registration?.eventId || guest?.eventId || 0),
                 eventName: event?.name || 'Event Pass',
                 eventDetails: {
@@ -288,8 +304,29 @@ export default function TicketPage() {
       <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
         <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-2" />
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          Retrieving Pass Details...
+          Retrieving Pass from Local Database...
         </p>
+      </main>
+    );
+  }
+
+  // Offline Error State (Data not in IndexedDB and device is offline)
+  if (offlineError) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-14 h-14 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto border border-amber-500/20 mb-3">
+          <WifiOff size={28} />
+        </div>
+        <h1 className="text-base font-black text-white uppercase tracking-wider">You Are Offline</h1>
+        <p className="text-xs text-slate-400 mt-2 max-w-xs leading-relaxed">
+          This ticket pass is not stored locally on your device storage. Please connect to the internet to fetch your pass from the cloud.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-5 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition shadow-md"
+        >
+          Retry Connection
+        </button>
       </main>
     );
   }
@@ -339,7 +376,7 @@ export default function TicketPage() {
           userCategory={attendee.category}
           competitionTitle={attendee.competitionTitle}
           ageGroupLabel={attendee.ageGroupLabel}
-          hasFoodAccess={attendee.hasFoodAccess} // 🟢 Injected into TicketQR component
+          hasFoodAccess={attendee.hasFoodAccess}
           eventId={attendee.eventId}
           eventDetails={attendee.eventDetails} 
         />

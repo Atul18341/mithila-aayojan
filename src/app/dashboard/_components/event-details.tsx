@@ -614,7 +614,11 @@ export default function EventDetailEditor({
       daySchedules: details.isMultiDay ? details.daySchedules : [],
       startTime: details.startTime,
       endTime: details.endTime,
+      
+      // 👇 Ensure both variants are mapped for database consistency
       registrationEndDate: details.registrationEndDate,
+      registration_end_date: details.registrationEndDate, 
+
       whatsappNumber: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
       whatsapp_number: details.whatsappNumber.replace(/\D/g, '').slice(0, 10),
       helplineNumber: details.helplineNumber.replace(/\D/g, '').slice(0, 10),

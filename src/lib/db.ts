@@ -6,7 +6,7 @@ export type AttendeeCategory =
   | 'patron' 
   | 'dignitary' 
   | 'vip' 
-  | 'sponsor' // 🚀 Dedicated commercial partner pass tracking
+  | 'sponsor' 
   | 'speaker' 
   | 'artisan' 
   | 'delegate' 
@@ -16,7 +16,6 @@ export type AttendeeCategory =
   | 'event-participant'
   | 'ops-team';
 
-// 🟢 Approach 1: Nested Age Group Definition
 export interface AgeGroup {
   id: string;
   label: string;
@@ -25,7 +24,6 @@ export interface AgeGroup {
   maxAge?: number;
 }
 
-// 🟢 SubCompetition with nested age groups and rules
 export interface SubCompetition {
   id: string;
   title: string;
@@ -35,23 +33,29 @@ export interface SubCompetition {
   ageGroups?: AgeGroup[];
 }
 
-// Shared taxonomy filter rule
+// 🟢 Multi-Day Event Itinerary Schedule Definition
+export interface EventDaySchedule {
+  id: string;
+  dayNumber: number;
+  date: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  description?: string;
+}
+
 export const getApplicableCategoriesForType = (eventType: string): AttendeeCategory[] => {
   switch (eventType) {
     case 'conference':
     case 'summit':
-      // Corporate pipelines map distinct corporate sponsors alongside invite-only VIPs
       return ['patron', 'dignitary', 'vip', 'sponsor', 'speaker', 'delegate', 'exhibitor', 'ops-team', 'general-public'];
     case 'workshop':
     case 'training':
-      // Knowledge tracks collapse commercial tiers to focus purely on trainers and scholars
       return ['speaker', 'trainee', 'ops-team'];
-    case 'event': // Sanwaad / Cultural Festivals
-      // Decentralized community festivals map patrons, official VIP guests, and corporate sponsors explicitly
+    case 'event': 
       return ['patron', 'dignitary', 'vip', 'sponsor', 'artisan', 'general-public', 'event-participant', 'ops-team'];
     case 'celebration':
     case 'private-party':
-      // Social events strip all corporate business layers (exhibitors, sponsors, speakers)
       return ['dignitary', 'vip', 'general-public', 'ops-team'];
     default:
       return ['general-public'];
@@ -70,8 +74,14 @@ export interface Events {
   createdAt: number;
   syncStatus: 'synced' | 'pending';
   date?: string;
+  endDate?: string;
   startTime?: string;
   endTime?: string;
+  
+  // 🟢 Multi-Day Event Configuration Parameters
+  isMultiDay?: boolean; 
+  daySchedules?: EventDaySchedule[];
+
   registrationEndDate?: string;
   registration_end_date?: string; 
   location?: string;
@@ -80,13 +90,11 @@ export interface Events {
   venueName?: string;
   venue_name?: string;
 
-  // 🟢 WhatsApp & Helpline Communication Fields
   whatsappNumber?: string;
   whatsapp_number?: string;
   helplineNumber?: string;
   helpline_number?: string;
 
-  // 🟢 ORGANIZER USER RELATION (Session Metadata)
   organizerId?: number | null;
   organizerName?: string;
   organizerEmail?: string;
@@ -95,15 +103,14 @@ export interface Events {
   posterBlob: Blob | null;
   coverImageUrl?: string;
   posterImageUrl?: string;
-  isMultiCompetition?: boolean; // 🟢 Multi-Competition Flag
-  competitions?: SubCompetition[]; // 🟢 Multi-Competition Array Storage with Age Groups & Rules
+  isMultiCompetition?: boolean; 
+  competitions?: SubCompetition[]; 
   visibility?: {
     map: boolean;
     rsvp: boolean;
     schedule: boolean;
     gallery: boolean;
   };
-  // Comprehensive Catering & Food Operational Parameters
   foodConfig?: {
     enabled: boolean;
     strategy: 'complimentary' | 'coupon-based' | 'paid-buffet' | 'self-arranged';
@@ -111,7 +118,6 @@ export interface Events {
     availableForAll: 'yes' | 'no';
     allowedCategories: AttendeeCategory[];
   };
-  // Category Pricing Logic and Statutory Engines
   pricingConfig?: {
     isRequired: boolean;
     baseFee: number;
@@ -122,54 +128,44 @@ export interface Events {
 }
 
 export interface EventRegistration {
-  // Primary Keys & Identifiers
-  id?: number;                         // Local Dexie auto-increment ID
-  registrationId: string;              // Public unique pass ID (e.g., 'REG-982314')
-  eventId: string | number;            // Associated Event ID
-  // Attendee Core Profile
-  name: string;                        //
-  email: string;                       //
-  phone: string;                       //
-  category: AttendeeCategory;          //
+  id?: number;                         
+  registrationId: string;              
+  eventId: string | number;            
+  name: string;                        
+  email: string;                       
+  phone: string;                       
+  category: AttendeeCategory;          
   
-  // 🟢 Selected Competition & Age Group Identification
-  competitionId?: string | null;       //
-  competitionTitle?: string | null;    //
-  ageGroupId?: string | null;          //
-  ageGroupLabel?: string | null;       //
+  competitionId?: string | null;       
+  competitionTitle?: string | null;    
+  ageGroupId?: string | null;          
+  ageGroupLabel?: string | null;       
 
-  // 🟢 Verified Age Metadata
-  isAgeVerified?: boolean;             //
-  verifiedAge?: number | null;         //
+  isAgeVerified?: boolean;             
+  verifiedAge?: number | null;         
 
-  customAnswers: Record<string, any>;  //
-  // Financial Audit Breakdown
-  basePrice: number;                   //
-  gstAmount: number;                   //
-  totalPrice: number;                  //
-  // Gateway Payment Verification
-  paymentId?: string;                  // Razorpay payment ID (or 'FREE_ENTRY')
-  orderId?: string | null;             // Razorpay order ID
-  // System Lifecycle & Sync Metadata
-  status: string;                      //
-  syncStatus: string;                  //
-  registrationTimestamp: number;       // Date.now()
+  customAnswers: Record<string, any>;  
+  basePrice: number;                   
+  gstAmount: number;                   
+  totalPrice: number;                  
+  paymentId?: string;                  
+  orderId?: string | null;             
+  status: string;                      
+  syncStatus: string;                  
+  registrationTimestamp: number;       
 }
 
 export interface Guest {
-  // Primary Keys & Linking
-  id?: number;                          // Dexie local auto-increment primary key
-  guestId: string;                      // Public unique key (e.g. 'GUEST-1753456800000')
-  registrationId: string;               // Foreign Key linking back to eventRegistration table
-  eventId: string | number;             // Associated Event ID
+  id?: number;                          
+  guestId: string;                      
+  registrationId: string;               
+  eventId: string | number;             
   
-  // Attendee Core Profile
-  name: string;                         //
-  email?: string | null;                // Optional contact details
-  phone?: string | null;                // Optional contact details
-  category: AttendeeCategory | string;  // Category clearance (VIP, Speaker, Delegate, etc.)
+  name: string;                         
+  email?: string | null;                
+  phone?: string | null;                
+  category: AttendeeCategory | string;  
   
-  // 🟢 Competition & Age Group Meta derived from EventRegistration interface
   competitionId?: string | null;       
   competitionTitle?: string | null;    
   ageGroupId?: string | null;          
@@ -178,33 +174,37 @@ export interface Guest {
   verifiedAge?: number | null;         
   customAnswers?: Record<string, any>; 
 
-  // Gate Security & QR Verification
-  qrToken: string;                      // Encrypted or unique QR payload string
-  qr_token?: string | null;             // Alternative legacy token variant support
+  qrToken: string;                      
+  qr_token?: string | null;             
   
-  // Check-In Operations
-  isCheckedIn: boolean;                 // Entrance status flag
-  checkInTime?: number | null;          // Numeric timestamp (Date.now())
+  // Single-Day Check-in Operations
+  isCheckedIn: boolean;                 
+  checkInTime?: number | null;          
   
-  // Catering & Lounge Logistics
-  hasFoodAccess?: boolean;              // Entitlement flag for meals
-  hasFoodClaimed?: boolean;             // Claimed status flag
-  foodClaimedTime?: number | null;      // Timestamp when food was claimed
+  // Single-Day Catering Logistics
+  hasFoodAccess?: boolean;              
+  hasFoodClaimed?: boolean;             
+  foodClaimedTime?: number | null;      
   
-  // Sync & Financial Metadata
-  amountPaid?: number | null;           // Verified booking fee at gate scan endpoints
-  syncStatus: string;                   // Sync status for offline-first operation
-  registeredAt: number;                 // Registration timestamp (Date.now())
+  // 🟢 Multi-Day Event Operational Tracking Maps (Day Number -> Timestamp)
+  dayCheckIns?: Record<number, number>; 
+  day_check_ins?: Record<number, number>;
+  dayFoodClaims?: Record<number, number>;
+  day_food_claims?: Record<number, number>;
+  
+  amountPaid?: number | null;           
+  syncStatus: string;                   
+  registeredAt: number;                 
 }
 
 export interface SessionUser {
   id?: number;
-  identifier: string;    // e.g., "gate1@lyss.in"
+  identifier: string;    
   name: string;
   passkey: string | '';
   role: 'manager' | 'volunteer';
   activeEventId: number;
-  token: string;          // Encrypted JWT session string returned by the server
+  token: string;          
   cachedAt: number; 
   syncStatus: 'synced' | 'pending';
 }
@@ -214,17 +214,17 @@ export interface ManagerEvents {
   managerIdentifier: string;
   eventId: number;
   assignedAt: number;
-  assignedDesk?:'REGISTRATION' | 'CHECK_IN' | 'FOOD_CLAIM' | 'ALL';
+  assignedDesk?: 'REGISTRATION' | 'CHECK_IN' | 'FOOD_CLAIM' | 'ALL';
   syncStatus: 'synced' | 'pending';
 }
 
 export interface InstallationLog {
   id?: number;
   eventId?: number | null;
-  isStandalone: boolean;      // True if running as installed PWA, false if in standard browser
-  installedAt: number;        // Timestamp (Date.now()) of the session log
-  userAgent: string;          // Browser / Device user-agent string
-  syncStatus: 'pending' | 'synced'; // Offline sync status flag
+  isStandalone: boolean;      
+  installedAt: number;        
+  userAgent: string;          
+  syncStatus: 'pending' | 'synced'; 
 }
 
 export class AayojanDB extends Dexie {
@@ -232,17 +232,17 @@ export class AayojanDB extends Dexie {
   guests!: Table<Guest>;
   users!: Table<SessionUser>;
   managerEvents!: Table<ManagerEvents>;
-  eventRegistrations!: Table<EventRegistration>; //
-  installations!:Table<InstallationLog>;
+  eventRegistrations!: Table<EventRegistration>; 
+  installations!: Table<InstallationLog>;
+  
   constructor() {
-    super('MithilaAayojanDB'); //
-    // Bumped database version to 10 to index whatsapp_number & helpline_number
+    super('MithilaAayojanDB'); 
     this.version(10).stores({
-      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus', //
-      guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus', //
-      users: '++id, email, identifier, role, activeEventId, syncStatus', //
-      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus', //
-      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus', //
+      events: '++id, slug, type, status, organizerId, isMultiCompetition, registrationEndDate, whatsapp_number, helpline_number, createdAt, syncStatus', 
+      guests: '++id, guestId, registrationId, eventId, qrToken, qr_token, phone, email, isCheckedIn, syncStatus', 
+      users: '++id, email, identifier, role, activeEventId, syncStatus', 
+      managerEvents: '++id, [managerIdentifier+eventId], managerIdentifier, eventId, assignedDesk, syncStatus', 
+      eventRegistrations: '++id, registrationId, eventId, email, phone, category, competitionId, ageGroupId, status, syncStatus', 
       installations: '++id, eventId, isStandalone, syncStatus'
     });
   }

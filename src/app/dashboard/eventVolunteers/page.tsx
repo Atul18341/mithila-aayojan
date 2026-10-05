@@ -13,7 +13,7 @@ import { db } from '../../../lib/db';
 import EventScanner from '../../../components/Scanner';
 import SyncStatusBar from '@/components/SyncStatusBar';
 import LogoutButton from '@/components/LogoutButton';
-import UniversalRegistrationForm from '@/components/EventRegistration';
+import VolunteerSpotRegistrationForm from '@/components/VolunteerSpotRegistrationForm';
 
 type ScanMode = 'CHECK_IN' | 'FOOD_CLAIM' | 'REGISTRATION';
 
@@ -348,7 +348,8 @@ export default function VolunteerCheckInPanel() {
           <SyncStatusBar />
           <button
             onClick={() => setIsUtilitiesOpen(!isUtilitiesOpen)}
-            className={`p-2 rounded-xl border transition-all ${theme.inputBg}`}
+            className={`p-2 rounded-xl border transition-all z-50 ${theme.inputBg}`}
+            aria-label="Toggle mobile utilities menu"
           >
             {isUtilitiesOpen ? <X size={18} /> : <MoreVertical size={18} />}
           </button>
@@ -373,6 +374,36 @@ export default function VolunteerCheckInPanel() {
           <LogoutButton />
         </div>
       </header>
+
+      {/* MOBILE UTILITIES OVERLAY MENU DROPDOWN */}
+      {isUtilitiesOpen && (
+        <div className="sm:hidden fixed inset-x-0 top-[72px] z-50 px-4 animate-in slide-in-from-top-2 duration-200">
+          <div className={`p-4 rounded-2xl border shadow-xl flex flex-col gap-3 backdrop-blur-xl ${theme.dropdownMenu}`}>
+            <div className="flex items-center justify-between pb-2 border-b border-inherit">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Terminal Controls</span>
+              <button 
+                onClick={() => setIsUtilitiesOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold">Appearance Theme</span>
+              <button 
+                onClick={() => setIsDark(!isDark)} 
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 ${theme.inputBg}`}
+              >
+                {isDark ? <Moon size={14} className="text-purple-400" /> : <Sun size={14} className="text-amber-500" />}
+                <span>{isDark ? 'Dark Mode' : 'Light Mode'}</span>
+              </button>
+            </div>
+            <div className="pt-2 border-t border-inherit flex justify-end">
+              <LogoutButton />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CORE CONTROL COUNTER SUB-PANEL WITH DIRECTORY INSPECTION BUTTONS */}
       <div className="px-6 pt-6 flex flex-col items-center gap-4">
@@ -510,12 +541,13 @@ export default function VolunteerCheckInPanel() {
             </div>
 
             {activeEvent && (
-              <UniversalRegistrationForm 
+              <VolunteerSpotRegistrationForm 
                 event={{ 
                   ...activeEvent, 
                   id: String(activeEvent.id),
                   type: (activeEvent.type as any) || 'event'
                 }} 
+                volunteerId={activeUser?.identifier}
               />
             )}
           </div>
