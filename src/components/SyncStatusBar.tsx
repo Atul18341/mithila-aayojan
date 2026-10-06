@@ -140,79 +140,78 @@ export default function SyncStatusBar() {
       }
 
       // Robust extraction and normalization of food claim & check-in parameters from IndexedDB records
-      const sanitizedGuests = telemetryData.guests
-        .filter(gst => gst.syncStatus === 'pending')
-        .map(gst => {
-          const foodClaimed = Boolean(
-            gst.hasFoodClaimed || 
-            (gst as any).has_food_claimed || 
-            (gst as any).isFoodClaimed || 
-            (gst as any).foodClaimed
-          );
+      const pendingGuestsOnly = telemetryData.guests.filter(gst => gst.syncStatus === 'pending');
+      const sanitizedGuests = pendingGuestsOnly.map(gst => {
+        const foodClaimed = Boolean(
+          gst.hasFoodClaimed || 
+          (gst as any).has_food_claimed || 
+          (gst as any).isFoodClaimed || 
+          (gst as any).foodClaimed
+        );
 
-          const foodClaimedTimeVal = 
-            (gst as any).foodClaimedTime || 
-            (gst as any).food_claimed_time || 
-            (gst as any).foodClaimedAt || 
-            undefined;
+        const foodClaimedTimeVal = 
+          (gst as any).foodClaimedTime || 
+          (gst as any).food_claimed_time || 
+          (gst as any).foodClaimedAt || 
+          undefined;
 
-          const checkInTimeVal = 
-            gst.checkInTime || 
-            (gst as any).check_in_time || 
-            undefined;
+        const checkInTimeVal = 
+          gst.checkInTime || 
+          (gst as any).check_in_time || 
+          undefined;
 
-          const isCheckedInVal = Boolean(
-            gst.isCheckedIn || 
-            (gst as any).is_check_in || 
-            checkInTimeVal
-          );
+        const isCheckedInVal = Boolean(
+          gst.isCheckedIn || 
+          (gst as any).is_check_in || 
+          checkInTimeVal
+        );
 
-          const foodAccessVal = Boolean(
-            gst.hasFoodAccess || 
-            (gst as any).has_food_access || 
-            (gst as any).isFoodAccess || 
-            (gst as any).foodIncluded
-          );
+        const foodAccessVal = Boolean(
+          gst.hasFoodAccess || 
+          (gst as any).has_food_access || 
+          (gst as any).isFoodAccess || 
+          (gst as any).foodIncluded
+        );
 
-          return {
-            ...gst,
-            name: gst.name || undefined,
-            email: gst.email || undefined,
-            phone: gst.phone || undefined,
-            
-            checkInTime: checkInTimeVal,
-            isCheckedIn: isCheckedInVal,
-            is_check_in: isCheckedInVal,
-            isCheckIn: isCheckedInVal ? 1 : 0,
-            
-            hasFoodAccess: foodAccessVal,
-            has_food_access: foodAccessVal,
-            
-            hasFoodClaimed: foodClaimed,
-            has_food_claimed: foodClaimed,
-            
-            foodClaimedTime: foodClaimedTimeVal,
-            food_claimed_time: foodClaimedTimeVal,
+        return {
+          ...gst,
+          name: gst.name || undefined,
+          email: gst.email || undefined,
+          phone: gst.phone || undefined,
+          
+          checkInTime: checkInTimeVal,
+          isCheckedIn: isCheckedInVal,
+          is_check_in: isCheckedInVal,
+          isCheckIn: isCheckedInVal ? 1 : 0,
+          
+          hasFoodAccess: foodAccessVal,
+          has_food_access: foodAccessVal,
+          
+          hasFoodClaimed: foodClaimed,
+          has_food_claimed: foodClaimed,
+          
+          foodClaimedTime: foodClaimedTimeVal,
+          food_claimed_time: foodClaimedTimeVal,
 
-            clientTimestamp: checkInTimeVal || foodClaimedTimeVal || Date.now()
-          };
-        });
+          clientTimestamp: checkInTimeVal || foodClaimedTimeVal || Date.now()
+        };
+      });
 
-      const sanitizedRegistrations = telemetryData.registrations
-        .filter(reg => reg.syncStatus === 'pending')
-        .map(reg => ({
-          ...reg,
-          ...(reg.competitionId ? { competitionId: reg.competitionId } : {}),
-          ...(reg.competitionTitle ? { competitionTitle: reg.competitionTitle } : {}),
-          clientTimestamp: reg.registrationTimestamp || Date.now()
-        }));
+      const pendingRegistrationsOnly = telemetryData.registrations.filter(reg => reg.syncStatus === 'pending');
+      const sanitizedRegistrations = pendingRegistrationsOnly.map(reg => ({
+        ...reg,
+        ...(reg.competitionId ? { competitionId: reg.competitionId } : {}),
+        ...(reg.competitionTitle ? { competitionTitle: reg.competitionTitle } : {}),
+        clientTimestamp: reg.registrationTimestamp || Date.now()
+      }));
 
-      const sanitizedLinks = telemetryData.managerEvents
-        .filter(link => link.syncStatus === 'pending')
-        .map(link => ({
-          ...link,
-          clientTimestamp: Date.now()
-        }));
+      const pendingLinksOnly = telemetryData.managerEvents.filter(link => link.syncStatus === 'pending');
+      const sanitizedLinks = pendingLinksOnly.map(link => ({
+        ...link,
+        clientTimestamp: Date.now()
+      }));
+
+      const pendingUsersOnly = telemetryData.users.filter(usr => usr.syncStatus === 'pending');
 
       const response = await fetch('/api/sync/push', {
         method: 'POST',
@@ -222,7 +221,7 @@ export default function SyncStatusBar() {
           events: sanitizedEvents,
           guests: sanitizedGuests,
           registrations: sanitizedRegistrations,
-          users: telemetryData.users.filter(usr => usr.syncStatus === 'pending'),
+          users: pendingUsersOnly,
           managerEvents: sanitizedLinks, 
           managerEmail: telemetryData.managerEmail,
           userId: telemetryData.userId
@@ -245,26 +244,27 @@ export default function SyncStatusBar() {
       const result = await response.json();
       
       if (result.success && result.counts) {
+        // ✅ Only update records that were verified as pending sync
         await db.transaction('rw', [db.events, db.guests, db.users, db.managerEvents, db.eventRegistrations], async () => {
           for (const ev of pendingEventsOnly) {
             if (ev.id) await db.events.update(ev.id, { syncStatus: 'synced' });
           }
-          for (const gst of telemetryData.guests) {
+          for (const gst of pendingGuestsOnly) {
             if (gst.id) await db.guests.update(gst.id, { syncStatus: 'synced' });
           }
-          for (const reg of telemetryData.registrations) {
+          for (const reg of pendingRegistrationsOnly) {
             if (reg.id) await db.eventRegistrations.update(reg.id, { syncStatus: 'synced' });
           }
-          for (const usr of telemetryData.users) {
+          for (const usr of pendingUsersOnly) {
             if (usr.id) await db.users.update(usr.id, { syncStatus: 'synced' });
           }
-          for (const link of telemetryData.managerEvents) {
+          for (const link of pendingLinksOnly) {
             if (link.id) await db.managerEvents.update(link.id, { syncStatus: 'synced' });
           }
         });
 
         setLastSyncCounts(result.counts);
-        console.log(`Successfully synced ${result.counts.total} rows confirmed by Postgres server.`);
+        console.log(`Successfully synced ${result.counts.total} rows confirmed by Postgres server[cite: 7].`);
       }
     } catch (err: any) {
       console.error("Global sync flush failed:", err);
@@ -301,7 +301,7 @@ export default function SyncStatusBar() {
     }
   };
 
-  // AUTOMATIC SYNCHRONIZATION ENGINE (Push on pending/online & Pull every 30 minutes)
+  // AUTOMATIC SYNCHRONIZATION ENGINE (Push on pending/online & Pull every 30 seconds)
   useEffect(() => {
     const triggerAutoPush = async () => {
       if (navigator.onLine && telemetryData.totalCount > 0 && !isSyncing) {
@@ -312,12 +312,13 @@ export default function SyncStatusBar() {
     window.addEventListener('online', triggerAutoPush);
     triggerAutoPush();
 
-    const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+    // 🕒 Background polling interval for active event check-ins (every 30 seconds)
+    const THIRTY_SECONDS_MS = 30 * 1000;
     const pullIntervalId = setInterval(() => {
       if (navigator.onLine) {
         executePullSync();
       }
-    }, THIRTY_MINUTES_MS);
+    }, THIRTY_SECONDS_MS);
 
     return () => {
       window.removeEventListener('online', triggerAutoPush);
