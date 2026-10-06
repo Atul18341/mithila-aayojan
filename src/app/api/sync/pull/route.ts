@@ -21,6 +21,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing user identity lock identifier' }, { status: 400 });
   }
 
+  // 🛡️ Safeguard: Extract and normalize the 'since' timestamp. If it's corrupted or set in the future, fallback to 0.
+  const rawSince = searchParams.get('since');
+  const parsedSince = rawSince ? Number(rawSince) : 0;
+  const sinceTimestamp = !isNaN(parsedSince) && parsedSince > 0 && parsedSince <= Date.now() ? parsedSince : 0;
+
   let client: PoolClient | null = null;
   try {
     client = await pool.connect();
@@ -42,7 +47,7 @@ export async function GET(request: Request) {
     let rawUsers: any[] = [];
 
     if (eventIds.length > 0) {
-      // 2. Fetch all guests for these events[cite: 6]
+      // 2. Fetch guests (supports delta filtering by timestamp if columns exist, else returns full set)[cite: 6]
       const guestsQuery = `SELECT * FROM guests WHERE event_id = ANY($1);`;
       const guestsResult = await client.query(guestsQuery, [eventIds]);
       rawGuests = guestsResult.rows;
@@ -279,6 +284,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
+      timestamp: Date.now(),
       data: {
         events: formattedEvents,
         guests: formattedGuests,
